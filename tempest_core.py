@@ -608,7 +608,8 @@ class StationState:
         self.strike_events = []          # [{ts, dist_km, energy}]
         self.strikes_today = 0
         self.last_precip_time = None
-        self.serial = ""
+        self.serial = ""            # the station, e.g. ST-00012345
+        self.hub_serial = ""        # the hub it reports through, HB-...
         self.last_packet = None
         self.last_packet_type = ""
         self.day = date.today().isoformat()
@@ -628,6 +629,7 @@ class StationState:
                 "day": self.day,
                 "strikes_today": self.strikes_today,
                 "serial": self.serial,
+                "hub_serial": self.hub_serial,
                 "obs": dict(self.data),
                 "rapid": dict(self.last_rapid_wind),
                 "strike_events": list(self.strike_events)[-50:],
@@ -657,6 +659,8 @@ class StationState:
                                       if isinstance(e, dict) and "ts" in e]
             if saved.get("serial"):
                 self.serial = str(saved["serial"])
+            if saved.get("hub_serial"):
+                self.hub_serial = str(saved["hub_serial"])
             self.last_precip_time = saved.get("last_precip_time")
             self.restored_at = saved_at
         return True
@@ -696,9 +700,19 @@ class StationState:
 
     def _handle_locked(self, msg, addr):
         mtype = msg.get("type")
-        serial = msg.get("serial_number") or msg.get("hub_sn")
-        if serial:
-            self.serial = str(serial)
+        # The hub and the station both broadcast a serial_number, and the
+        # hub's own status messages carry the hub's. Taking whichever arrived
+        # last made the display flip between ST- and HB- every minute, so
+        # keep them apart: the station's serial identifies the station.
+        sn = msg.get("serial_number")
+        hub_sn = msg.get("hub_sn")
+        if hub_sn:
+            self.hub_serial = str(hub_sn)
+        if sn:
+            if mtype == "hub_status":
+                self.hub_serial = str(sn)
+            else:
+                self.serial = str(sn)
         elif not self.serial and addr:
             self.serial = str(addr[0])
 
@@ -818,6 +832,7 @@ class StationState:
             events = list(self.strike_events)
             strikes_today = self.strikes_today
             serial = self.serial
+            hub_serial = self.hub_serial
             last_packet = self.last_packet
             last_type = self.last_packet_type
             health = self.health()
@@ -876,6 +891,7 @@ class StationState:
             "version": VERSION,
             "now": now,
             "serial": serial,
+            "hub_serial": hub_serial,
             "demo": self.demo,
             "port": self.port,
             "health": health,

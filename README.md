@@ -1,30 +1,18 @@
 # Tempest Weather Dashboard
 
-A self-hosted weather dashboard for a [WeatherFlow Tempest](https://weatherflow.com/tempest-weather-system/)
-station. It listens for the hub's UDP broadcasts on your own network — no cloud
-account, no API key, no `pip install` — and serves six cards as a web page you
-can open from anything, or leave up on a TV.
+A self-hosted dashboard for a [WeatherFlow Tempest](https://weatherflow.com/tempest-weather-system/)
+station. It listens for the hub's UDP broadcasts on your own network and
+serves a web page you can open from anything — or leave up on a TV.
 
-Built to run on a NAS. It is running on a Synology DS723+.
+No account, no API key and no `pip install` for the station data itself. It is
+Python standard library throughout, and the page has no build step and pulls
+nothing from a CDN.
+
+Built to run on a NAS. It runs on a Synology DS723+.
 
 **Author:** Michael Walker VA3MW &nbsp;·&nbsp; Built with [Claude](https://claude.ai) (Anthropic)
 
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue) ![Version](https://img.shields.io/badge/Version-3.2.0-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Platform](https://img.shields.io/badge/Platform-Synology%20%7C%20Linux%20%7C%20macOS%20%7C%20Windows-lightgrey) ![Dependencies](https://img.shields.io/badge/Dependencies-none-brightgreen)
-
----
-
-## Files
-
-```
-tempest_core.py      # measurements, meteorology, sun & moon, history, UDP listener
-tempest_server.py    # the web server and the Open-Meteo forecast fetcher
-web/index.html       # the dashboard — one file, no build step, no CDN
-web/fonts/           # Weather Icons (SIL OFL 1.1), vendored
-Dockerfile           # for Synology Container Manager
-docker-compose.yml
-```
-
----
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue) ![Version](https://img.shields.io/badge/Version-3.3.0-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Dependencies](https://img.shields.io/badge/Dependencies-none-brightgreen)
 
 ---
 
@@ -34,49 +22,74 @@ docker-compose.yml
 python3 tempest_server.py --lat 42.1681 --lon -88.4281
 ```
 
-Open `http://<that-host>:8444/` from anything on your network — the server
-prints the URLs it can be reached on. Add `?tv` for the big-screen layout:
-larger type, no cursor, no controls.
+Open `http://<that-host>:8444/`. The server prints the addresses it can be
+reached on when it starts.
 
-To see it before a hub is involved:
+No hub to hand? `--demo` synthesises a plausible day — warmest mid-afternoon,
+sun following the clock — so the whole dashboard has something to show.
 
-```bash
-python3 tempest_server.py --demo
+```
+tempest_core.py      measurements, meteorology, sun and moon, history, UDP listener
+tempest_server.py    the web server, and the forecast, alert and backfill fetchers
+web/index.html       the dashboard — one file, no build step, no CDN
+web/fonts/           Weather Icons (SIL OFL 1.1), vendored
+Dockerfile           for Synology Container Manager
+docker-compose.yml
 ```
 
-Demo mode synthesises a plausible day — warmest mid-afternoon, sun following
-the clock — so the whole dashboard has something to show with no hardware.
+---
+
+## What is on it
+
+Nine cards. Pick which ones you want and drag them into the order you like —
+the grid rearranges itself for however many you choose.
+
+| Card | Shows |
+|---|---|
+| **Temperature** | Now, 24-hour min and max with the times they happened, 24-hour change, hourly trend, feels-like, humidity, dew point, and a comfort read |
+| **Wind** | Average and gust with the day's peak, a live rapid-wind hero, a compass strip that slides under a fixed marker, Beaufort force, 24-hour wind run and steadiness |
+| **Pressure** | A dial scaled to the 24-hour range, hourly rate of change, barometric tendency, min/max/span, and an outlook line |
+| **Rainfall** | Current rate, today and yesterday, month and year to date |
+| **Astronomy** | Sunrise, sunset, time to the next, a daylight arc with the sun on it, UV with its WHO band, brightness, solar radiation, moonrise, moonset, phase and the next new and full moon |
+| **Forecast** | Current conditions, today's high, low and precipitation chance, and a three-day strip |
+| **Records** | Hottest and coldest with dates, for the month, the year and all time, over a band showing the station's whole range |
+| **Lightning** | Strikes today, nearest, last strike, last hour and last three hours |
+| **Radar** | Live radar for your location |
+
+Three more pages, each behind an icon in the footer:
+
+- **Ten-day outlook** (`d`) — the full forecast, each day's range drawn against
+  the ten-day span so a warm spell or a cold snap reads at a glance.
+- **Radar** (`w`) — full-screen weather map.
+- **Settings** (`s`) — choose and reorder cards, and set the optional
+  WeatherFlow token.
+
+Switching between them uses the browser's native View Transitions, so there is
+no animation library involved.
 
 ---
 
 ## Hosting it on a Synology NAS
 
-This is the setup the project is aimed at: the NAS runs the dashboard around
-the clock, and a TV or tablet just points a browser at it.
-
 ### The one thing that will bite you
 
-The Tempest hub **broadcasts** over UDP. Broadcasts do not cross Docker's
-bridge network, and they do not cross subnets or VLANs. So:
-
-- the container **must** use `network_mode: host`, and
-- the NAS **must** be on the same subnet/VLAN as the hub.
+The hub **broadcasts** over UDP. Broadcasts do not cross Docker's bridge
+network, and they do not cross subnets or VLANs. So the container must use
+`network_mode: host`, and the NAS must be on the same subnet as the hub.
 
 A bridged container starts cleanly and then sits at "no hub seen yet" forever.
-If that happens, this is why. The page shows a red banner when nothing has
-arrived, so the failure is visible rather than silent.
+The page says so after a minute rather than leaving you guessing.
 
-### Deploying over SSH (what this repo was actually deployed with)
+### Deploying over SSH
 
-Enable **Control Panel → Terminal & SNMP → SSH**, then, from your workstation:
+Enable **Control Panel → Terminal & SNMP → SSH**, then:
 
 ```bash
-# 1. authorise your key (you will be asked for the DSM password once)
+# 1. authorise your key (you are asked for the DSM password once)
 ssh-copy-id -i ~/.ssh/id_ed25519.pub YOURUSER@YOUR-NAS
 ssh YOURUSER@YOUR-NAS 'chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys; chmod 755 ~'
 
 # 2. ship the files. DSM restricts SFTP, so stream a tar over ssh
-#    rather than using scp
 tar czf - tempest_core.py tempest_server.py web Dockerfile \
     docker-compose.yml .dockerignore \
   | ssh YOURUSER@YOUR-NAS 'mkdir -p /volume1/docker/tempest && \
@@ -91,198 +104,177 @@ ssh YOURUSER@YOUR-NAS 'cd /volume1/docker/tempest && \
   /usr/local/bin/docker compose up -d --build'
 ```
 
-Your DSM account must be in the **administrators** group (for SSH) and the
-**docker** group (so `docker` works without sudo — Container Manager adds
-administrators to it). Check with `id`.
+Your DSM account needs to be in **administrators** (for SSH) and **docker** (so
+`docker` works without sudo — Container Manager adds administrators to it).
+Check with `id`.
 
-Three DSM quirks that will trip you up:
+Three DSM quirks worth knowing:
 
-- `/tmp` and SFTP are locked down, hence the `tar | ssh` above instead of `scp`.
-- `docker` is not on the default `PATH` for a non-login shell. Use the full path
-  `/usr/local/bin/docker`.
-- The bind-mounted `data/` directory belongs to your DSM user, so the container
-  has to run as that uid — that is what `.env` is for. Without it the container
-  starts and then fails to write its history.
+- `/tmp` and SFTP are locked down, hence `tar | ssh` rather than `scp`.
+- `docker` is not on the `PATH` of a non-login shell; use `/usr/local/bin/docker`.
+- The bind-mounted `data/` belongs to your DSM user, so the container has to
+  run as that uid. That is what `.env` is for — without it the container starts
+  and then cannot write its history.
 
-### Container Manager UI instead
+### Container Manager instead
 
-1. Copy the folder to `/volume1/docker/tempest` (File Station is fine).
-2. Edit `docker-compose.yml` — set `TEMPEST_LAT`, `TEMPEST_LON`, `TZ`, and the
-   port. Create a `.env` next to it with your `PUID`/`PGID`.
-3. **Container Manager → Project → Create**, point it at that folder, build.
-4. If DSM's firewall is on, allow inbound TCP on your port and UDP 50222 in
-   **Control Panel → Security → Firewall**.
-5. Open `http://<nas-ip>:8444/`.
-
-### Without Docker
-
-Install the **Python 3** package from Package Center, then add a
-**Control Panel → Task Scheduler → Triggered Task → User-defined script**, set
-to run at boot as `root` (binding UDP 50222 needs it on some DSM versions):
-
-```bash
-cd /volume1/docker/tempest && /usr/local/bin/python3 tempest_server.py   --lat 45.4215 --lon -75.6972 --http-port 8444 --data-dir /volume1/docker/tempest/data
-```
-
-### Putting it on the TV
-
-Any TV browser that can open a URL will do. Use the `?tv` layout and, if your
-TV or streaming stick supports it, disable the screen saver for that app. On a
-spare tablet or Fire tablet, a kiosk-browser app pointed at
-`http://<nas-ip>:8444/?tv` works well.
-
-> **No authentication.** Anyone who can reach the port can see your weather.
-> That is fine on a home LAN — do not port-forward it to the internet.
+Copy the folder to `/volume1/docker/tempest`, edit `docker-compose.yml`, create
+the `.env`, then **Container Manager → Project → Create**. If DSM's firewall is
+on, allow inbound TCP on your port and UDP 50222.
 
 ---
 
-## Server options
+## Configuring it
 
-Every flag has an environment-variable equivalent, which is what
-`docker-compose.yml` uses.
+Most things can be set two ways: on the server, or from the settings page. The
+settings page wins, because it is written to `tempest_config.json` at runtime.
 
-| Flag | Env | Default | Meaning |
+| Flag | Environment | Default | Meaning |
 |---|---|---|---|
-| `--host` | `TEMPEST_HOST` | `0.0.0.0` | Address to bind the web server to |
+| `--host` | `TEMPEST_HOST` | `0.0.0.0` | Address to bind to |
 | `--http-port` | `TEMPEST_HTTP_PORT` | `8444` | Web server port |
 | `--udp-port` | `TEMPEST_UDP_PORT` | `50222` | Hub broadcast port |
-| `--lat` / `--lon` | `TEMPEST_LAT` / `TEMPEST_LON` | unset | Station location, for sun times |
-| `--name` | `TEMPEST_NAME` | hub serial | Label in the footer |
-| `--data-dir` | `TEMPEST_DATA_DIR` | next to the script | Where history is written |
+| `--lat` / `--lon` | `TEMPEST_LAT` / `TEMPEST_LON` | unset | Station location, for sun, moon, forecast, alerts and radar |
+| `--name` | `TEMPEST_NAME` | station serial | Label in the footer |
+| `--slots` | `TEMPEST_SLOTS` | six cards | Which cards, in order |
+| `--wf-token` | `TEMPEST_WF_TOKEN` | unset | WeatherFlow token for history backfill |
+| `--data-dir` | `TEMPEST_DATA_DIR` | beside the script | Where history is written |
 | `--demo` | `TEMPEST_DEMO` | off | Synthetic weather, no hub |
-| `--temp-unit` etc. | `TEMPEST_TEMP_UNIT` etc. | °F, mph, inHg, in, mi | Starting units |
-| `--verbose` | — | off | Log every HTTP request |
+| `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
+| `--no-alerts` | `TEMPEST_NO_ALERTS` | on | Disable weather alerts |
 
-Units are a *starting* choice: each viewer can click any big number to cycle
-units, and the browser remembers their preference. `t` toggles light/dark, `f`
-toggles the TV layout.
+> Prefer the settings page for the token. `docker-compose.yml` is committed to
+> git; `tempest_config.json` is gitignored and written `0600`.
+
+### Units and keys
+
+Units are a *starting* choice — click any big number to cycle it, and that
+browser remembers. Temperature, wind, pressure, rain and distance are all
+independent.
+
+| Key | Action |
+|---|---|
+| `d` | Ten-day outlook |
+| `w` | Radar |
+| `s` | Settings |
+| `t` | Light / dark |
+| `f` | TV layout |
+| `Esc` | Back to the cards |
+
+---
+
+## Where the data comes from
+
+**Your hub, over UDP.** Everything on the Temperature, Wind, Pressure,
+Rainfall and Lightning cards is measured by your own station. Nothing leaves
+your network for any of it.
+
+**Computed locally.** Sunrise, sunset, moonrise, moonset, moon phase and the
+next new and full moon are worked out on the machine from your latitude and
+longitude — no network call. Dew point, heat index, wind chill, Beaufort
+force, wind run and barometric tendency likewise.
+
+**Open-Meteo**, for the forecast. Free, no account, no key. It is cached to
+disk and reused, so restarting costs nothing, and `--no-forecast` turns it off.
+
+**The US National Weather Service**, for active alerts. No key. Outside NWS
+coverage it simply returns nothing.
+
+**WeatherFlow**, optionally, to backfill history. The hub only broadcasts what
+is happening now, so without this the 24-hour figures and the monthly and
+yearly totals only count from when the dashboard started. Give it a personal
+access token and it fills in your station's real record — daily rainfall and
+daily highs and lows, back to the day the station was installed.
 
 ### Endpoints
 
 | Path | Returns |
 |---|---|
-| `/` | The dashboard |
-| `/api/state` | The whole state as JSON, in canonical units (°C, mb, m/s, mm, km) |
-| `/api/wind` | Just the live wind — 99 bytes, polled often so the compass stays smooth |
-| `/healthz` | `{"ok": true, "health": "live"}` — handy for DSM or uptime checks |
+| `/api/state` | Everything, in canonical units (°C, mb, m/s, mm, km) |
+| `/api/wind` | Just the live wind — a few dozen bytes, polled often |
+| `/api/config` | The card layout, and whether a token is set (never the token) |
+| `/healthz` | `{"ok": true, "health": "live"}` |
 
-`/api/state` is a stable, documented shape — if you want to feed this into Home
-Assistant, Grafana, or a script of your own, poll that.
+`/api/state` is a stable shape. If you want to feed this into Home Assistant,
+Grafana or a script of your own, poll that.
 
 ---
 
-## Features
+## Staying up
 
-- **Live UDP data** — receives broadcasts on your local network (port 50222).
-  No cloud account, no API key, no `pip install`.
-- **Six cards, drawn on a canvas** — each one is a rounded panel with a hero
-  number, inset stat rows, and a plain-English summary line:
+This is meant to sit on a screen nobody touches, so it looks after itself.
 
-  | Card | Shows |
-  |---|---|
-  | **Temperature** | Current temp, 24-hour min/max with the times they happened, 24-hour change, hourly trend, feels-like, humidity, dew point, and a comfort read ("WARM · MUGGY") |
-  | **Wind** | Average and gust with the day's peak, a live rapid-wind hero, a linear compass ribbon centred on the current bearing, Beaufort force, 24-hour wind run and 3-hour steadiness |
-  | **Pressure** | Half-dial gauge scaled to the 24-hour range, hourly rate of change, barometric tendency, 24-hour min/max/span, and an outlook line |
-  | **Rainfall** | Current rate, today and yesterday, month and year to date |
-  | **Sun & sky** | Sunrise, sunset, time until the next one, a daylight arc with the sun's position, UV index with WHO band, brightness, solar radiation, and moon phase |
-  | **Lightning** | Strikes today, nearest strike, last strike time and distance, last hour and last 3 hours |
+- If the hub listener thread dies, the server notices within thirty seconds
+  and rebuilds it.
+- If the page loses contact for four minutes it reloads, and it refreshes once
+  a day when healthy. Reloads are rate-limited across page loads, so a server
+  that is genuinely down cannot cause a loop.
+- The last observation is saved and restored, so a restart comes back
+  populated rather than blank for a minute. Freshness still reflects real
+  packets only — the dot never lies about how old the data is.
+- The container is `restart: unless-stopped` with a healthcheck.
 
-- **Connection health** — a dot on every card and in the footer turns green when
-  packets are flowing, amber after 2 minutes of silence, red after 6.
-- **Click to cycle units** — click any hero number:
-  - Temperature: °F → °C → K
-  - Wind: mph → km/h → m/s → kts
-  - Pressure: inHg → hPa → kPa → mmHg
-  - Rain: in → mm
-  Distance (mi / km) is in the settings menu, along with everything else.
-- **Trend history** — a rolling 48 hours is kept on disk, so the min/max,
-  trends and totals are populated the moment you relaunch.
-- **Sun times computed locally** — set your latitude and longitude once
-  (☰ → *Set location*). The maths runs on your machine; nothing is sent
-  anywhere.
-- **Light and dark themes** — press `t`.
-- **Mini bar** — press `m` to collapse to a 360×46 always-on-top strip showing
-  temperature, wind, rain and strikes. Drag it by the grip; click it to expand.
-- **Persistent settings** — units, theme, location, window position and the
-  day's totals are saved to `tempest_settings.json`.
-- **Desktop launcher** — one click creates a `.lnk` (Windows), `.command`
-  (macOS) or `.desktop` (Linux) shortcut.
+## On a TV
+
+Add `?tv` for the big-screen layout: larger type throughout, no cursor, no
+controls. `f` toggles it.
+
+The whole page drifts through a few pixels on a slow cycle, and TV mode pulls
+peak brightness back slightly. Both reduce the risk of burning a static layout
+into an OLED. It reduces the risk rather than removing it — a sleep schedule on
+the TV itself still does more.
 
 ---
 
 ## Requirements
 
-- Python 3.8 or later
-- **Standard library only** — nothing to install
-- A Tempest hub on the same LAN subnet as whatever runs this
-- No GUI toolkit, so it runs happily headless on a NAS or server
-- Optional: the [Inter](https://rsms.me/inter/) font. Without it the dashboard
-  falls back to the platform UI font.
-
----
-
-## Installation
-
-```bash
-git clone https://github.com/Oldandcranky/TempestWX-GUI.git
-cd TempestWX-GUI
-python3 tempest_server.py --demo
-```
-
-### Keyboard and mouse
-
-| Action | Effect |
-|---|---|
-| click a big number | Cycle that measurement's units (remembered per browser) |
-| `t` | Toggle light / dark |
-| `f` | Toggle the TV layout |
-
----
-
-## How it works
-
-The hub broadcasts JSON over **UDP port 50222** to every device on the local
-network. The app binds that port on a background thread and hands each packet to
-the Tk thread via `after()`, so all drawing stays on the main thread.
-
-| Message type | Description |
-|---|---|
-| `obs_st` | Full Tempest observation — every sensor, ~1 min interval |
-| `obs_air` | AIR module — temperature, humidity, pressure, lightning |
-| `obs_sky` | SKY module — wind, rain, UV, solar radiation |
-| `rapid_wind` | Wind speed and direction, ~3 s interval |
-| `evt_strike` | Lightning strike — distance and energy |
-| `evt_precip` | Rain start event |
-| `device_status` / `hub_status` | Battery voltage |
-
-Full protocol reference: [Tempest UDP Broadcast API](https://apidocs.tempestwx.com/reference/tempest-udp-broadcast)
-
-### A note on rain and strike totals
-
-`obs_st` reports rain accumulated over the *previous minute*, not a running
-total, and a strike count for the reporting interval. The app accumulates those
-itself into per-day records in `tempest_history.json`. So "month" and "year"
-totals mean *since you started running this app*, not since the station was
-installed.
-
----
+- Python 3.8 or later, standard library only
+- A Tempest hub on the same LAN subnet
+- No GUI toolkit, so it runs headless on a NAS or server
+- Optional: the [Inter](https://rsms.me/inter/) font; without it the page falls
+  back to the platform UI font
 
 ## Files it writes
 
-All live in `--data-dir` and are safe to delete — they get recreated.
+All live in `--data-dir` and are safe to delete — they are rebuilt.
 
 | File | Contents |
 |---|---|
-| `tempest_history.json` | 48 hours of samples, and per-day rainfall |
-| `tempest_server_state.json` | Today's strike count and the last observation, so a restart comes back populated |
-| `tempest_forecast.json` | The last forecast, so a restart does not re-hit the free API |
+| `tempest_history.json` | 48 hours of samples, plus per-day rainfall and per-day temperature extremes |
+| `tempest_config.json` | Card layout and the WeatherFlow token (`0600`) |
+| `tempest_server_state.json` | Today's strike count and the last observation |
+| `tempest_forecast.json` | The last forecast, so a restart does not re-hit the API |
 
-Each viewer's unit and theme choices live in that browser's `localStorage`, not
-on the server, so the TV and your phone can differ.
+Each viewer's unit and theme choices live in that browser, not on the server,
+so the TV and your phone can differ.
+
+## Security
+
+There is **no authentication**. Anyone who can reach the port can view the
+dashboard and change the card layout. Keep it on your own network; do not
+forward the port to the internet.
+
+The WeatherFlow token is write-only: stored `0600` and never included in any
+response, so a browser can set or clear it but never read it back. Settings
+writes require a header that a cross-site form cannot set, and the Origin is
+checked against the Host.
 
 ---
 
 ## Changelog
+
+### v3.3.0
+- Watchdogs on both sides: the server rebuilds the hub listener if its thread
+  dies, and the page reloads after sustained loss of contact or a day of
+  uptime. Fixes a listener that, on dying, also stopped the forecast, backfill
+  and housekeeping threads.
+- Records card, and the history sweep now walks back to the station's install
+  date rather than 1 January.
+- No limit on how many cards you display; the grid arranges itself.
+- The station serial no longer flips to the hub's when a hub status message
+  arrives.
+
+
 
 ### v3.2.1
 - **Weather map.** The map button in the footer (or `w`) hides the cards and

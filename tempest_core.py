@@ -331,6 +331,7 @@ class History:
         self.path = path or HISTORY_FILE
         self.samples = deque(maxlen=HISTORY_MAX)
         self.rain_days = {}        # "YYYY-MM-DD" → mm
+        self.temp_days = {}        # "YYYY-MM-DD" → {"lo": °C, "hi": °C}
         self.meta = {}             # bookkeeping, e.g. when rain was swept
         self._last_saved = 0.0
         self.load()
@@ -353,6 +354,15 @@ class History:
         meta = raw.get("meta")
         if isinstance(meta, dict):
             self.meta.update(meta)
+        temps = raw.get("temp_days")
+        if isinstance(temps, dict):
+            for k, v in temps.items():
+                if isinstance(v, dict) and "lo" in v and "hi" in v:
+                    try:
+                        self.temp_days[str(k)] = {"lo": float(v["lo"]),
+                                                  "hi": float(v["hi"])}
+                    except (TypeError, ValueError):
+                        continue
         days = raw.get("rain_days")
         if isinstance(days, dict):
             for k, v in days.items():
@@ -377,6 +387,7 @@ class History:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"samples": list(self.samples),
                            "rain_days": self.rain_days,
+                           "temp_days": self.temp_days,
                            "meta": self.meta}, f)
             os.replace(tmp, self.path)
         except OSError:
@@ -395,6 +406,42 @@ class History:
                 sample[key] = round(float(value), 3)
         self.samples.append(sample)
         self.save()
+
+    def note_temp(self, day_iso, temp_c):
+        """Widen a day's recorded high and low as live readings arrive, so
+        today's record is current without waiting for the next sweep."""
+        if temp_c is None:
+            return
+        try:
+            t = float(temp_c)
+        except (TypeError, ValueError):
+            return
+        day = self.temp_days.get(day_iso)
+        if day is None:
+            self.temp_days[day_iso] = {"lo": round(t, 2), "hi": round(t, 2)}
+            return
+        if t < day["lo"]:
+            day["lo"] = round(t, 2)
+        elif t > day["hi"]:
+            day["hi"] = round(t, 2)
+
+    def temp_record(self, scope="year", today=None):
+        """Hottest and coldest over a scope, as
+        {"hi": (°C, "YYYY-MM-DD"), "lo": (...), "days": n} — or None."""
+        today = today or date.today()
+        if scope == "month":
+            keep = lambda d: d.startswith(today.strftime("%Y-%m-"))
+        elif scope == "year":
+            keep = lambda d: d.startswith(today.strftime("%Y-"))
+        else:
+            keep = lambda d: True
+        rows = [(d, v) for d, v in self.temp_days.items() if keep(d)]
+        if not rows:
+            return None
+        hi = max(rows, key=lambda r: r[1]["hi"])
+        lo = min(rows, key=lambda r: r[1]["lo"])
+        return {"hi": (hi[1]["hi"], hi[0]), "lo": (lo[1]["lo"], lo[0]),
+                "days": len(rows)}
 
     def add_rain(self, day_iso, mm):
         if not mm:
@@ -739,6 +786,7 @@ class StationState:
 
     def _record_history(self):
         d = self.data
+        self.history.note_temp(date.today().isoformat(), d.get("temp_c"))
         self.history.add({
             "temp_c":  d.get("temp_c"),
             "pres_mb": d.get("pres_mb"),
@@ -876,6 +924,11 @@ class StationState:
                                   if now - e["ts"] <= 3 * 3600),
             },
             "sun": sun,
+            "records": {
+                "month": hist.temp_record("month"),
+                "year": hist.temp_record("year"),
+                "all": hist.temp_record("all"),
+            },
             "moon": {
                 "age_days": age, "illum": illum, "name": moon_name,
                 "waxing": age < SYNODIC / 2.0,

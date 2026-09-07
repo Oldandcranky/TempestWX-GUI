@@ -394,26 +394,54 @@ class Backfill(threading.Thread):
         self.history.save(force=True)
         return len(merged)
 
-    def sweep_rain(self, device, days=400, chunk_days=4):
-        """Walk back through the year totalling rain per day.
+    def sweep_daily(self, device, days=4000, chunk_days=4,
+                    max_requests=500):
+        """Walk back through the year building daily rain totals and daily
+        temperature highs and lows.
 
-        The 48-hour sample merge cannot fill month- and year-to-date, because
-        it only covers two days. This asks for older windows a few days at a
-        time and keeps only the daily totals, which is all those figures need
-        — no point holding a year of minute data in memory.
+        The 48-hour sample merge cannot fill month- or year-to-date figures,
+        nor say anything about the hottest day in June. This asks for older
+        windows a few days at a time and keeps only the per-day summary,
+        which is all those figures need — no point holding a year of minute
+        data in memory.
         """
         done_key = "rain_swept_at"
+        from_key = "swept_from"
         already = self.history.meta.get(done_key)
-        if already and time.time() - already < 20 * 3600:
+        reached = self.history.meta.get(from_key)
+        if already and time.time() - already < 20 * 3600 and reached:
             return 0                       # swept recently; nothing to do
 
         today = date.today()
-        start_of_year = date(today.year, 1, 1)
-        oldest = max(start_of_year, today - timedelta(days=days))
+        # Walk back from wherever we last reached, rather than a fixed year,
+        # and keep going until the station stops answering — that is its
+        # install date. A run is capped so a first sweep cannot hammer the
+        # API; the next run picks up where this one stopped.
+        try:
+            oldest = date.fromisoformat(reached) if reached else today
+        except (TypeError, ValueError):
+            oldest = today
+        oldest = min(oldest, today - timedelta(days=7))   # always redo the tail
+        floor = today - timedelta(days=days)
         totals = {}
-        cursor = oldest
+        temps = {}
         requests = 0
-        while cursor <= today and not self.stop_event.is_set():
+        empty_runs = 0
+        # forwards over the recent tail, then backwards into the archive
+        windows = []
+        cursor = oldest
+        while cursor <= today:
+            windows.append(cursor)
+            cursor = cursor + timedelta(days=chunk_days)
+        back = oldest
+        while back > floor and len(windows) < max_requests:
+            back = back - timedelta(days=chunk_days)
+            windows.append(back)
+
+        reached_back = oldest
+        for cursor in windows:
+            if self.stop_event.is_set() or requests >= max_requests:
+                break
             end = min(cursor + timedelta(days=chunk_days), today + timedelta(days=1))
             try:
                 raw = self._get(self.DEVICE_OBS % device, {
@@ -421,21 +449,43 @@ class Backfill(threading.Thread):
                     "time_end": int(time.mktime(end.timetuple())),
                 })
             except Exception:
-                cursor = end
                 continue                   # a gap is better than giving up
             for obs in (raw.get("obs") or []):
-                if not isinstance(obs, list) or len(obs) < 13 or not obs[12]:
+                if not isinstance(obs, list) or len(obs) < 13:
                     continue
                 try:
                     day = datetime.fromtimestamp(float(obs[0])).date().isoformat()
-                    totals[day] = totals.get(day, 0.0) + float(obs[12])
                 except (TypeError, ValueError, OSError):
                     continue
+                if obs[12]:
+                    try:
+                        totals[day] = totals.get(day, 0.0) + float(obs[12])
+                    except (TypeError, ValueError):
+                        pass
+                if len(obs) > 7 and obs[7] is not None:
+                    try:
+                        t = float(obs[7])
+                    except (TypeError, ValueError):
+                        continue
+                    cur = temps.get(day)
+                    if cur is None:
+                        temps[day] = {"lo": t, "hi": t}
+                    else:
+                        if t < cur["lo"]: cur["lo"] = t
+                        if t > cur["hi"]: cur["hi"] = t
             requests += 1
-            cursor = end
+            got = len(raw.get("obs") or [])
+            if cursor < oldest:            # only the backwards half can end
+                if got:
+                    empty_runs = 0
+                    reached_back = min(reached_back, cursor)
+                else:
+                    empty_runs += 1
+                    if empty_runs >= 4:
+                        break              # before the station existed
             self.stop_event.wait(0.4)      # be gentle with the API
 
-        added = 0
+        added = warm = 0
         today_iso = today.isoformat()
         for day, mm in totals.items():
             # never overwrite today, which we are still measuring live
@@ -443,10 +493,18 @@ class Backfill(threading.Thread):
                 continue
             self.history.rain_days[day] = round(mm, 3)
             added += 1
+        for day, mm in temps.items():
+            if day == today_iso or day in self.history.temp_days:
+                continue
+            self.history.temp_days[day] = {"lo": round(mm["lo"], 2),
+                                           "hi": round(mm["hi"], 2)}
+            warm += 1
         self.history.meta[done_key] = time.time()
+        self.history.meta[from_key] = reached_back.isoformat()
         self.history.save(force=True)
-        print("  backfill : swept %d days of rainfall in %d requests, "
-              "filled %d" % ((today - oldest).days, requests, added))
+        print("  backfill : swept back to %s in %d requests — %d rain days, "
+              "%d temperature days" % (reached_back.isoformat(), requests,
+                                       added, warm))
         sys.stdout.flush()
         return added
 
@@ -471,7 +529,7 @@ class Backfill(threading.Thread):
                 print("  backfill : merged %d observations from WeatherFlow"
                       % added)
                 sys.stdout.flush()
-                self.sweep_rain(device)
+                self.sweep_daily(device)
                 wait = self.REFRESH
             except Exception as e:
                 with self.lock:
@@ -487,7 +545,7 @@ class Backfill(threading.Thread):
 
 
 CARD_NAMES = ["temperature", "wind", "pressure", "rainfall", "astronomy",
-              "forecast", "lightning", "radar"]
+              "forecast", "lightning", "radar", "records"]
 
 
 class Config:
@@ -498,7 +556,8 @@ class Config:
     clear it but never read it.
     """
 
-    MAX_SLOTS = 6
+    # As many cards as there are; the grid arranges itself to suit.
+    MAX_SLOTS = len(CARD_NAMES)
 
     def __init__(self, path, defaults):
         self.path = path
@@ -920,7 +979,7 @@ def parse_args(argv):
                        "temperature,wind,pressure,rainfall,astronomy,forecast"),
                    help="comma-separated cards, in order. Choose from: "
                         "temperature, wind, pressure, rainfall, astronomy, "
-                        "forecast, lightning, radar, blank")
+                        "forecast, lightning, radar, records, blank")
     p.add_argument("--no-forecast", dest="forecast", action="store_false",
                    default=not env_default("TEMPEST_NO_FORECAST", ""),
                    help="do not fetch the Open-Meteo forecast (no outbound "
@@ -942,15 +1001,15 @@ def parse_args(argv):
         p.error("--lat and --lon must be given together")
 
     known = {"temperature", "wind", "pressure", "rainfall", "astronomy",
-             "forecast", "lightning", "radar", "blank"}
+             "forecast", "lightning", "radar", "records", "blank"}
     slots = [x.strip().lower() for x in (args.slots or "").split(",")
              if x.strip()]
     bad = [x for x in slots if x not in known]
     if bad:
         p.error("unknown card(s) in --slots: %s. Choose from: %s"
                 % (", ".join(bad), ", ".join(sorted(known))))
-    args.slots = slots[:6] or ["temperature", "wind", "pressure",
-                               "rainfall", "astronomy", "forecast"]
+    args.slots = slots or ["temperature", "wind", "pressure",
+                           "rainfall", "astronomy", "forecast"]
     return args
 
 

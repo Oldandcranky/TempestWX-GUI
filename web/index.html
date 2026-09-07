@@ -355,6 +355,33 @@ body.show-outlook #outlook{display:block}
 .day .pop{font-size:.85em;color:var(--cold);text-align:right}
 .day .lo{color:var(--cold);text-align:right;font-weight:600}
 .day .hi{color:var(--red);text-align:right;font-weight:600}
+/* Records card: the whole span the station has ever seen, with this month
+   and today marked on it. */
+.gauge-span{position:relative;width:100%;padding:.2em 0 1.5em}
+.gauge-span .track{
+  position:relative;height:.9em;border-radius:.45em;overflow:hidden;
+  background:linear-gradient(90deg,#2f6fd0 0%,#00bcd4 22%,#66bb6a 42%,
+             #f5c518 62%,#ff8837 80%,#ff5252 100%);
+  opacity:.85;
+}
+.gauge-span .month{
+  position:absolute;top:-.18em;bottom:-.18em;border-radius:.5em;
+  border:2px solid var(--text);opacity:.55;
+}
+.gauge-span .now{
+  position:absolute;top:-.45em;width:0;height:0;
+  border-left:.42em solid transparent;border-right:.42em solid transparent;
+  border-top:.5em solid var(--text);transform:translateX(-50%);
+}
+.gauge-span .nowlab{
+  position:absolute;top:1.15em;transform:translateX(-50%);white-space:nowrap;
+  font-size:var(--fs-label);font-weight:700;color:var(--text);
+}
+.gauge-span .end{
+  position:absolute;top:1.15em;font-size:var(--fs-label);color:var(--label);
+}
+.gauge-span .end.lo{left:0} .gauge-span .end.hi{right:0}
+
 .bar{position:relative;height:.5em;border-radius:.25em;background:var(--rule)}
 .bar span{position:absolute;top:0;bottom:0;border-radius:.25em;
           background:linear-gradient(90deg,var(--cold),var(--yellow),var(--red))}
@@ -1343,12 +1370,90 @@ function buildLightning(s){
   return c;
 }
 
+/* Hottest and coldest. Live readings widen today's high and low, and the
+   nightly sweep fills the rest of the year from the station's own record,
+   so this means something from the first run rather than only counting
+   from whenever the dashboard was last restarted. */
+function buildRecords(s){
+  const r = s.records || {};
+  const {card:c, body:b} = card("records","Records","thermometer","red",s.health);
+  const year = r.year, month = r.month, all = r.all;
+
+  if (!year) {
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption("Collecting — records build as history arrives"));
+    b.appendChild(el("div","mid"));
+    return c;
+  }
+
+  const nice = iso => {
+    if (!iso) return "";
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString([], {month:"short", day:"numeric"});
+  };
+
+  // the year's extremes lead, since that is the span people mean
+  b.appendChild(cells([
+    {k:"Hottest", v:fg(temp(year.hi[0])), u:prefs.temp, tone:"red",
+     sub:nice(year.hi[1])},
+    {k:"Coldest", v:fg(temp(year.lo[0])), u:prefs.temp, tone:"cold",
+     sub:nice(year.lo[1])},
+  ]));
+
+  // The graphic: every temperature the station has ever recorded, as one
+  // band. The outlined section is this month, the marker is right now — so
+  // you can see at a glance where today sits in the station's whole life.
+  const lo = (all || year).lo[0], hi = (all || year).hi[0];
+  const span = (hi - lo) || 1;
+  const pct = v => Math.max(0, Math.min(100, ((v - lo) / span) * 100));
+  const g = el("div","gauge-span");
+  const now = s.obs.temp_c;
+  let inner = '<div class="track"></div>';
+  if (month) {
+    const a = pct(month.lo[0]), bb = pct(month.hi[0]);
+    inner += '<div class="month" style="left:' + a.toFixed(1) +
+             '%;width:' + Math.max(1.5, bb - a).toFixed(1) + '%"></div>';
+  }
+  if (now != null) {
+    inner += '<div class="now" style="left:' + pct(now).toFixed(1) + '%"></div>' +
+             '<div class="nowlab" style="left:' + pct(now).toFixed(1) + '%">' +
+             esc(fg(temp(now)) + prefs.temp) + '</div>';
+  }
+  inner += '<span class="end lo">' + esc(fg(temp(lo)) + prefs.temp) + '</span>' +
+           '<span class="end hi">' + esc(fg(temp(hi)) + prefs.temp) + '</span>';
+  g.innerHTML = inner;
+  b.appendChild(g);
+
+  if (month) {
+    b.appendChild(cells([
+      {k:"Month high", v:fg(temp(month.hi[0])), u:prefs.temp, tone:"red",
+       small:true, sub:nice(month.hi[1])},
+      {k:"Month low", v:fg(temp(month.lo[0])), u:prefs.temp, tone:"cold",
+       small:true, sub:nice(month.lo[1])},
+    ]));
+  }
+  if (all && all.days > (year.days || 0)) {
+    b.appendChild(cells([
+      {k:"All-time high", v:fg(temp(all.hi[0])), u:prefs.temp, tone:"red",
+       small:true, sub:nice(all.hi[1])},
+      {k:"All-time low", v:fg(temp(all.lo[0])), u:prefs.temp, tone:"cold",
+       small:true, sub:nice(all.lo[1])},
+    ]));
+  }
+
+  const onRecord = (all && all.days) || year.days || 0;
+  b.appendChild(caption(onRecord + (onRecord === 1 ? " day" : " days") +
+                        " on record"));
+  return c;
+}
+
 function buildBlank(){ return el("div","card"); }
 
 const CARD_BUILDERS = {
   temperature: buildTemperature, wind: buildWind, pressure: buildPressure,
   rainfall: buildRainfall, astronomy: buildSky, forecast: buildForecast,
-  lightning: buildLightning, radar: buildRadar, blank: buildBlank,
+  lightning: buildLightning, radar: buildRadar, records: buildRecords,
+  blank: buildBlank,
 };
 
 /* Active weather alerts, worst first. */
@@ -1405,7 +1510,7 @@ function renderSettings(){
 
   const sheet = el("div","sheet");
   sheet.innerHTML = '<h2>Cards</h2>' +
-    '<p class="note">Tick the cards you want, drag to reorder. Up to six. ' +
+    '<p class="note">Tick the cards you want, drag to reorder. ' +
     'This layout is shared by every screen — the TV included.</p>';
 
   const list = el("div","cardlist");
@@ -1426,7 +1531,7 @@ function renderSettings(){
   apply.addEventListener("click", () => {
     const picked = [...list.querySelectorAll(".cardrow")]
       .filter(r => r.querySelector("input").checked)
-      .map(r => r.dataset.card).slice(0, 6);
+      .map(r => r.dataset.card);
     if (!picked.length) {
       status.className = "state bad";
       status.textContent = "Pick at least one card.";
@@ -1685,7 +1790,10 @@ function render(s){
     grid.style.removeProperty("grid-template-columns");
     grid.style.removeProperty("grid-template-rows");
   } else {
-    const cols = Math.max(1, Math.min(3, Math.ceil(cards.length / 2)));
+    // Keep cards roughly card-shaped whatever the count: two across up to
+    // four, three up to nine, four beyond that.
+    const n = cards.length;
+    const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
     grid.style.gridTemplateColumns = "repeat(" + cols + ",1fr)";
     grid.style.gridTemplateRows =
       "repeat(" + Math.ceil(cards.length / cols) + ",1fr)";

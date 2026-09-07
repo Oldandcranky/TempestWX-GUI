@@ -424,19 +424,30 @@ class AlertsFetcher(threading.Thread):
             "Accept": "application/geo+json",
         })
         with urllib.request.urlopen(req, timeout=20) as r:
-            raw = json.loads(r.read().decode("utf-8"))
+            return self.parse(json.loads(r.read().decode("utf-8")))
 
+    @classmethod
+    def parse(cls, raw):
+        """Reduce the GeoJSON to what the banner needs, worst first. Split
+        from the request so it can be run against real alerts rather than
+        waiting for weather."""
         out = []
         for feat in (raw.get("features") or []):
-            p = feat.get("properties") or {}
+            p = feat.get("properties") if isinstance(feat, dict) else None
+            if not isinstance(p, dict):
+                continue
+            event = (p.get("event") or "").strip()
+            headline = (p.get("headline") or "").strip()
+            if not event and not headline:
+                continue  # nothing to render; skip rather than show a blank banner
             out.append({
-                "event": p.get("event") or "Weather alert",
+                "event": event or "Weather alert",
                 "severity": p.get("severity") or "Unknown",
                 "urgency": p.get("urgency") or "",
-                "headline": (p.get("headline") or "").strip(),
+                "headline": headline,
                 "onset": p.get("onset"), "expires": p.get("expires"),
                 "sender": p.get("senderName") or "",
-                "rank": self.RANK.get(p.get("severity") or "Unknown", 0),
+                "rank": cls.RANK.get(p.get("severity") or "Unknown", 0),
             })
         out.sort(key=lambda a: a["rank"], reverse=True)
         return out

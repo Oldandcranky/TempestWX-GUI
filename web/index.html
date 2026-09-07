@@ -309,10 +309,17 @@ body.show-map #map{display:block}
 .alert .ev{text-transform:uppercase;letter-spacing:.06em}
 .alert .hl{font-weight:400;opacity:.85;overflow:hidden;text-overflow:ellipsis;
            white-space:nowrap}
-.alert.sev-extreme,.alert.sev-severe{color:var(--red)}
-.alert.sev-moderate{color:var(--orange, var(--accent))}
+/* Extreme is filled, not outlined: at TV distance a tornado warning must not
+   read as the same thing as a small-craft advisory. */
+.alert.sev-extreme{color:var(--bg);background:var(--red);border-color:var(--red);
+                   animation:alertpulse 2s ease-in-out infinite}
+.alert.sev-extreme .hl{opacity:.92}
+.alert.sev-severe{color:var(--red)}
+.alert.sev-moderate{color:var(--accent)}
 .alert.sev-minor{color:var(--yellow)}
 .alert.sev-unknown{color:var(--muted)}
+@keyframes alertpulse{50%{opacity:.72}}
+@media (prefers-reduced-motion:reduce){.alert.sev-extreme{animation:none}}
 body.tv .alert{font-size:clamp(15px,1.5vw,26px)}
 
 /* ── Burn-in mitigation ──────────────────────────────────────────────
@@ -1657,9 +1664,32 @@ const CARD_BUILDERS = {
 };
 
 /* Active weather alerts, worst first. */
+/* ?testalert renders sample alerts so the banner can be checked without
+   waiting for real weather. ?testalert alone shows one of every severity
+   (worst three fit); ?testalert=minor,unknown picks specific ones. */
+const TEST_ALERTS = (() => {
+  const q = new URLSearchParams(location.search);
+  if (!q.has("testalert")) return null;
+  const sample = {
+    extreme:  ["Tornado Warning",      "Tornado warning for northern McHenry County until 9:15 PM"],
+    severe:   ["Severe Thunderstorm Warning", "Sixty mph gusts and quarter-size hail moving east at 40 mph"],
+    moderate: ["Winter Weather Advisory", "Three to five inches of snow expected through Tuesday morning"],
+    minor:    ["Flood Advisory",       "Minor flooding of low-lying roads along the Kishwaukee River"],
+    unknown:  ["Special Weather Statement", "Patchy dense fog reducing visibility below a quarter mile"],
+  };
+  const rank = {extreme:4, severe:3, moderate:2, minor:1, unknown:0};
+  const want = (q.get("testalert") || "").split(",").map(x => x.trim().toLowerCase())
+                 .filter(x => x in sample);
+  const keys = want.length ? want : ["extreme","severe","moderate","minor","unknown"];
+  return keys.map(k => ({
+    event: sample[k][0], headline: "PREVIEW · " + sample[k][1],
+    severity: k.charAt(0).toUpperCase() + k.slice(1), rank: rank[k],
+  })).sort((a, b) => b.rank - a.rank);
+})();
+
 function renderAlerts(s){
   const host = document.getElementById("alerts");
-  const list = (s.alerts && s.alerts.alerts) || [];
+  const list = TEST_ALERTS || (s.alerts && s.alerts.alerts) || [];
   if (!list.length) { host.className = ""; host.replaceChildren(); return; }
   host.className = "show";
   host.replaceChildren(...list.slice(0, 3).map(a => {

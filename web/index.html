@@ -1820,6 +1820,9 @@ function updateFooter(s){
   if (s.source_error) {
     banner.textContent = s.source_error;
     banner.classList.add("show");
+  } else if (s.source_alive === false) {
+    banner.textContent = "The hub listener stopped — the server is restarting it.";
+    banner.classList.add("show");
   } else if (s.health === "waiting" && s.uptime_s > 60 && !s.demo) {
     // The classic deployment failure: the host cannot see the broadcasts.
     banner.textContent = "No hub packets after " + ago(s.uptime_s) +
@@ -1859,6 +1862,52 @@ async function pollWind(){
   } catch (e) { /* the 2 s snapshot poll reports connection trouble */ }
 }
 
+/* Watchdog. This page is meant to sit on a TV unattended for weeks, where
+   the failure that matters is the silent one: the NAS reboots, or the tab is
+   frozen and thawed, and the page sits there showing stale numbers with
+   nobody to notice. Polling alone recovers from a brief blip, but not from a
+   page whose scripts have got into a bad state — only a reload does that.
+
+   Two triggers: sustained loss of contact, and a very long uptime, which
+   also clears whatever a browser accumulates over weeks of rebuilding the
+   DOM every two seconds. Reloads are rate-limited across page loads so a
+   server that is genuinely down can never cause a reload loop. */
+const WATCH = {
+  startedAt: Date.now(),
+  failingSince: null,
+  failAfterMs: 4 * 60 * 1000,        // out of contact this long -> reload
+  maxUptimeMs: 24 * 60 * 60 * 1000,  // refresh a long-running display daily
+  minGapMs: 5 * 60 * 1000,           // never reload more often than this
+};
+
+function lastReloadAt(){
+  try { return Number(sessionStorage.getItem("reloadedAt") || 0); }
+  catch (e) { return 0; }
+}
+
+function watchdogReload(why){
+  const since = Date.now() - lastReloadAt();
+  if (since < WATCH.minGapMs) return;       // do not spin
+  if (document.visibilityState === "hidden") return;   // pointless while hidden
+  try { sessionStorage.setItem("reloadedAt", String(Date.now())); } catch (e) {}
+  console.warn("watchdog: reloading —", why);
+  location.reload();
+}
+
+function watchdogTick(){
+  const now = Date.now();
+  if (WATCH.failingSince && now - WATCH.failingSince > WATCH.failAfterMs) {
+    watchdogReload("no contact for " + Math.round((now - WATCH.failingSince) / 60000) + "m");
+    return;
+  }
+  // Only refresh on age when things are healthy, so this never competes
+  // with the failure path or interrupts someone mid-look.
+  if (!WATCH.failingSince && now - WATCH.startedAt > WATCH.maxUptimeMs &&
+      !document.body.classList.contains("show-settings")) {
+    watchdogReload("up for 24h");
+  }
+}
+
 let failures = 0;
 async function poll(){
   try {
@@ -1867,12 +1916,17 @@ async function poll(){
     const s = await res.json();
     if (!Object.keys(prefs).length) loadPrefs(s.units);
     failures = 0;
+    WATCH.failingSince = null;
     render(s);
   } catch (e) {
     failures++;
+    if (WATCH.failingSince == null) WATCH.failingSince = Date.now();
     if (failures > 2) {
       const banner = document.getElementById("banner");
-      banner.textContent = "Lost contact with the dashboard server — retrying…";
+      const mins = Math.round((Date.now() - WATCH.failingSince) / 60000);
+      banner.textContent = "Lost contact with the dashboard server — retrying" +
+        (mins >= 1 ? " (" + mins + "m; reloading at " +
+                     Math.round(WATCH.failAfterMs / 60000) + "m)" : "…");
       banner.classList.add("show");
       document.getElementById("footdot").className = "dot offline";
     }
@@ -2023,6 +2077,11 @@ document.addEventListener("keydown", (e) => {
   poll();
   setInterval(poll, 2000);
   setInterval(pollWind, 900);
+  setInterval(watchdogTick, 20000);
+  // A tab thawed after being frozen may hold minutes-old data; check at once.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") { poll(); watchdogTick(); }
+  });
   measureChrome();
   addEventListener("orientationchange", () => setTimeout(measureChrome, 250));
   let fitJob = null;

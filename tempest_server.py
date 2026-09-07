@@ -666,6 +666,9 @@ class Dashboard:
                                            self.stop)
         self.source.start()
 
+        self._source_restarts = 0
+        self._source_restart_at = 0
+
         self.forecast = None
         if args.forecast and args.lat is not None and args.lon is not None:
             self.forecast = ForecastFetcher(
@@ -719,10 +722,48 @@ class Dashboard:
             self.state.roll_day()
             self.history.save()
             self._save()
+            self._watch_source()
+
+    def _watch_source(self):
+        """Restart the packet source if its thread has died.
+
+        The listener exits on an unrecoverable socket error. Nothing else
+        would notice: the server keeps serving, the page keeps polling, and
+        the data quietly stops — the worst kind of failure for something
+        nobody is watching. Retries are spaced out so a genuinely unusable
+        port does not spin.
+        """
+        if self.stop.is_set() or self.source is None:
+            return
+        if self.source.is_alive():
+            self._source_failed_at = None
+            return
+        now = time.time()
+        last = getattr(self, "_source_restart_at", 0)
+        if now - last < 60:
+            return
+        self._source_restart_at = now
+        self._source_restarts = getattr(self, "_source_restarts", 0) + 1
+        err = getattr(self.source, "error", "") or "thread exited"
+        print("  watchdog : packet source stopped (%s) — restart #%d"
+              % (err, self._source_restarts))
+        sys.stdout.flush()
+        try:
+            if self.args.demo:
+                self.source = core.DemoSource(self.state.handle, self.stop)
+            else:
+                self.source = core.UdpListener(self.args.udp_port,
+                                               self.state.handle, self.stop)
+            self.source.start()
+        except Exception as e:
+            print("  watchdog : restart failed (%s)" % e.__class__.__name__)
+            sys.stdout.flush()
 
     def snapshot(self):
         snap = self.state.snapshot(self.args.lat, self.args.lon)
         snap["source_error"] = getattr(self.source, "error", "") or ""
+        snap["source_restarts"] = self._source_restarts
+        snap["source_alive"] = bool(self.source and self.source.is_alive())
         snap["uptime_s"] = time.time() - self.started
         snap["poll_ms"] = POLL_HINT_MS
         snap["units"] = {"temp": self.args.temp_unit, "wind": self.args.wind_unit,

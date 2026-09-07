@@ -959,10 +959,18 @@ class UdpListener(threading.Thread):
         threading.Thread.__init__(self, daemon=True)
         self.port = port
         self.on_message = on_message
+        # The shared event stops the whole application. `closed` stops only
+        # this listener, so shutting one down — or having one die — never
+        # takes the forecast, backfill and housekeeping threads with it.
         self.stop_event = stop_event or threading.Event()
+        self.closed = threading.Event()
         self.error = ""
         self.packets = 0
         self._sock = None
+
+    @property
+    def _done(self):
+        return self.stop_event.is_set() or self.closed.is_set()
 
     def run(self):
         try:
@@ -975,7 +983,7 @@ class UdpListener(threading.Thread):
             self.error = "Cannot bind UDP :%d — %s" % (self.port, e)
             return
 
-        while not self.stop_event.is_set():
+        while not self._done:
             try:
                 data, addr = sock.recvfrom(8192)
             except socket.timeout:
@@ -992,7 +1000,10 @@ class UdpListener(threading.Thread):
         self.close()
 
     def close(self):
-        self.stop_event.set()
+        """Stop just this listener. The application's own stop event is left
+        alone, so callers can replace a listener without shutting anything
+        else down."""
+        self.closed.set()
         try:
             if self._sock:
                 self._sock.close()
@@ -1007,11 +1018,15 @@ class DemoSource(threading.Thread):
         threading.Thread.__init__(self, daemon=True)
         self.on_message = on_message
         self.stop_event = stop_event or threading.Event()
+        self.closed = threading.Event()
         self.interval = interval
+
+    def close(self):
+        self.closed.set()
 
     def run(self):
         tick = 0
-        while not self.stop_event.is_set():
+        while not (self.stop_event.is_set() or self.closed.is_set()):
             now = time.time()
             m = demo_weather(now)
             wind = max(0.0, m["wind_ms"] + 0.5 * math.sin(now / 6.0))

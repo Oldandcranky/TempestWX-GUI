@@ -1,0 +1,1357 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Tempest Weather Station</title>
+<style>
+:root{
+  --bg:#050508; --card:#0c0d14; --card-edge:#ffffff0f; --inset:#ffffff05;
+  --inset-edge:#ffffff0a; --rule:#ffffff14;
+  --text:#e8eaed; --muted:#8899aa; --label:#6b7084; --faint:#ffffff59;
+  --accent:#ff8837; --amber:#ffab40; --cold:#00bcd4; --red:#ff5252;
+  --green:#66bb6a; --yellow:#f5c518; --purple:#b388ff;
+  --uv-low:#3ea72d; --uv-mod:#fff300; --uv-high:#f18b00;
+  --uv-vhigh:#e53210; --uv-extreme:#b567a4;
+  --radius:10px; --inset-radius:6px;
+  --gap:8px; --pad:clamp(10px,1.4vw,18px);
+  --fit:1;
+}
+html[data-theme="light"]{
+  --bg:#eceef2; --card:#ffffff; --card-edge:#00000014; --inset:#00000006;
+  --inset-edge:#0000000f; --rule:#0000001a;
+  --text:#14161c; --muted:#5c6472; --label:#7d8593; --faint:#00000073;
+  --accent:#d4620a; --amber:#c2700a; --cold:#00808f; --red:#d13030;
+  --green:#2f8f34; --yellow:#a8860b; --purple:#7c4bcc;
+}
+/* Weather Icons — Erik Flowers, SIL OFL 1.1.
+   Vendored in web/fonts/ so the dashboard needs no CDN on a private LAN.
+   Licence: web/fonts/LICENSE-weather-icons.txt */
+@font-face{
+  font-family:weathericons;
+  src:url("fonts/weathericons-regular-webfont.woff2") format("woff2");
+  font-weight:normal;font-style:normal;font-display:swap;
+}
+.wi{
+  font-family:weathericons;font-style:normal;font-weight:normal;
+  font-variant:normal;text-transform:none;line-height:1;
+  display:inline-block;speak:never;
+}
+.card-head .wi{font-size:1.25em;width:1.3em;text-align:center;flex:0 0 auto}
+.moonrow .wi{font-size:1.05em;margin-right:.25em;opacity:.85}
+.phase .wi{font-size:1.5em}
+.caption .wi{font-size:1.25em;vertical-align:-.15em;margin-right:.3em}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  font-variant-numeric:tabular-nums; -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+body.tv{cursor:none}
+body.tv .unit-toggle{cursor:default}
+
+#app{display:flex;flex-direction:column;height:100%;padding:var(--gap);gap:var(--gap)}
+#grid{
+  flex:1; display:grid; gap:var(--gap);
+  grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(2,1fr);
+  min-height:0;
+}
+@media (max-width:1100px){#grid{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(3,1fr)}}
+@media (max-width:720px){
+  #grid{grid-template-columns:1fr;grid-template-rows:repeat(6,minmax(230px,1fr))}
+  body{overflow:auto} #app{height:auto;min-height:100%}
+}
+
+.card{
+  background:var(--card); border:1px solid var(--card-edge);
+  border-radius:var(--radius); display:flex; flex-direction:column;
+  min-height:0; overflow:hidden; position:relative;
+  container-type:size;            /* cqh / cqw below resolve against the card */
+
+  /* Type is sized against the card, capped by its WIDTH as well as its
+     height so an unusual aspect ratio cannot blow the text up, and finally
+     multiplied by --fit, which the fit pass in JS trims if the content
+     still does not clear the card on this platform's fonts. */
+  --fs-hero:calc(clamp(min(2.55rem,6.375vmin),min(23cqh,17cqw),8.75rem)*var(--fit));
+  --fs-unit:calc(clamp(min(.85rem,2.125vmin),min(6.5cqh,5cqw),2.5rem)*var(--fit));
+  --fs-value:calc(clamp(min(.85rem,2.125vmin),min(6.5cqh,5.5cqw),2.5rem)*var(--fit));
+  --fs-value-sm:calc(clamp(min(.7rem,1.75vmin),min(4.8cqh,4.2cqw),1.9rem)*var(--fit));
+  --fs-title:calc(clamp(min(.55rem,1.375vmin),min(3.8cqh,3.4cqw),1.5rem)*var(--fit));
+  --fs-label:calc(clamp(min(.55rem,1.375vmin),min(3.8cqh,3.4cqw),1.5rem)*var(--fit));
+}
+.card-head{
+  display:flex; align-items:center; gap:8px; flex:0 0 auto;
+  padding:clamp(4px,2.2cqh,14px) var(--pad) clamp(2px,1cqh,8px);
+}
+.card-head svg{width:1.15em;height:1.15em;flex:0 0 auto}
+.card-title{
+  font-size:var(--fs-title); font-weight:600; letter-spacing:.09em;
+  text-transform:uppercase; color:var(--label);
+}
+.dot{width:.42em;height:.42em;border-radius:50%;margin-left:auto;background:var(--faint);flex:0 0 auto}
+.dot.live{background:var(--green)} .dot.stale{background:var(--accent)}
+.dot.offline{background:var(--red)} .dot.waiting{background:var(--faint)}
+
+.card-body{
+  flex:1; min-height:0; display:flex; flex-direction:column;
+  justify-content:center; gap:clamp(2px,1.2cqh,9px);
+  padding:0 var(--pad) clamp(4px,2cqh,14px);
+}
+.card-body > .mid{flex:1 1 auto;min-height:0}
+.hero{text-align:center;line-height:1;white-space:nowrap}
+.hero .v{font-size:var(--fs-hero);font-weight:700;letter-spacing:-.02em;line-height:1}
+.hero .u{font-size:var(--fs-unit);font-weight:500;color:var(--label);margin-left:.14em}
+.hero.amber .v{color:var(--amber)} .hero.cold .v{color:var(--cold)}
+.hero.yellow .v{color:var(--yellow)}
+.unit-toggle{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.unit-toggle:hover .v{filter:brightness(1.12)}
+
+.row{
+  background:var(--inset); border:1px solid var(--inset-edge);
+  border-radius:var(--inset-radius); display:flex; align-items:stretch;
+  padding:clamp(.15rem,1.2cqh,.6rem) calc(var(--pad)*.6); flex:0 0 auto;
+}
+.row.grow{flex:1 1 auto;min-height:0}
+.cell{flex:1;display:flex;flex-direction:column;align-items:center;
+      justify-content:center;gap:.22em;min-width:0;text-align:center}
+.cell.inline{flex-direction:row;gap:.5em}
+.cell + .cell{border-left:1px solid var(--rule)}
+.k{font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;
+   text-transform:uppercase;color:var(--label);white-space:nowrap}
+.v{font-size:var(--fs-value);font-weight:600;white-space:nowrap;line-height:1.15}
+.v.sm{font-size:var(--fs-value-sm)}
+.v .u{font-size:.72em;font-weight:400;color:var(--label);margin-left:.18em}
+.sub{font-size:var(--fs-label);color:var(--label);white-space:nowrap}
+.cold{color:var(--cold)} .red{color:var(--red)} .accent{color:var(--accent)}
+.uv-low{color:var(--uv-low)} .uv-mod{color:var(--uv-mod)}
+.uv-high{color:var(--uv-high)} .uv-vhigh{color:var(--uv-vhigh)}
+.uv-extreme{color:var(--uv-extreme)}
+.green{color:var(--green)} .yellow{color:var(--yellow)} .muted{color:var(--label)}
+.caption{
+  text-align:center;font-size:var(--fs-label);font-weight:600;line-height:1.3;
+  flex:0 0 auto;
+  letter-spacing:.085em;text-transform:uppercase;color:var(--label);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.chip{
+  display:inline-block;padding:.15em .6em;border-radius:5px;
+  background:var(--inset);border:1px solid var(--inset-edge);
+  font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;
+  text-transform:uppercase;color:var(--label);
+}
+.uv-chip{border:none}
+.stack{display:flex;flex-direction:column;align-items:center;gap:.2em}
+
+svg.plot{width:100%;height:100%;display:block;overflow:visible}
+
+/* Wind card backdrop: a tree that leans and rustles with the real wind. */
+.card{position:relative}
+.tree{
+  position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);
+  width:min(76cqw,60cqh,26rem);aspect-ratio:200/220;
+  opacity:.42;pointer-events:none;z-index:0;
+}
+.tree svg{width:100%;height:100%;display:block}
+.tree .crown{transform-origin:50% 88%;animation:sway var(--sway,6s) ease-in-out infinite}
+.tree .crown .leafA{transform-origin:50% 88%;animation:sway calc(var(--sway,6s)*.72) ease-in-out infinite}
+@keyframes sway{
+  0%,100%{transform:rotate(calc(var(--lean,2deg) * -1))}
+  50%    {transform:rotate(var(--lean,2deg))}
+}
+@media (prefers-reduced-motion:reduce){
+  .tree .crown,.tree .crown .leafA{animation:none}
+}
+.card-body,.card-head{position:relative;z-index:1}
+
+.badge{
+  display:inline-block;padding:.1em .5em;border-radius:4px;
+  font-size:var(--fs-label);font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;line-height:1.5;
+}
+.body-sun{
+  width:.95em;height:.95em;border-radius:50%;background:var(--yellow);
+  box-shadow:0 0 0 .5em color-mix(in srgb, var(--yellow) 16%, transparent),
+             0 0 1.4em color-mix(in srgb, var(--yellow) 45%, transparent);
+}
+.body-moon{width:.62em;height:.62em;border-radius:50%;background:var(--muted);opacity:.85}
+/* forecast card */
+.fc-now{text-align:center;flex:0 0 auto}
+.fc-cond{font-size:var(--fs-value-sm);font-weight:600;color:var(--muted)}
+.fc-line{display:flex;align-items:center;justify-content:center;gap:.25em;
+         line-height:1}
+.fc-line .wi{font-size:calc(var(--fs-hero)*.62)}
+.fc-temp{font-size:var(--fs-hero);font-weight:700;letter-spacing:-.02em}
+.fc-unit{font-size:var(--fs-unit);font-weight:500;color:var(--label);
+         align-self:flex-start;margin-top:.35em}
+.fc-strip{display:flex;gap:calc(var(--gap)*.75);flex:0 0 auto}
+.fc-day{
+  flex:1;min-width:0;text-align:center;background:var(--inset);
+  border:1px solid var(--inset-edge);border-radius:var(--inset-radius);
+  padding:clamp(.15rem,1.2cqh,.5rem) .2rem;
+  display:flex;flex-direction:column;align-items:center;gap:.1em;
+}
+.fc-day .k{font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;
+           text-transform:uppercase;color:var(--label)}
+.fc-ico .wi{font-size:calc(var(--fs-value)*1.25);color:var(--muted)}
+.fc-hl{font-size:var(--fs-value-sm);font-weight:600;white-space:nowrap}
+.fc-hl .sep{color:var(--faint);margin:0 .18em}
+.fc-pop{font-size:var(--fs-label);color:var(--cold);min-height:1em}
+.moonrow{display:flex;align-items:center;justify-content:space-around;gap:.6em;
+         flex:0 0 auto}
+#card-sky .card-body{gap:clamp(1px,.8cqh,6px)}
+#card-sky .mid.arc{min-height:clamp(40px,20cqh,190px)}
+.moonrow .item{display:flex;flex-direction:column;align-items:center;gap:.1em}
+.moonrow .k{font-size:var(--fs-label)}
+.moonrow .t{font-size:var(--fs-value-sm);font-weight:600;color:var(--muted)}
+.phase{display:flex;align-items:center;justify-content:center;gap:.45em}
+.phase svg{width:1.15em;height:1.15em;flex:0 0 auto}
+.corners{display:flex;justify-content:space-between;flex:0 0 auto;font-size:var(--fs-label);
+         color:var(--faint);letter-spacing:.06em;text-transform:uppercase}
+.headicon{margin-left:auto;display:flex;align-items:center;gap:.5em}
+.headicon svg{width:1.1em;height:1.1em;color:var(--label)}
+.ribbon{position:relative;width:100%;height:2.9em;flex:0 0 auto;overflow:hidden}
+.ribbon .strip{
+  position:absolute;inset:0;width:100%;
+  transform:translate3d(calc(50% - var(--shift,0%)),0,0);
+  will-change:transform;
+}
+.ribbon .base{position:absolute;left:-200%;right:-200%;bottom:.45em;height:1px;
+              background:var(--rule)}
+.ribbon .tick{position:absolute;bottom:.45em;width:1px;background:var(--rule)}
+.ribbon .tick.major{height:.6em;background:var(--muted)}
+.ribbon .tick.mid{height:.36em;background:var(--rule)}
+.ribbon .tick.minor{height:.2em;opacity:.65}
+.ribbon .lab{position:absolute;top:0;transform:translateX(-50%);
+             font-size:var(--fs-value-sm);font-weight:700;color:var(--faint)}
+.ribbon .lab.near{color:var(--text)}
+.ribbon .mark{position:absolute;left:50%;bottom:.05em;transform:translateX(-50%);
+              width:0;height:0;border-left:.42em solid transparent;
+              border-right:.42em solid transparent;
+              border-bottom:.42em solid var(--accent)}
+.mid{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+.mid.gauge{flex:0 1 auto;height:clamp(52px,28cqh,155px);min-height:0}
+.mid.arc{flex:1 1 auto;min-height:0}
+
+footer{
+  flex:0 0 auto;display:flex;align-items:center;gap:14px;white-space:nowrap;
+  padding:6px calc(var(--pad)*.6) 2px;
+  font-size:clamp(11px,.95vw,15px);
+  border-top:1px solid var(--card-edge);
+}
+footer .clock{font-weight:700;font-size:1.5em}
+footer .date{color:var(--label)}
+footer .spacer{flex:1}
+footer .meta{color:var(--faint);white-space:nowrap;overflow:hidden;
+             text-overflow:ellipsis}
+footer .controls{display:flex;gap:6px;flex:0 0 auto}
+footer button{
+  background:none;border:1px solid var(--card-edge);color:var(--label);
+  border-radius:6px;padding:.25em .6em;font:inherit;font-size:.9em;
+  cursor:pointer;
+}
+footer button:hover{color:var(--text)}
+body.tv footer .controls{display:none}
+/* Read from a couch: everything steps up, not just the hero. */
+body.tv{
+  --fs-hero:clamp(3rem,6.6vw,7rem);
+  --fs-unit:clamp(1rem,1.9vw,2.2rem);
+  --fs-value:clamp(1.1rem,2vw,2.4rem);
+  --fs-value-sm:clamp(.95rem,1.45vw,1.8rem);
+  --fs-title:clamp(.75rem,1.05vw,1.3rem);
+  --fs-label:clamp(.7rem,.95vw,1.2rem);
+}
+
+/* Weather map. The iframe is only created the first time it is opened, so
+   nothing contacts a third party until you ask for it. */
+#map{display:none;flex:1;min-height:0;border-radius:var(--radius);
+     overflow:hidden;border:1px solid var(--card-edge);background:var(--card)}
+#map iframe{width:100%;height:100%;border:0;display:block}
+#map .placeholder{display:flex;height:100%;align-items:center;
+                  justify-content:center;color:var(--label);
+                  font-size:clamp(12px,1.1vw,16px);text-align:center;padding:2em}
+body.show-map #grid{display:none}
+body.show-map #map{display:block}
+
+/* Native cross-fade between the two states — no library, no keyframable
+   JS. Browsers without the View Transitions API just swap instantly. */
+@keyframes vt-out{to{opacity:0;transform:scale(.97)}}
+@keyframes vt-in{from{opacity:0;transform:scale(1.03)}}
+@media (prefers-reduced-motion:no-preference){
+  ::view-transition-old(root){animation:vt-out .28s cubic-bezier(.4,0,.2,1) both}
+  ::view-transition-new(root){animation:vt-in .36s cubic-bezier(.4,0,.2,1) both}
+}
+@media (prefers-reduced-motion:reduce){
+  ::view-transition-old(root),::view-transition-new(root){animation:none}
+}
+
+#alerts{display:none;flex-direction:column;gap:6px}
+#alerts.show{display:flex}
+.alert{
+  padding:.5em .9em;border-radius:var(--inset-radius);
+  font-size:clamp(12px,1.05vw,17px);font-weight:600;
+  border:1px solid currentColor;display:flex;gap:.6em;align-items:baseline;
+}
+.alert .ev{text-transform:uppercase;letter-spacing:.06em}
+.alert .hl{font-weight:400;opacity:.85;overflow:hidden;text-overflow:ellipsis;
+           white-space:nowrap}
+.alert.sev-extreme,.alert.sev-severe{color:var(--red)}
+.alert.sev-moderate{color:var(--orange, var(--accent))}
+.alert.sev-minor{color:var(--yellow)}
+.alert.sev-unknown{color:var(--muted)}
+body.tv .alert{font-size:clamp(15px,1.5vw,26px)}
+
+#banner{
+  display:none;padding:.5em 1em;border-radius:var(--inset-radius);
+  background:var(--card);border:1px solid var(--red);color:var(--red);
+  font-size:var(--fs-value-sm);text-align:center;
+}
+#banner.show{display:block}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="banner"></div>
+  <div id="alerts"></div>
+  <div id="grid"></div>
+  <div id="map" aria-hidden="true"></div>
+  <footer>
+    <span class="clock" id="clock">--:--:--</span>
+    <span class="date" id="date"></span>
+    <span class="dot" id="footdot"></span>
+    <span class="meta" id="station"></span>
+    <span class="spacer"></span>
+    <span class="meta" id="meta"></span>
+    <span class="controls">
+      <button id="mapBtn" title="Weather map (w)" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+             style="vertical-align:-.12em">
+          <path d="M9 3.5 3.5 5.8v14.7L9 18.2l6 2.3 5.5-2.3V3.5L15 5.8Z"
+                stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+          <path d="M9 3.5v14.7M15 5.8v14.7" stroke="currentColor"
+                stroke-width="1.8"/>
+        </svg>
+      </button>
+      <button id="themeBtn" title="Light / dark (t)">◐</button>
+      <button id="tvBtn" title="TV layout (f)">TV</button>
+    </span>
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+/* ── unit handling ───────────────────────────────────────────────────── */
+const UNITS = {
+  temp: ["°F","°C","K"], wind: ["mph","km/h","m/s","kts"],
+  pres: ["inHg","hPa","kPa","mmHg"], rain: ["in","mm"], dist: ["mi","km"],
+};
+const prefs = {};
+
+function loadPrefs(serverUnits){
+  for (const k of Object.keys(UNITS)) {
+    let v = null;
+    try { v = localStorage.getItem("unit."+k); } catch (e) { /* private mode */ }
+    if (!UNITS[k].includes(v)) v = (serverUnits && serverUnits[k]) || UNITS[k][0];
+    prefs[k] = v;
+  }
+}
+function cycle(kind){
+  const list = UNITS[kind];
+  prefs[kind] = list[(list.indexOf(prefs[kind]) + 1) % list.length];
+  try { localStorage.setItem("unit."+kind, prefs[kind]); } catch (e) {}
+  if (last) render(last);
+}
+
+const temp = (c) => c == null ? null
+  : prefs.temp === "°F" ? c*9/5+32 : prefs.temp === "K" ? c+273.15 : c;
+const tempDelta = (c) => c == null ? null : (prefs.temp === "°F" ? c*9/5 : c);
+const wind = (ms) => ms == null ? null
+  : prefs.wind === "mph" ? ms*2.23694 : prefs.wind === "km/h" ? ms*3.6
+  : prefs.wind === "kts" ? ms*1.94384 : ms;
+const pres = (mb) => mb == null ? null
+  : prefs.pres === "inHg" ? mb*0.02953 : prefs.pres === "kPa" ? mb*0.1
+  : prefs.pres === "mmHg" ? mb*0.750062 : mb;
+const rain = (mm) => mm == null ? null : (prefs.rain === "in" ? mm/25.4 : mm);
+const dist = (km) => km == null ? null : (prefs.dist === "mi" ? km*0.621371 : km);
+const presDp = () => ({inHg:3, kPa:2})[prefs.pres] ?? 1;
+const rainDp = () => prefs.rain === "in" ? 2 : 1;
+
+const DASH = "—";
+const fx = (v, dp=1) => v == null ? DASH : v.toFixed(dp);
+const fg = (v, dp=1) => v == null ? DASH : String(Number(v.toFixed(dp)));
+const sign = (v, dp=1) => v == null ? DASH : (v > 0 ? "+" : "") + v.toFixed(dp);
+const DIRS = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
+              "S","SSW","SW","WSW","W","WNW","NW","NNW"];
+const compass = (d) => d == null ? DASH : DIRS[Math.round(d/22.5) % 16];
+
+function clock(ts){
+  if (ts == null) return DASH;
+  const d = new Date(ts*1000);
+  return d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+}
+function dayClock(ts){
+  if (ts == null) return DASH;
+  const d = new Date(ts*1000), now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const t = d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+  return sameDay ? t : d.toLocaleDateString([], {weekday:"short"}) + " " + t;
+}
+function shortDate(ts){
+  if (ts == null) return DASH;
+  return new Date(ts*1000).toLocaleDateString([], {month:"short", day:"numeric"});
+}
+function gap(sec){
+  if (sec == null) return DASH;
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 3600) return Math.round(sec/60)+"m";
+  return Math.floor(sec/3600)+"h"+String(Math.round(sec%3600/60)).padStart(2,"0")+"m";
+}
+function ago(sec){
+  if (sec == null) return DASH;
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec+"s";
+  if (sec < 3600) return Math.floor(sec/60)+"m "+String(sec%60).padStart(2,"0")+"s";
+  return Math.floor(sec/3600)+"h "+String(Math.floor(sec%3600/60)).padStart(2,"0")+"m";
+}
+const uvClass = (uv) => uv == null ? "muted"
+  : uv < 3 ? "uv-low" : uv < 6 ? "uv-mod" : uv < 8 ? "uv-high"
+  : uv < 11 ? "uv-vhigh" : "uv-extreme";
+
+/* ── tiny DOM helpers ────────────────────────────────────────────────── */
+const el = (tag, cls, html) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (html != null) n.innerHTML = html;
+  return n;
+};
+const esc = (s) => String(s).replace(/[&<>]/g, (c) =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+
+function hero(value, unit, tone, kind){
+  const n = el("div", "hero" + (tone ? " "+tone : "") + (kind ? " unit-toggle" : ""));
+  n.innerHTML = '<span class="v">'+esc(value)+'</span><span class="u">'+esc(unit)+'</span>';
+  if (kind) n.addEventListener("click", () => cycle(kind));
+  return n;
+}
+function cells(items, opts){
+  const row = el("div", "row" + (opts && opts.grow ? " grow" : ""));
+  for (const it of items) {
+    const c = el("div", "cell" + (it.inline ? " inline" : ""));
+    c.appendChild(el("span", "k", it.raw ? it.k : esc(it.k)));
+    const v = el("span", "v" + (it.small ? " sm" : "") + (it.tone ? " "+it.tone : ""));
+    v.innerHTML = esc(it.v) + (it.u ? '<span class="u">'+esc(it.u)+'</span>' : "");
+    c.appendChild(v);
+    if (it.sub) c.appendChild(el("span", "sub" +
+        (it.subTone ? " " + it.subTone : ""), esc(it.sub)));
+    row.appendChild(c);
+  }
+  return row;
+}
+const caption = (text, tone) =>
+  el("div", "caption" + (tone ? " "+tone : ""), esc(text));
+
+/* ── Weather Icons glyphs (see @font-face above) ─────────────────────── */
+const WI = {"day-sunny":"\uf00d","night-clear":"\uf02e","day-sunny-overcast":"\uf00c","night-alt-partly-cloudy":"\uf081","day-cloudy":"\uf002","night-alt-cloudy":"\uf086","cloudy":"\uf013","fog":"\uf014","sprinkle":"\uf01c","sleet":"\uf0b5","rain":"\uf019","rain-mix":"\uf017","snow":"\uf01b","showers":"\uf01a","thunderstorm":"\uf01e","storm-showers":"\uf01d","na":"\uf07b","thermometer":"\uf055","strong-wind":"\uf050","barometer":"\uf079","raindrop":"\uf078","lightning":"\uf016","sunrise":"\uf051","sunset":"\uf052","moonrise":"\uf0c9","moonset":"\uf0ca","day-sunny":"\uf00d","wind-beaufort-0":"\uf0b7","wind-beaufort-1":"\uf0b8","wind-beaufort-2":"\uf0b9","wind-beaufort-3":"\uf0ba","wind-beaufort-4":"\uf0bb","wind-beaufort-5":"\uf0bc","wind-beaufort-6":"\uf0bd","wind-beaufort-7":"\uf0be","wind-beaufort-8":"\uf0bf","wind-beaufort-9":"\uf0c0","wind-beaufort-10":"\uf0c1","wind-beaufort-11":"\uf0c2","wind-beaufort-12":"\uf0c3"};
+const WI_PHASES = ["\uf095","\uf096","\uf097","\uf098","\uf099","\uf09a","\uf09b","\uf09c","\uf09d","\uf09e","\uf09f","\uf0a0","\uf0a1","\uf0a2","\uf0a3","\uf0a4","\uf0a5","\uf0a6","\uf0a7","\uf0a8","\uf0a9","\uf0aa","\uf0ab","\uf0ac","\uf0ad","\uf0ae","\uf0af","\uf0b0"];
+
+/* One <i> carrying a glyph. aria-hidden: the value beside it carries meaning. */
+function wi(name, style){
+  const ch = WI[name];
+  if (!ch) return "";
+  return '<i class="wi" aria-hidden="true"' +
+         (style ? ' style="'+style+'"' : '') + '>' + ch + '</i>';
+}
+
+/* The font has the full 28-glyph lunation, so pick by the Moon's real age. */
+function wiMoon(ageDays){
+  if (ageDays == null) return WI_PHASES[0];
+  const SYN = 29.530588853;
+  const i = Math.floor(((ageDays % SYN) / SYN) * 28) % 28;
+  return WI_PHASES[i];
+}
+
+/* ── card icons ──────────────────────────────────────────────────────── */
+function card(id, title, glyph, tone, health){
+  const c = el("div", "card"); c.id = "card-"+id;
+  const head = el("div", "card-head");
+  head.innerHTML =
+    (typeof glyph === "string" && glyph.length === 1
+       ? '<i class="wi" aria-hidden="true" style="color:var(--'+tone+')">'+glyph+'</i>'
+       : wi(glyph, "color:var(--"+tone+")")) +
+    '<span class="card-title">'+esc(title)+'</span>'+
+    '<span class="dot '+health+'"></span>';
+  c.appendChild(head);
+  const body = el("div", "card-body");
+  c.appendChild(body);
+  return {card:c, body:body};
+}
+
+/* ── decorative + computed graphics ──────────────────────────────────── */
+
+/* A stylised tree behind the wind card. Lean and sway speed come from the
+   actual wind, so the card reads as "windy" before you read the number. */
+function tree(windMs){
+  const ms = windMs == null ? 0 : windMs;
+  const lean = Math.min(9, 1 + ms * 1.15).toFixed(2);      // degrees
+  const period = Math.max(1.1, 6.5 - ms * 0.55).toFixed(2); // seconds
+  const n = el("div", "tree");
+  n.style.setProperty("--lean", lean + "deg");
+  n.style.setProperty("--sway", period + "s");
+  n.innerHTML =
+    '<svg viewBox="0 0 200 220" xmlns="http://www.w3.org/2000/svg">' +
+      '<g fill="none" stroke="#4a3a2b" stroke-linecap="round">' +
+        '<path d="M100 220 C97 186 95 158 99 128" stroke-width="10"/>' +
+        '<path d="M99 156 C87 145 78 140 69 137" stroke-width="4.5"/>' +
+        '<path d="M99 146 C111 134 122 129 131 126" stroke-width="4.5"/>' +
+      '</g>' +
+      '<g class="crown">' +
+        '<ellipse cx="100" cy="96" rx="52" ry="40" fill="#2b4420"/>' +
+        '<ellipse cx="70"  cy="110" rx="30" ry="24" fill="#243a1b"/>' +
+        '<ellipse cx="132" cy="108" rx="28" ry="23" fill="#243a1b"/>' +
+        '<g class="leafA">' +
+          '<ellipse cx="94"  cy="72" rx="35" ry="27" fill="#365427"/>' +
+          '<ellipse cx="124" cy="84" rx="24" ry="19" fill="#3e5f2c"/>' +
+          '<ellipse cx="76"  cy="88" rx="22" ry="17" fill="#3e5f2c"/>' +
+          '<ellipse cx="104" cy="58" rx="20" ry="15" fill="#456a31"/>' +
+        '</g>' +
+      '</g>' +
+    '</svg>';
+  return n;
+}
+
+/* Moon glyph: the lit limb is an outer semicircle closed by the terminator
+   ellipse, so the shape follows the real illuminated fraction. */
+function moonGlyph(illum, waxing, tone){
+  const R = 9, f = Math.max(0, Math.min(1, illum == null ? 0 : illum));
+  const rx = (R * Math.abs(1 - 2 * f)).toFixed(2);
+  const outer = waxing ? 1 : 0;
+  const inner = (f > 0.5) ? outer : 1 - outer;
+  const d = "M 0 " + (-R) + " A " + R + " " + R + " 0 1 " + outer +
+            " 0 " + R + " A " + rx + " " + R + " 0 1 " + inner + " 0 " + (-R) + " Z";
+  return '<svg viewBox="-11 -11 22 22" aria-hidden="true">' +
+           '<circle r="' + R + '" fill="none" stroke="var(--rule)" stroke-width="1"/>' +
+           '<path d="' + d + '" fill="' + (tone || "var(--muted)") + '"/>' +
+         '</svg>';
+}
+
+/* WMO weather codes, as Open-Meteo reports them, mapped to a label and a
+   Weather Icons glyph (day and night variants where the font has both). */
+const WMO = {
+  0:["Clear","day-sunny","night-clear"],
+  1:["Mainly clear","day-sunny-overcast","night-alt-partly-cloudy"],
+  2:["Partly cloudy","day-cloudy","night-alt-cloudy"],
+  3:["Overcast","cloudy","cloudy"],
+  45:["Fog","fog","fog"], 48:["Rime fog","fog","fog"],
+  51:["Light drizzle","sprinkle","sprinkle"],
+  53:["Drizzle","sprinkle","sprinkle"],
+  55:["Heavy drizzle","sprinkle","sprinkle"],
+  56:["Freezing drizzle","sleet","sleet"], 57:["Freezing drizzle","sleet","sleet"],
+  61:["Light rain","rain","rain"], 63:["Rain","rain","rain"],
+  65:["Heavy rain","rain","rain"],
+  66:["Freezing rain","rain-mix","rain-mix"], 67:["Freezing rain","rain-mix","rain-mix"],
+  71:["Light snow","snow","snow"], 73:["Snow","snow","snow"],
+  75:["Heavy snow","snow","snow"], 77:["Snow grains","snow","snow"],
+  80:["Rain showers","showers","showers"], 81:["Rain showers","showers","showers"],
+  82:["Heavy showers","showers","showers"],
+  85:["Snow showers","snow","snow"], 86:["Snow showers","snow","snow"],
+  95:["Thunderstorm","thunderstorm","thunderstorm"],
+  96:["Storm with hail","storm-showers","storm-showers"],
+  99:["Storm with hail","storm-showers","storm-showers"],
+};
+function wmo(code, isDay){
+  const e = WMO[code];
+  if (!e) return {label:"—", glyph:"na"};
+  return {label:e[0], glyph: isDay === false ? e[2] : e[1]};
+}
+
+/* ── the six cards ───────────────────────────────────────────────────── */
+function buildTemperature(s){
+  const d = s.derived, o = s.obs;
+  const {card:c, body:b} = card("temp","Temperature","thermometer","amber",s.health);
+  b.appendChild(hero(fg(temp(o.temp_c)), prefs.temp, "amber", "temp"));
+  b.appendChild(cells([
+    {k:"Min", v:fg(temp(d.temp_min && d.temp_min.v)), u:d.temp_min ? prefs.temp : "", tone:"cold",
+     sub:d.temp_min ? clock(d.temp_min.t) : ""},
+    {k:"Max", v:fg(temp(d.temp_max && d.temp_max.v)), u:d.temp_max ? prefs.temp : "", tone:"red",
+     sub:d.temp_max ? clock(d.temp_max.t) : ""},
+  ]));
+  const tr = tempDelta(d.temp_1h_delta_c);
+  const d24 = tempDelta(d.temp_24h_delta_c);
+  b.appendChild(cells([
+    {k:"24hr", v:sign(d24), u:d24 == null ? "" : prefs.temp, inline:true, small:true},
+    {k:"Trend", v:sign(tr), u:tr == null ? "" : prefs.temp+"/hr", inline:true,
+     small:true, tone: tr == null ? "" : tr > 0 ? "red" : "cold"},
+  ]));
+  b.appendChild(cells([
+    {k:"Feels", v:fg(temp(d.feels_c)), u:d.feels_c == null ? "" : prefs.temp, inline:true, small:true},
+    {k:"Humid", v:o.rh == null ? DASH : Math.round(o.rh), u:o.rh == null ? "" : "%", inline:true, small:true},
+    {k:"Dew", v:fg(temp(d.dew_c)), u:d.dew_c == null ? "" : prefs.temp, inline:true, small:true},
+  ]));
+  if (d.comfort) b.appendChild(caption("☀ " + d.comfort, "yellow"));
+  return c;
+}
+
+function buildWind(s){
+  const d = s.derived, o = s.obs, r = s.rapid || {};
+  const {card:c, body:b} = card("wind","Wind","strong-wind","cold",s.health);
+  c.insertBefore(tree(o.wind_avg_ms), c.firstChild);
+
+  const rangeTxt = (d.wind_min_1h_ms == null || d.wind_max_1h_ms == null) ? ""
+    : "Range " + fg(wind(d.wind_min_1h_ms)) + " – " + fg(wind(d.wind_max_1h_ms));
+  const avgTxt = d.wind_avg_1h_ms == null ? ""
+    : "Avg " + fg(wind(d.wind_avg_1h_ms)) + " " + compass(d.wind_dir_1h);
+  b.appendChild(cells([
+    {k:"Wind", v:fg(wind(o.wind_avg_ms)), u:prefs.wind, small:true,
+     sub:[avgTxt || compass(o.wind_dir), rangeTxt].filter(Boolean).join("  ·  ")},
+    {k:"Gust", v:fg(wind(o.wind_gust_ms)), u:prefs.wind, small:true, tone:"accent",
+     sub:d.gust_max ? "Max " + fg(wind(d.gust_max.v)) + " · " + clock(d.gust_max.t) : ""},
+  ]));
+
+  const liveMs = r.speed_ms != null ? r.speed_ms : o.wind_avg_ms;
+  const liveDir = r.dir_deg != null ? r.dir_deg : o.wind_dir;
+  if (liveMs != null) windDial.speedTarget = liveMs;
+  const shownMs = windDial.speed != null ? windDial.speed : liveMs;
+  b.appendChild(hero(fg(wind(shownMs)), prefs.wind, "cold", "wind"));
+  b.appendChild(ribbon(liveDir));
+  const dir = el("div","caption wind-dir");
+  dir.style.fontSize = "var(--fs-value)";
+  dir.style.letterSpacing = "0";
+  dir.innerHTML = liveDir == null ? DASH
+    : '<span class="accent">'+compass(liveDir)+'</span> '+Math.round(liveDir)+"°";
+  b.appendChild(dir);
+
+  if (d.beaufort != null) {
+    const bf = el("div","caption");
+    bf.innerHTML = wi("wind-beaufort-"+d.beaufort) + " " +
+                   esc(("Beaufort "+d.beaufort+": "+d.beaufort_name).toUpperCase());
+    b.appendChild(bf);
+  }
+  const bits = [];
+  if (d.wind_run_m) bits.push("Run "+(prefs.dist === "mi"
+    ? (d.wind_run_m/1609.344).toFixed(1)+" mi"
+    : (d.wind_run_m/1000).toFixed(1)+" km"));
+  const st = [];
+  if (d.steadiness_today_pct != null) st.push(Math.round(d.steadiness_today_pct)+"% today");
+  if (d.steadiness_pct != null) st.push(Math.round(d.steadiness_pct)+"% 3h");
+  if (st.length) bits.push("Steady "+st.join("·"));
+  b.appendChild(caption(bits.join("  ·  ") || "Collecting wind run"));
+  return c;
+}
+
+/* The compass strip. It is drawn once across three full turns and then slid
+   under a fixed centre marker, so the card reads like a compass rose rather
+   than snapping to a new position on every poll. */
+const windDial = {target:null, shown:null, vel:0, raf:null,
+                  smooth:null, speed:null, speedTarget:null};
+const RIB_SPAN = 150;                       // degrees visible across the card
+const RIB_TURNS = 3;
+const RIB_STEP = 5.625;               // one tick per 5.625°, four per point                        // 1080° of ticks, so it never runs out
+
+function shortestDelta(from, to){
+  return ((to - from) % 360 + 540) % 360 - 180;
+}
+
+let ribbonNode = null;                      // built once, then reused
+
+function buildRibbon(){
+  const pct = 100 / RIB_SPAN;               // one degree, as % of the window
+  const box = el("div","ribbon");
+  const strip = el("div","strip");
+  strip.appendChild(el("div","base"));
+  const near = (deg, step) => Math.min(deg % step, step - (deg % step)) < 0.01;
+  const frag = document.createDocumentFragment();
+  for (let deg = 0; deg <= 360*RIB_TURNS; deg += RIB_STEP) {
+    const major = near(deg, 45), mid = !major && near(deg, 22.5);
+    const tick = el("div", "tick " + (major ? "major" : mid ? "mid" : "minor"));
+    tick.style.left = (deg*pct).toFixed(3) + "%";
+    frag.appendChild(tick);
+    if (major) {
+      const lab = el("div","lab", compass(((deg % 360)+360)%360));
+      lab.style.left = (deg*pct).toFixed(3) + "%";
+      frag.appendChild(lab);
+    }
+  }
+  strip.appendChild(frag);
+  box.appendChild(strip);
+  box.appendChild(el("div","mark"));
+  return box;
+}
+
+function ribbon(bearing){
+  const wrap = el("div","mid");
+  if (bearing == null && windDial.shown == null) {
+    wrap.appendChild(el("div","sub","no direction yet"));
+    return wrap;
+  }
+  if (!ribbonNode) ribbonNode = buildRibbon();
+  wrap.appendChild(ribbonNode);            // moved, not rebuilt
+
+  const mid = 360 * Math.floor(RIB_TURNS/2);
+  if (bearing != null) {
+    if (windDial.shown == null) {
+      windDial.shown = mid + bearing;
+      windDial.target = windDial.shown;
+      windDial.smooth = bearing;
+    } else {
+      setWindTarget(bearing);
+    }
+  }
+  startWindDial();
+  return wrap;
+}
+
+/* Damp gust-to-gust jitter before it reaches the dial, so the needle drifts
+   with the wind instead of twitching on every packet. */
+function setWindTarget(bearing){
+  if (windDial.shown == null) return;
+  if (windDial.smooth == null) windDial.smooth = bearing;
+  const step = shortestDelta(windDial.smooth, bearing);
+  windDial.smooth = (windDial.smooth + step * 0.5 + 360) % 360;
+  windDial.target = windDial.shown +
+                    shortestDelta(((windDial.shown % 360) + 360) % 360,
+                                  windDial.smooth);
+}
+
+function startWindDial(){
+  if (windDial.raf != null) return;
+  let last = performance.now();
+  const step = (now) => {
+    const dt = Math.min(0.1, (now - last)/1000);
+    last = now;
+    const strip = document.querySelector("#card-wind .strip");
+    if (!strip || windDial.target == null) { windDial.raf = null; return; }
+    const diff = windDial.target - windDial.shown;
+    if (Math.abs(diff) < 0.01 && Math.abs(windDial.vel) < 0.01) {
+      windDial.shown = windDial.target;
+      windDial.vel = 0;
+    } else {
+      // critically damped spring: no overshoot, no abrupt stop
+      const w = 4.2;
+      windDial.vel += (-2*w*windDial.vel - w*w*(-diff)) * dt;
+      windDial.shown += windDial.vel * dt;
+    }
+    // The pattern repeats every 360°, so re-centre invisibly when we drift.
+    const mid = 360 * Math.floor(RIB_TURNS/2);
+    if (windDial.shown > mid + 540) { windDial.shown -= 360; windDial.target -= 360; }
+    if (windDial.shown < mid - 540) { windDial.shown += 360; windDial.target += 360; }
+    strip.style.setProperty("--shift", (windDial.shown*(100/RIB_SPAN)).toFixed(3) + "%");
+
+    if (windDial.speedTarget != null) {
+      if (windDial.speed == null) windDial.speed = windDial.speedTarget;
+      windDial.speed += (windDial.speedTarget - windDial.speed)
+                        * Math.min(1, dt * 3.2);
+      const v = document.querySelector("#card-wind .hero .v");
+      if (v) v.textContent = fg(wind(windDial.speed));
+    }
+    windDial.raf = requestAnimationFrame(step);
+  };
+  windDial.raf = requestAnimationFrame(step);
+}
+
+function buildPressure(s){
+  const d = s.derived, o = s.obs;
+  const {card:c, body:b} = card("pres","Pressure","barometer","accent",s.health);
+  const lo = d.pres_min ? d.pres_min.v : null, hi = d.pres_max ? d.pres_max.v : null;
+  const g = gauge(o.pres_mb, lo, hi); g.classList.add("gauge"); b.appendChild(g);
+  b.appendChild(hero(o.pres_mb == null ? DASH : pres(o.pres_mb).toFixed(presDp()),
+                     prefs.pres, null, "pres"));
+  const rate = d.pres_1h_delta_mb == null ? null
+    : pres(o.pres_mb) - pres(o.pres_mb - d.pres_1h_delta_mb);
+  const arrow = rate == null ? "" : rate > 0.0005 ? "↗" : rate < -0.0005 ? "↘" : "→";
+  b.appendChild(caption(rate == null ? "Building a baseline"
+    : sign(rate, presDp())+" "+prefs.pres+"/hr  "+arrow, "green"));
+  b.appendChild(caption(d.pres_trend || "Steady",
+    d.pres_arrow === "down" ? "accent" : "green"));
+  const span = (hi != null && lo != null) ? pres(hi) - pres(lo) : null;
+  b.appendChild(cells([
+    {k:"Min", v:lo == null ? DASH : pres(lo).toFixed(presDp()), tone:"cold",
+     small:true, sub:d.pres_min ? clock(d.pres_min.t) : ""},
+    {k:"24hr", v:span == null ? DASH : span.toFixed(presDp()), small:true,
+     sub:prefs.pres},
+    {k:"Max", v:hi == null ? DASH : pres(hi).toFixed(presDp()), tone:"red",
+     small:true, sub:d.pres_max ? clock(d.pres_max.t) : ""},
+  ]));
+  b.appendChild(caption(d.pres_outlook || ""));
+  return c;
+}
+
+function gauge(mb, lo, hi){
+  const wrap = el("div","mid");
+  if (lo == null || hi == null || hi - lo < 0.6) { lo = (mb||1013)-3; hi = (mb||1013)+3; }
+  const frac = mb == null ? null : Math.max(0, Math.min(1, (mb-lo)/(hi-lo)));
+  const R = 42, cx = 50, cy = 46;
+  const pt = (f) => [cx - R*Math.cos(Math.PI*f), cy - R*Math.sin(Math.PI*f)];
+  const arc = (f) => {
+    const [x,y] = pt(f);
+    return "M "+(cx-R)+" "+cy+" A "+R+" "+R+" 0 0 1 "+x.toFixed(2)+" "+y.toFixed(2);
+  };
+  let needle = "";
+  if (frac != null) {
+    const [x,y] = pt(frac);
+    needle = '<line x1="'+cx+'" y1="'+cy+'" x2="'+x.toFixed(2)+'" y2="'+y.toFixed(2)+
+      '" stroke="var(--text)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>'+
+      '<circle cx="'+cx+'" cy="'+cy+'" r="2.6" fill="var(--text)"/>';
+  }
+  // small ticks above the arc at the quarter points
+  let ticks = "";
+  for (const [t, colour] of [[0.25,"var(--cold)"],[0.5,"var(--label)"],[0.75,"var(--accent)"]]) {
+    const [ix,iy] = pt(t), [ox,oy] = [cx - (R+4)*Math.cos(Math.PI*t), cy - (R+4)*Math.sin(Math.PI*t)];
+    ticks += '<line x1="'+ix.toFixed(2)+'" y1="'+iy.toFixed(2)+'" x2="'+ox.toFixed(2)+
+             '" y2="'+oy.toFixed(2)+'" stroke="'+colour+'" stroke-width="1.4" '+
+             'stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+  }
+  wrap.innerHTML =
+    '<svg class="plot" viewBox="0 0 100 58" preserveAspectRatio="xMidYMid meet">'+
+      ticks+
+      '<path d="'+arc(1)+'" fill="none" stroke="var(--rule)" stroke-width="4" stroke-linecap="round"/>'+
+      (frac ? '<path d="'+arc(frac)+'" fill="none" stroke="var(--accent)" stroke-width="4" stroke-linecap="round"/>' : "")+
+      '<circle cx="'+(cx-R)+'" cy="'+cy+'" r="2" fill="var(--cold)"/>'+
+      '<circle cx="'+(cx+R)+'" cy="'+cy+'" r="2" fill="var(--red)"/>'+
+      needle+
+    '</svg>';
+  return wrap;
+}
+
+function buildRainfall(s){
+  const d = s.derived;
+  const {card:c, body:b} = card("rain","Rainfall","raindrop","cold",s.health);
+  const raining = (s.obs.rain_mm || 0) > 0;
+
+  // a rate dial in the card header, like the reference
+  const dial = el("span","headicon");
+  const frac = Math.max(0, Math.min(1, rain(d.rain_rate_mm_h) / (prefs.rain === "in" ? 0.5 : 12)));
+  dial.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none">' +
+      '<circle cx="12" cy="12" r="9" stroke="var(--rule)" stroke-width="2"/>' +
+      '<path d="M12 12 L12 4.5" stroke="' + (raining ? "var(--cold)" : "var(--label)") +
+        '" stroke-width="2" stroke-linecap="round" ' +
+        'transform="rotate(' + (frac*270 - 135).toFixed(0) + ' 12 12)"/>' +
+      '<circle cx="12" cy="12" r="1.6" fill="var(--label)"/>' +
+    '</svg>';
+  c.querySelector(".card-head").insertBefore(dial, c.querySelector(".dot"));
+
+  const head = el("div");
+  const chip = el("span","chip");
+  chip.innerHTML =
+    '<svg viewBox="0 0 24 24" style="width:.85em;height:.85em;vertical-align:-.1em;' +
+    'margin-right:.35em"><path d="M12 3.2 7.4 10a5.4 5.4 0 1 0 9.2 0Z" fill="none" ' +
+    'stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>Raw';
+  head.appendChild(chip);
+  b.appendChild(head);
+  b.appendChild(hero(fx(rain(d.rain_rate_mm_h), rainDp()), prefs.rain+"/hr",
+                     raining ? "cold" : null, "rain"));
+  b.appendChild(caption(raining ? "Raining now" : "Currently dry",
+                        raining ? "cold" : null));
+  b.appendChild(el("div","mid"));
+  b.appendChild(cells([
+    {k:"Today", v:fx(rain(d.rain_today_mm), rainDp()), u:prefs.rain, inline:true, small:true},
+    {k:"Yday",  v:fx(rain(d.rain_yday_mm), rainDp()),  u:prefs.rain, inline:true, small:true},
+  ]));
+  b.appendChild(cells([
+    {k:"Month", v:fx(rain(d.rain_month_mm), rainDp()), u:prefs.rain, inline:true, small:true},
+    {k:"Year",  v:fx(rain(d.rain_year_mm), rainDp()),  u:prefs.rain, inline:true, small:true},
+  ]));
+  return c;
+}
+
+function buildSky(s){
+  const d = s.derived, o = s.obs, sun = s.sun || {}, moon = s.moon || {};
+  const {card:c, body:b} =
+    card("sky","Astronomy", wiMoon(moon.age_days), "yellow", s.health);
+  if (sun.rise && sun.set) {
+    b.appendChild(cells([
+      {k:wi("sunrise")+" Sunrise", v:clock(sun.rise), tone:"accent", small:true, raw:true},
+      {k:sun.next_label || "Next", v:gap(sun.next_s), small:true},
+      {k:wi("sunset")+" Sunset", v:clock(sun.set), tone:"cold", small:true, raw:true},
+    ]));
+  } else {
+    const note = sun.kind === "up" ? "Midnight sun — no sunset today"
+      : sun.kind === "down" ? "Polar night — no sunrise today"
+      : "Set --lat and --lon on the server for sun times";
+    b.appendChild(caption(note));
+  }
+
+  const a = skyArc(sun, moon); a.classList.add("arc"); b.appendChild(a);
+
+  b.appendChild(cells([
+    {k:"UV index", v:o.uv == null ? DASH : o.uv.toFixed(1),
+     tone:uvClass(o.uv), small:true, sub:d.uv_category || "", subTone:uvClass(o.uv)},
+    {k:"Brightness", v:o.lux == null ? DASH : Math.round(o.lux).toLocaleString(),
+     small:true, sub:"lux"},
+    {k:"Radiation", v:o.solar == null ? DASH : Math.round(o.solar),
+     small:true, sub:"W/m²"},
+  ]));
+
+  if (moon.rose || moon.next_rise) {
+    const row = el("div","moonrow");
+    const add = (k, t) => {
+      const i = el("div","item");
+      i.appendChild(el("span","k", k));      // k already carries a glyph
+
+      i.appendChild(el("span","t", esc(t)));
+      row.appendChild(i);
+    };
+    add(wi("moonrise")+"Rose", clock(moon.rose));
+    add(wi("moonset")+"Set", clock(moon.set));
+    add(wi("moonrise")+"Rises", moon.next_rise ? dayClock(moon.next_rise) : DASH);
+    b.appendChild(row);
+  }
+
+  const phase = el("div","phase");
+  phase.innerHTML = '<i class="wi" aria-hidden="true">' + wiMoon(moon.age_days) + '</i>' +
+    '<span class="caption" style="letter-spacing:.085em">' +
+    esc((moon.name || "") + "  ·  " + Math.round((moon.illum || 0)*100) + "% lit") +
+    '</span>';
+  b.appendChild(phase);
+
+  if (moon.new || moon.full) {
+    const cor = el("div","corners");
+    cor.appendChild(el("span", null, "New: " + shortDate(moon.new)));
+    cor.appendChild(el("span", null, "Full: " + shortDate(moon.full)));
+    b.appendChild(cor);
+  }
+  return c;
+}
+
+function skyArc(sun, moon){
+  // The curves are drawn in a stretched SVG so they always span the card, but
+  // the Sun and Moon are HTML dots on top — a non-uniform viewBox would squash
+  // a circle into an ellipse on tall cards.
+  const wrap = el("div","mid");
+  wrap.style.position = "relative";
+  const W = 100, H = 42, horizon = H - 3, amp = horizon - 3;
+  const curve = (x0, x1) => {
+    let p = "";
+    for (let i = 0; i <= 40; i++) {
+      const f = i/40, x = x0 + (x1-x0)*f;
+      p += (i ? "L" : "M") + x.toFixed(2) + " " +
+           (horizon - amp*Math.sin(Math.PI*f)).toFixed(2) + " ";
+    }
+    return p;
+  };
+  const now = Date.now()/1000;
+  const hasMoon = moon && moon.rose && moon.set && moon.set > moon.rose;
+
+  wrap.innerHTML =
+    '<svg class="plot" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+      '<line x1="0" y1="'+horizon+'" x2="'+W+'" y2="'+horizon+'" '+
+        'stroke="var(--rule)" vector-effect="non-scaling-stroke"/>'+
+      (hasMoon ? '<path d="'+curve(-18,118)+'" fill="none" stroke="var(--inset-edge)" '+
+        'stroke-width="1.1" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/>' : "")+
+      '<path d="'+curve(0,W)+'" fill="none" stroke="var(--inset-edge)" '+
+        'stroke-width="1.4" vector-effect="non-scaling-stroke"/>'+
+    '</svg>';
+
+  const place = (frac, x0, x1, cls, html) => {
+    const x = x0 + (x1-x0)*frac;          // already a 0..1 fraction of width
+    const y = horizon - amp*Math.sin(Math.PI*frac);
+    const n = el("div", cls, html);
+    n.style.position = "absolute";
+    n.style.left = (x*100).toFixed(2) + "%";
+    n.style.top = (y/H*100).toFixed(2) + "%";
+    n.style.transform = "translate(-50%,-50%)";
+    wrap.appendChild(n);
+  };
+
+  if (hasMoon) {
+    const mf = (now - moon.rose)/(moon.set - moon.rose);
+    if (mf >= 0 && mf <= 1) place(mf, -0.18, 1.18, "body-moon", "");
+  }
+  if (sun && sun.rise && sun.set && sun.set > sun.rise) {
+    const f = (now - sun.rise)/(sun.set - sun.rise);
+    if (f >= 0 && f <= 1) place(f, 0, 1, "body-sun", "");
+    else {
+      const note = el("div","caption");
+      note.style.position = "absolute";
+      note.style.left = "50%"; note.style.top = "42%";
+      note.style.transform = "translate(-50%,-50%)";
+      note.textContent = "Below horizon";
+      wrap.appendChild(note);
+    }
+  }
+  return wrap;
+}
+
+/* Forecast. The hub cannot predict anything, so this is the one card fed
+   from outside — Open-Meteo, fetched by the server, cached, and failing soft.
+   Where the station measures a value better than a model can (wind, feels
+   like, humidity) the card shows the station's own reading. */
+function buildForecast(s){
+  const fc = s.forecast || {};
+  const {card:c, body:b} = card("fc","Forecast","day-sunny","yellow",s.health);
+
+  if (!fc.available) {
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption(fc.error || "Forecast unavailable"));
+    b.appendChild(el("div","mid"));
+    return c;
+  }
+
+  const cur = fc.current || {};
+  const days = fc.days || [];
+  const today = days[0] || {};
+  const cond = wmo(cur.code, cur.is_day);
+  const d = s.derived, o = s.obs;
+
+  const head = el("div","fc-now");
+  const nowC = o.temp_c != null ? o.temp_c : cur.temp_c;
+  head.innerHTML =
+    '<div class="fc-cond">' + esc(cond.label) + '</div>' +
+    '<div class="fc-line">' +
+      wi(cond.glyph, "color:var(--yellow)") +
+      '<span class="fc-temp">' + esc(fg(temp(nowC))) + '</span>' +
+      '<span class="fc-unit">' + esc(prefs.temp) + '</span>' +
+    '</div>';
+  b.appendChild(head);
+
+  b.appendChild(cells([
+    {k:"Wind", v:fg(wind(o.wind_avg_ms)), u:o.wind_avg_ms == null ? "" : prefs.wind,
+     small:true, inline:true},
+    {k:"Feels", v:fg(temp(d.feels_c)), u:d.feels_c == null ? "" : prefs.temp,
+     small:true, inline:true},
+    {k:"Precip", v:today.pop == null ? DASH : today.pop, u:today.pop == null ? "" : "%",
+     small:true, inline:true},
+  ]));
+  b.appendChild(cells([
+    {k:"High", v:fg(temp(today.tmax_c)), u:today.tmax_c == null ? "" : prefs.temp,
+     tone:"red", small:true, inline:true},
+    {k:"Low", v:fg(temp(today.tmin_c)), u:today.tmin_c == null ? "" : prefs.temp,
+     tone:"cold", small:true, inline:true},
+    {k:"Humid", v:o.rh == null ? DASH : Math.round(o.rh), u:o.rh == null ? "" : "%",
+     small:true, inline:true},
+  ]));
+
+  const strip = el("div","fc-strip");
+  for (const day of days.slice(1, 4)) {
+    const w = wmo(day.code, true);
+    const cell = el("div","fc-day");
+    cell.innerHTML =
+      '<div class="k">' + esc(weekday(day.date)) + '</div>' +
+      '<div class="fc-ico">' + wi(w.glyph) + '</div>' +
+      '<div class="fc-hl"><span class="red">' + esc(fg(temp(day.tmax_c))) +
+        '</span><span class="sep">/</span><span class="cold">' +
+        esc(fg(temp(day.tmin_c))) + '</span></div>' +
+      '<div class="fc-pop">' + (day.pop == null ? "" : esc(day.pop + "%")) + '</div>';
+    strip.appendChild(cell);
+  }
+  b.appendChild(strip);
+  return c;
+}
+
+function weekday(iso){
+  if (!iso) return "";
+  const [y, m, dd] = iso.split("-").map(Number);
+  return new Date(y, m - 1, dd).toLocaleDateString([], {weekday:"short"});
+}
+
+/* Guarantee the content clears the card, whatever the platform's fonts do.
+   Sizing by container query gets close, but font metrics differ between
+   machines — the same card that fits with Inter on a Mac can overflow with
+   a fallback face elsewhere, and `overflow:hidden` then slices the text.
+   So after laying out we measure, and trim --fit until it genuinely fits.
+   Results are cached per card size, so the steady state costs one read. */
+const fitCache = new Map();
+const FIT_MIN = 0.6;
+
+function fitCards(){
+  for (const card of document.querySelectorAll(".card")) {
+    const body = card.querySelector(".card-body");
+    if (!body) continue;
+    const w = card.clientWidth, h = card.clientHeight;
+    if (!w || !h) continue;
+    const cached = fitCache.get(card.id);
+    let fit = (cached && cached.w === w && cached.h === h) ? cached.fit : 1;
+    card.style.setProperty("--fit", fit);
+
+    let guard = 0;
+    while (body.scrollHeight > body.clientHeight + 1 && fit > FIT_MIN && guard++ < 14) {
+      fit = Math.max(FIT_MIN, Math.round((fit - 0.035) * 1000) / 1000);
+      card.style.setProperty("--fit", fit);
+    }
+    // reclaim room if the card grew again
+    while (fit < 1 && guard++ < 26) {
+      const next = Math.min(1, Math.round((fit + 0.02) * 1000) / 1000);
+      card.style.setProperty("--fit", next);
+      if (body.scrollHeight > body.clientHeight + 1) {
+        card.style.setProperty("--fit", fit);
+        break;
+      }
+      fit = next;
+    }
+    fitCache.set(card.id, {w, h, fit});
+  }
+}
+
+let radarNode = null;                        // one iframe, reused
+
+function buildRadar(s){
+  const {card:c, body:b} = card("radar","Radar","na","cold",s.health);
+  c.querySelector(".card-head .wi").outerHTML =
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" ' +
+    'style="color:var(--cold)"><circle cx="12" cy="12" r="8.5" ' +
+    'stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="4" ' +
+    'stroke="currentColor" stroke-width="1.8"/><path d="M12 12 19 7" ' +
+    'stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  if (s.lat == null || s.lon == null) {
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption("Set the station location for radar"));
+    b.appendChild(el("div","mid"));
+    return c;
+  }
+  if (!radarNode) {
+    radarNode = el("div","radar-host");
+    radarNode.style.cssText = "flex:1;min-height:0;border-radius:6px;overflow:hidden";
+    const f = document.createElement("iframe");
+    f.src = windyUrl(s.lat, s.lon, 7);
+    f.loading = "lazy";
+    f.referrerPolicy = "no-referrer";
+    f.title = "Weather radar";
+    f.style.cssText = "width:100%;height:100%;border:0;display:block";
+    radarNode.appendChild(f);
+  }
+  b.appendChild(radarNode);                 // moved, never rebuilt
+  return c;
+}
+
+function buildLightning(s){
+  const d = s.derived;
+  const {card:c, body:b} = card("bolt","Lightning","lightning","yellow",s.health);
+  const n = d.strikes_today || 0;
+  b.appendChild(hero(String(n), "today", n ? "yellow" : null));
+  b.appendChild(caption(n ? "Strikes detected" : "No activity detected",
+                        n ? "yellow" : "label"));
+  b.appendChild(el("div","mid"));
+  const last = d.strike_last;
+  b.appendChild(cells([
+    {k:"Nearest", v:fg(dist(d.strike_nearest_km)),
+     u:d.strike_nearest_km == null ? "" : prefs.dist, small:true,
+     tone:(d.strike_nearest_km != null && d.strike_nearest_km < 10) ? "accent" : ""},
+    {k:"Last strike", v:last ? clock(last.ts) : DASH, small:true,
+     sub:last ? fg(dist(last.dist_km))+" "+prefs.dist : ""},
+  ]));
+  b.appendChild(cells([
+    {k:"Last hour", v:String(d.strikes_1h || 0), small:true},
+    {k:"Last 3 hr", v:String(d.strikes_3h || 0), small:true},
+    {k:"Avg dist", v:fg(dist(s.obs.strike_dist_km)),
+     u:s.obs.strike_dist_km == null ? "" : prefs.dist, small:true, tone:"label"},
+  ]));
+  return c;
+}
+
+function buildBlank(){ return el("div","card"); }
+
+const CARD_BUILDERS = {
+  temperature: buildTemperature, wind: buildWind, pressure: buildPressure,
+  rainfall: buildRainfall, astronomy: buildSky, forecast: buildForecast,
+  lightning: buildLightning, radar: buildRadar, blank: buildBlank,
+};
+
+/* Active weather alerts, worst first. */
+function renderAlerts(s){
+  const host = document.getElementById("alerts");
+  const list = (s.alerts && s.alerts.alerts) || [];
+  if (!list.length) { host.className = ""; host.replaceChildren(); return; }
+  host.className = "show";
+  host.replaceChildren(...list.slice(0, 3).map(a => {
+    const n = el("div", "alert sev-" + (a.severity || "unknown").toLowerCase());
+    n.innerHTML = '<span class="ev">' + esc(a.event) + '</span>' +
+                  '<span class="hl">' + esc(a.headline || "") + '</span>';
+    return n;
+  }));
+}
+
+/* ── render loop ─────────────────────────────────────────────────────── */
+let last = null;
+const grid = document.getElementById("grid");
+
+function render(s){
+  last = s;
+  if (document.body.classList.contains("show-map")) {
+    updateFooter(s);
+    return;                                   // cards are hidden; skip the work
+  }
+  const scroll = window.scrollY;
+  const slots = (s.slots && s.slots.length) ? s.slots
+    : ["temperature","wind","pressure","rainfall","astronomy","forecast"];
+  grid.replaceChildren(...slots.map(name =>
+    (CARD_BUILDERS[name] || buildBlank)(s)));
+  window.scrollTo(0, scroll);
+  renderAlerts(s);
+  updateFooter(s);
+  fitCards();
+}
+
+function updateFooter(s){
+  document.getElementById("footdot").className = "dot " + s.health;
+  document.getElementById("station").textContent =
+    s.station_name || (s.demo ? "Demo station" : "Waiting for a hub");
+  const meta = [];
+  if (s.obs.battery != null) meta.push(s.obs.battery.toFixed(2) + " V");
+  const mode = s.demo ? "Demo"
+    : {live:"Live", stale:"Stale", offline:"Offline", waiting:"Waiting"}[s.health];
+  meta.push(mode + " · " + (s.last_type || "no packets") + " · UDP :" + s.port);
+  if (s.age_s != null) meta.push("updated " + ago(s.age_s) + " ago");
+  document.getElementById("meta").textContent = meta.join("   ·   ");
+
+  const banner = document.getElementById("banner");
+  if (s.source_error) {
+    banner.textContent = s.source_error;
+    banner.classList.add("show");
+  } else if (s.health === "waiting" && s.uptime_s > 60 && !s.demo) {
+    // The classic deployment failure: the host cannot see the broadcasts.
+    banner.textContent = "No hub packets after " + ago(s.uptime_s) +
+      " on UDP :" + s.port + " — the hub broadcasts, so this host must be on " +
+      "the same subnet, and a Docker container must use host networking.";
+    banner.classList.add("show");
+  } else if (s.health === "offline") {
+    banner.textContent = "No packets for " + ago(s.age_s) +
+      " — the hub may be offline or off this subnet.";
+    banner.classList.add("show");
+  } else banner.classList.remove("show");
+}
+
+function tickClock(){
+  const now = new Date();
+  document.getElementById("clock").textContent =
+    now.toLocaleTimeString([], {hour:"numeric", minute:"2-digit", second:"2-digit"});
+  document.getElementById("date").textContent =
+    now.toLocaleDateString([], {weekday:"short", month:"short", day:"numeric"});
+}
+
+/* The hub sends rapid_wind every ~3 s, but the full snapshot is only polled
+   every 2 s. This asks for just the wind far more often — a few dozen bytes —
+   so the compass tracks the station rather than the poll clock. */
+async function pollWind(){
+  try {
+    const res = await fetch("api/wind", {cache:"no-store"});
+    if (!res.ok) return;
+    const w = await res.json();
+    if (w.dir == null || windDial.shown == null) return;
+    setWindTarget(w.dir);
+    if (w.ms != null) windDial.speedTarget = w.ms;
+    startWindDial();
+    const dir = document.querySelector("#card-wind .wind-dir");
+    if (dir) dir.innerHTML = '<span class="accent">' + compass(w.dir) +
+                             '</span> ' + Math.round(w.dir) + "\u00b0";
+  } catch (e) { /* the 2 s snapshot poll reports connection trouble */ }
+}
+
+let failures = 0;
+async function poll(){
+  try {
+    const res = await fetch("api/state", {cache:"no-store"});
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const s = await res.json();
+    if (!Object.keys(prefs).length) loadPrefs(s.units);
+    failures = 0;
+    render(s);
+  } catch (e) {
+    failures++;
+    if (failures > 2) {
+      const banner = document.getElementById("banner");
+      banner.textContent = "Lost contact with the dashboard server — retrying…";
+      banner.classList.add("show");
+      document.getElementById("footdot").className = "dot offline";
+    }
+  }
+}
+
+/* ── chrome ──────────────────────────────────────────────────────────── */
+function applyTheme(t){
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("theme", t); } catch (e) {}
+}
+function toggleTheme(){
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+}
+function setTv(on){
+  document.body.classList.toggle("tv", on);
+  const url = new URL(location.href);
+  if (on) url.searchParams.set("tv", "1"); else url.searchParams.delete("tv");
+  history.replaceState(null, "", url);
+}
+
+/* The map is a third-party embed (Windy — free, no account, no key). It is
+   the one part of the dashboard that needs internet on the *viewing* device;
+   everything else is served by the NAS. Nothing loads until first opened. */
+function windyUrl(lat, lon, zoom){
+  const q = new URLSearchParams({
+    lat: lat.toFixed(4), lon: lon.toFixed(4),
+    detailLat: lat.toFixed(4), detailLon: lon.toFixed(4),
+    zoom: String(zoom), level: "surface", overlay: "radar", product: "radar",
+    menu: "", message: "", marker: "true", calendar: "now",
+    type: "map", location: "coordinates", detail: "",
+    metricWind: prefs.wind === "km/h" ? "km/h" : prefs.wind === "kts" ? "kt"
+                : prefs.wind === "m/s" ? "m/s" : "mph",
+    metricTemp: prefs.temp === "°C" ? "°C" : "°F",
+  });
+  return "https://embed.windy.com/embed2.html?" + q.toString();
+}
+
+let mapLoaded = false;
+function ensureMap(){
+  if (mapLoaded) return;
+  const host = document.getElementById("map");
+  const lat = last && last.lat, lon = last && last.lon;
+  if (lat == null || lon == null) {
+    host.innerHTML = '<div class="placeholder">Set the station location on ' +
+      'the server (--lat / --lon) to show the map.</div>';
+    return;                                  // retry if coords arrive later
+  }
+  const f = document.createElement("iframe");
+  f.src = windyUrl(lat, lon, 8);
+  f.loading = "lazy";
+  f.referrerPolicy = "no-referrer";
+  f.title = "Weather radar map";
+  host.replaceChildren(f);
+  mapLoaded = true;
+}
+
+function toggleMap(force){
+  const swap = () => {
+    const on = force != null ? force : !document.body.classList.contains("show-map");
+    document.body.classList.toggle("show-map", on);
+    document.getElementById("map").setAttribute("aria-hidden", on ? "false" : "true");
+    document.getElementById("mapBtn").setAttribute("aria-pressed", on ? "true" : "false");
+    if (on) ensureMap();
+  };
+  if (document.startViewTransition) document.startViewTransition(swap);
+  else swap();
+}
+
+document.getElementById("mapBtn").addEventListener("click", () => toggleMap());
+document.getElementById("themeBtn").addEventListener("click", toggleTheme);
+document.getElementById("tvBtn").addEventListener("click",
+  () => setTv(!document.body.classList.contains("tv")));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "t") toggleTheme();
+  if (e.key === "f") setTv(!document.body.classList.contains("tv"));
+  if (e.key === "w") toggleMap();
+  if (e.key === "Escape" && document.body.classList.contains("show-map"))
+    toggleMap(false);
+});
+
+(function init(){
+  let saved = null;
+  try { saved = localStorage.getItem("theme"); } catch (e) {}
+  applyTheme(saved === "light" ? "light" : "dark");
+  if (new URLSearchParams(location.search).has("tv")) setTv(true);
+  loadPrefs(null);
+  tickClock();
+  setInterval(tickClock, 1000);
+  poll();
+  setInterval(poll, 2000);
+  setInterval(pollWind, 900);
+  let fitJob = null;
+  addEventListener("resize", () => {
+    clearTimeout(fitJob);
+    fitJob = setTimeout(() => { fitCache.clear(); fitCards(); }, 120);
+  });
+})();
+</script>
+</body>
+</html>

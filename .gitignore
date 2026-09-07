@@ -1,0 +1,14 @@
+# Generated at runtime next to the script
+tempest_history.json
+
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Web server working data
+tempest_server_state.json
+data/
+
+# Cached forecast, and the local secrets file
+tempest_forecast.json
+.env

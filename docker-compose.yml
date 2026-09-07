@@ -1,0 +1,33 @@
+# Synology Container Manager → Project → upload this file.
+#
+# host networking is REQUIRED: the hub broadcasts over UDP, and broadcasts do
+# not reach containers on Docker's bridge network. The NAS must also sit on the
+# same subnet/VLAN as the hub.
+services:
+  tempest:
+    build: .
+    # Or, if you built and pushed the image elsewhere:
+    # image: tempest-dashboard:latest
+    container_name: tempest-dashboard
+    network_mode: host
+    restart: unless-stopped
+    # Run as the host user that owns ./data. On Synology that is usually
+    # uid 1026 / gid 100 (users) — set PUID/PGID in a .env file beside this
+    # one, or the container will not be able to write its history.
+    user: "${PUID:-10001}:${PGID:-10001}"
+    environment:
+      TEMPEST_HTTP_PORT: "8444"       # DSM keeps 5000/5001; 8443 is often taken
+      TEMPEST_UDP_PORT: "50222"
+      # Sunrise/sunset are computed locally from these; nothing is sent out.
+      TEMPEST_LAT: ""                 # e.g. "45.4215"
+      TEMPEST_LON: ""                 # e.g. "-75.6972"
+      TEMPEST_NAME: ""                # footer label; defaults to the hub serial
+      TEMPEST_TEMP_UNIT: "°F"
+      TEMPEST_WIND_UNIT: "mph"
+      TEMPEST_PRES_UNIT: "inHg"
+      TEMPEST_RAIN_UNIT: "in"
+      TEMPEST_DIST_UNIT: "mi"
+      # TEMPEST_DEMO: "1"             # uncomment to run without a hub
+      TZ: "America/Chicago"           # drives the clock and sun times
+    volumes:
+      - ./data:/data                  # history and daily counters

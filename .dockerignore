@@ -1,0 +1,7 @@
+.git
+.gitignore
+README.md
+data/
+*.json
+__pycache__/
+*.py[cod]

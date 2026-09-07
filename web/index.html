@@ -253,9 +253,11 @@ footer{
 footer .clock{font-weight:700;font-size:1.5em}
 footer .date{color:var(--label)}
 footer .spacer{flex:1}
+/* min-width:0 matters: without it a nowrap flex item cannot shrink below
+   its text, so the long status line pushed the buttons off the edge. */
 footer .meta{color:var(--faint);white-space:nowrap;overflow:hidden;
-             text-overflow:ellipsis}
-footer .controls{display:flex;gap:6px;flex:0 0 auto}
+             text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+footer .controls{display:flex;gap:6px;flex:0 0 auto;margin-left:auto}
 footer button{
   background:none;border:1px solid var(--card-edge);color:var(--label);
   border-radius:6px;padding:.25em .6em;font:inherit;font-size:.9em;
@@ -524,6 +526,15 @@ body.show-settings #settings{display:block}
                           height:calc(100dvh - var(--chrome) - var(--gap));
                           min-height:320px}
   #alerts{scroll-snap-align:start}
+
+  /* No room for everything on a 360px footer. Keep the clock, the health
+     dot, the station and the buttons; drop the long status string, which is
+     the one thing repeated elsewhere on the cards. */
+  footer{gap:8px}
+  footer #meta{display:none}
+  footer .date{overflow:hidden;text-overflow:ellipsis}
+  footer .clock{font-size:1.25em}
+  footer button{padding:.3em .45em}
 }
 </style>
 </head>
@@ -1447,12 +1458,201 @@ function buildRecords(s){
   return c;
 }
 
+/* US EPA air quality bands. Open-Meteo covers North America for this, even
+   though its pollen model does not. */
+const AQI_BANDS = [
+  [50,  "Good",                           "#3ea72d"],
+  [100, "Moderate",                       "#d8c400"],
+  [150, "Unhealthy for sensitive groups", "#f18b00"],
+  [200, "Unhealthy",                      "#e53210"],
+  [300, "Very unhealthy",                 "#8f3f97"],
+  [1e9, "Hazardous",                      "#a02036"],
+];
+function aqiBand(v){
+  if (v == null) return ["—", "var(--muted)"];
+  for (const [limit, label, colour] of AQI_BANDS)
+    if (v <= limit) return [label, colour];
+  return ["—", "var(--muted)"];
+}
+
+function buildAirQuality(s){
+  const a = s.air || {};
+  const {card:c, body:b} = card("air","Air quality","fog","green",s.health);
+  if (!a.available) {
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption(a.error || "Air quality unavailable"));
+    b.appendChild(el("div","mid"));
+    return c;
+  }
+  const aqi = a.us_aqi;
+  const [label, colour] = aqiBand(aqi);
+
+  const hero = el("div","hero");
+  hero.innerHTML = '<span class="v" style="color:' + colour + '">' +
+    esc(aqi == null ? DASH : Math.round(aqi)) + '</span>' +
+    '<span class="u">US AQI</span>';
+  b.appendChild(hero);
+  b.appendChild(caption(label, null));
+  b.querySelector(".caption").style.color = colour;
+
+  // where this sits on the scale, 0 to 300
+  const g = el("div","gauge-span");
+  const pos = aqi == null ? null : Math.max(0, Math.min(100, (aqi / 300) * 100));
+  let inner = '<div class="track" style="background:linear-gradient(90deg,' +
+    '#3ea72d 0%,#3ea72d 16%,#d8c400 17%,#d8c400 33%,#f18b00 34%,#f18b00 50%,' +
+    '#e53210 51%,#e53210 66%,#8f3f97 67%,#8f3f97 100%)"></div>';
+  if (pos != null) {
+    inner += '<div class="now" style="left:' + pos.toFixed(1) + '%"></div>';
+  }
+  inner += '<span class="end lo">0</span><span class="end hi">300+</span>';
+  g.innerHTML = inner;
+  b.appendChild(g);
+
+  const n = v => v == null ? DASH : (v >= 100 ? Math.round(v) : v.toFixed(1));
+  b.appendChild(cells([
+    {k:"PM2.5", v:n(a.pm2_5), small:true, sub:"µg/m³"},
+    {k:"PM10",  v:n(a.pm10),  small:true, sub:"µg/m³"},
+    {k:"Ozone", v:n(a.ozone), small:true, sub:"µg/m³"},
+  ]));
+  b.appendChild(caption("Open-Meteo", "faint"));
+  return c;
+}
+
+/* Tomorrow.io reports each pollen type on a 0-5 index. */
+const POLLEN_WORDS = ["None", "Very low", "Low", "Medium", "High", "Very high"];
+const POLLEN_COLOURS = ["var(--muted)", "var(--uv-low)", "var(--uv-low)",
+                        "var(--uv-mod)", "var(--uv-high)", "var(--uv-vhigh)"];
+function pollenWord(v){
+  if (v == null) return ["—", "var(--muted)"];
+  const i = Math.max(0, Math.min(5, Math.round(v)));
+  return [POLLEN_WORDS[i], POLLEN_COLOURS[i]];
+}
+
+function buildPollen(s){
+  const p = s.pollen || {};
+  const {card:c, body:b} = card("pollen","Pollen","sprinkle","green",s.health);
+  if (!p.available) {
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption(p.error || "Pollen unavailable"));
+    const note = el("div","sub");
+    note.style.textAlign = "center";
+    note.textContent = /key/i.test(p.error || "")
+      ? "Check the key, and that the Pollen API is enabled on that project."
+      : "No free keyless source covers North America. Add a Google Pollen key in settings.";
+    b.appendChild(note);
+    b.appendChild(el("div","mid"));
+    return c;
+  }
+
+  const cats = p.categories || {};
+  // Prefer Google's own wording; fall back to the index only if absent.
+  const vals = [["tree", p.tree], ["grass", p.grass], ["weed", p.weed]]
+                 .filter(x => x[1] != null);
+  const worstKey = vals.length
+    ? vals.reduce((a, x) => x[1] > a[1] ? x : a)[0] : null;
+  const worstVal = worstKey ? (worstKey === "tree" ? p.tree
+                    : worstKey === "grass" ? p.grass : p.weed) : null;
+  const word = worstKey ? (cats[worstKey] || pollenWord(worstVal)[0]) : DASH;
+  const colour = pollenWord(worstVal)[1];
+
+  const hero = el("div","hero");
+  hero.innerHTML = '<span class="v" style="color:' + colour + '">' +
+    esc(word) + '</span>';
+  b.appendChild(hero);
+  b.appendChild(caption(worstKey ? "Highest: " + worstKey : "No pollen reported"));
+  b.appendChild(el("div","mid"));
+
+  const one = (label, key, v) => ({
+    k: label,
+    v: v == null ? DASH : (cats[key] || pollenWord(v)[0]),
+    small: true,
+    sub: v == null ? "out of season" : (Math.round(v) + " / 5"),
+  });
+  const row = cells([one("Tree", "tree", p.tree),
+                     one("Grass", "grass", p.grass),
+                     one("Weed", "weed", p.weed)]);
+  const cellVals = row.querySelectorAll(".cell .v");
+  [p.tree, p.grass, p.weed].forEach((v, i) => {
+    if (cellVals[i]) cellVals[i].style.color =
+      v == null ? "var(--faint)" : pollenWord(v)[1];
+  });
+  b.appendChild(row);
+
+  // Which plants are actually releasing right now is the useful part.
+  const plants = p.plants || [];
+  b.appendChild(caption(
+    plants.length ? "In season: " + plants.map(x => x.name).join(" · ")
+                  : "Nothing in season",
+    plants.length ? "muted" : "faint"));
+  b.appendChild(caption("Google Pollen", "faint"));
+  return c;
+}
+
+function buildHardware(s){
+  const h = s.hardware || {};
+  const st = h.station || {}, hub = h.hub || {};
+  const {card:c, body:b} = card("hardware","Station","na","cyan",s.health);
+  // no weather glyph suits hardware; draw a battery instead
+  const icon = c.querySelector(".card-head .wi");
+  if (icon) icon.outerHTML =
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" ' +
+    'style="color:var(--cyan)"><rect x="2" y="7" width="17" height="10" ' +
+    'rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M21 10.5v3" ' +
+    'stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>' +
+    '<rect x="4.5" y="9.5" width="8" height="5" rx="1" fill="currentColor"/></svg>';
+
+  const v = h.battery_v, pctv = h.battery_pct;
+  const tone = pctv == null ? "text" : pctv > 0.4 ? "green"
+             : pctv > 0.15 ? "accent" : "red";
+  b.appendChild(hero(v == null ? DASH : v.toFixed(2), "V",
+                     null, "var(--" + tone + ")"));
+
+  // charge level, and which way it is going
+  const g = el("div","gauge-span");
+  g.innerHTML = '<div class="track" style="background:var(--rule)">' +
+    '<div style="position:absolute;left:0;top:0;bottom:0;width:' +
+    ((pctv == null ? 0 : pctv * 100).toFixed(1)) + '%;background:var(--' +
+    tone + ');border-radius:.45em"></div></div>' +
+    '<span class="end lo">2.35 V</span><span class="end hi">2.80 V</span>';
+  b.appendChild(g);
+
+  const d24 = h.battery_24h_delta;
+  b.appendChild(caption(
+    pctv == null ? "Waiting for a reading"
+    : (Math.round(pctv * 100) + "% charge" +
+       (d24 == null ? "" : d24 > 0.005 ? " · charging"
+        : d24 < -0.005 ? " · discharging" : " · steady")),
+    tone === "green" ? "green" : tone === "red" ? "red" : "accent"));
+
+  const dbm = x => x == null ? DASH : Math.round(x) + " dBm";
+  b.appendChild(cells([
+    {k:"Firmware", v:st.firmware == null ? DASH : String(st.firmware), small:true,
+     sub:"station"},
+    {k:"Uptime", v:h.station_uptime || DASH, small:true, sub:"station"},
+    {k:"Signal", v:dbm(st.rssi), small:true, sub:"to hub"},
+  ]));
+  b.appendChild(cells([
+    {k:"Hub fw", v:hub.firmware == null ? DASH : String(hub.firmware), small:true},
+    {k:"Hub up", v:h.hub_uptime || DASH, small:true},
+    {k:"Hub signal", v:dbm(hub.rssi), small:true, sub:"to wifi"},
+  ]));
+
+  const faults = h.faults || [];
+  b.appendChild(caption(
+    faults.length ? faults.join(" · ")
+    : (st.sensor_status == null ? "Sensor status not reported yet"
+                                : "All sensors reporting"),
+    faults.length ? "red" : "green"));
+  return c;
+}
+
 function buildBlank(){ return el("div","card"); }
 
 const CARD_BUILDERS = {
   temperature: buildTemperature, wind: buildWind, pressure: buildPressure,
   rainfall: buildRainfall, astronomy: buildSky, forecast: buildForecast,
   lightning: buildLightning, radar: buildRadar, records: buildRecords,
+  air: buildAirQuality, pollen: buildPollen, hardware: buildHardware,
   blank: buildBlank,
 };
 
@@ -1543,89 +1743,114 @@ function renderSettings(){
   applyRow.append(apply, status);
   sheet.appendChild(applyRow);
 
-  // ── token ─────────────────────────────────────────────────────────────
-  const tokenSet = !!(cfg && cfg.token_set);
-  const h = el("div");
-  h.innerHTML = '<h2>WeatherFlow token</h2>' +
-    '<p class="note">Optional. With it the dashboard backfills your station\'s ' +
-    'real history, so 24-hour and monthly figures are right from the start ' +
-    'instead of only counting from when this started running. Get one at ' +
-    '<a href="https://tempestwx.com/settings/tokens" target="_blank" ' +
-    'rel="noopener noreferrer" style="color:var(--accent)">tempestwx.com</a>. ' +
-    'It is stored on the server and never sent back to a browser — including ' +
-    'this one.</p>';
-  sheet.appendChild(h);
+  // ── secrets ───────────────────────────────────────────────────────────
+  // One helper for both keys: reveal toggle, paste checks, and never
+  // rendering the stored value, because the server does not return it.
+  const secretField = (opts) => {
+    const wrap = el("div");
+    wrap.innerHTML = '<h2>' + esc(opts.title) + '</h2>' +
+                     '<p class="note">' + opts.note + '</p>';
 
-  const field = document.createElement("input");
-  field.type = "password";
-  field.autocomplete = "off";
-  field.spellcheck = false;
-  field.placeholder = tokenSet ? "A token is configured — type to replace it"
-                               : "Paste your personal access token";
-  // Reveal toggle — you cannot spot a stray space in a field of dots.
-  const eye = el("button", null, "");
-  eye.type = "button";
-  eye.setAttribute("aria-label", "Show token");
-  eye.setAttribute("aria-pressed", "false");
-  eye.style.cssText = "padding:.5em .7em;line-height:0";
-  const EYE_OPEN = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none">' +
-    '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" ' +
-    'stroke="currentColor" stroke-width="1.7"/>' +
-    '<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg>';
-  const EYE_SHUT = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none">' +
-    '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" ' +
-    'stroke="currentColor" stroke-width="1.7"/>' +
-    '<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/>' +
-    '<path d="M4 20 20 4" stroke="currentColor" stroke-width="1.7" ' +
-    'stroke-linecap="round"/></svg>';
-  eye.innerHTML = EYE_OPEN;
-  eye.addEventListener("click", () => {
-    const show = field.type === "password";
-    field.type = show ? "text" : "password";
-    eye.innerHTML = show ? EYE_SHUT : EYE_OPEN;
-    eye.setAttribute("aria-label", show ? "Hide token" : "Show token");
-    eye.setAttribute("aria-pressed", show ? "true" : "false");
-    field.focus();
-  });
+    const field = document.createElement("input");
+    field.type = "password";
+    field.autocomplete = "off";
+    field.spellcheck = false;
+    field.placeholder = opts.isSet ? "Already configured — type to replace it"
+                                   : opts.placeholder;
 
-  // Live check for the things that actually go wrong when pasting a token.
-  const hint = el("div","state");
-  field.addEventListener("input", () => {
-    const v = field.value;
-    if (!v) { hint.className = "state"; hint.textContent = ""; return; }
-    const notes = [v.length + " characters"];
-    let bad = false;
-    if (v !== v.trim()) { notes.push("leading or trailing space — trimmed on save"); bad = true; }
-    if (/\s/.test(v.trim())) { notes.push("contains a space in the middle"); bad = true; }
-    if (/[\u2018\u2019\u201c\u201d]/.test(v)) { notes.push("contains a curly quote"); bad = true; }
-    hint.className = "state" + (bad ? " bad" : " ok");
-    hint.textContent = notes.join(" · ");
-  });
+    const EYE = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none">' +
+      '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" ' +
+      'stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" ' +
+      'stroke="currentColor" stroke-width="1.7"/>';
+    const EYE_OPEN = EYE + '</svg>';
+    const EYE_SHUT = EYE + '<path d="M4 20 20 4" stroke="currentColor" ' +
+      'stroke-width="1.7" stroke-linecap="round"/></svg>';
 
-  const tState = el("div","state", tokenSet ? "Status: configured." : "Status: not set.");
-  const saveTok = el("button","primary","Save token");
-  saveTok.addEventListener("click", async () => {
-    if (!field.value.trim()) {
-      tState.className = "state bad"; tState.textContent = "Nothing to save.";
-      return;
-    }
-    const ok = await saveConfig({token: field.value}, tState);
-    field.value = "";
-    hint.className = "state"; hint.textContent = "";
-    field.type = "password"; eye.innerHTML = EYE_OPEN;
-    eye.setAttribute("aria-pressed", "false");
-    if (ok) { tState.className = "state ok"; tState.textContent = "Saved. Backfill starting."; }
-  });
-  const clearTok = el("button",null,"Clear");
-  clearTok.addEventListener("click", async () => {
-    const ok = await saveConfig({token: ""}, tState);
-    field.value = "";
-    hint.className = "state"; hint.textContent = "";
-    if (ok) { tState.className = "state"; tState.textContent = "Status: not set."; }
-  });
-  const tRow = el("div","row");
-  tRow.append(field, eye, saveTok, clearTok);
-  sheet.append(tRow, hint, tState);
+    const eye = el("button", null, "");
+    eye.type = "button";
+    eye.style.cssText = "padding:.5em .7em;line-height:0";
+    eye.setAttribute("aria-label", "Show");
+    eye.innerHTML = EYE_OPEN;
+    eye.addEventListener("click", () => {
+      const show = field.type === "password";
+      field.type = show ? "text" : "password";
+      eye.innerHTML = show ? EYE_SHUT : EYE_OPEN;
+      eye.setAttribute("aria-pressed", show ? "true" : "false");
+      field.focus();
+    });
+
+    const hint = el("div","state");
+    field.addEventListener("input", () => {
+      const v = field.value;
+      if (!v) { hint.className = "state"; hint.textContent = ""; return; }
+      const notes = [v.length + " characters"];
+      let bad = false;
+      if (v !== v.trim()) { notes.push("leading or trailing space — trimmed on save"); bad = true; }
+      if (/\s/.test(v.trim())) { notes.push("contains a space in the middle"); bad = true; }
+      if (/[\u2018\u2019\u201c\u201d]/.test(v)) { notes.push("contains a curly quote"); bad = true; }
+      hint.className = "state" + (bad ? " bad" : " ok");
+      hint.textContent = notes.join(" · ");
+    });
+
+    const state = el("div","state",
+                     opts.isSet ? "Status: configured." : "Status: not set.");
+    const reset = () => {
+      field.value = ""; hint.className = "state"; hint.textContent = "";
+      field.type = "password"; eye.innerHTML = EYE_OPEN;
+    };
+    const save = el("button","primary","Save");
+    save.addEventListener("click", async () => {
+      if (!field.value.trim()) {
+        state.className = "state bad"; state.textContent = "Nothing to save.";
+        return;
+      }
+      const patch = {}; patch[opts.field] = field.value;
+      const ok = await saveConfig(patch, state);
+      reset();
+      if (ok) { state.className = "state ok"; state.textContent = opts.savedText; }
+    });
+    const clear = el("button", null, "Clear");
+    clear.addEventListener("click", async () => {
+      const patch = {}; patch[opts.field] = "";
+      const ok = await saveConfig(patch, state);
+      reset();
+      if (ok) { state.className = "state"; state.textContent = "Status: not set."; }
+    });
+
+    const row = el("div","row");
+    row.append(field, eye, save, clear);
+    wrap.append(row, hint, state);
+    return wrap;
+  };
+
+  sheet.appendChild(secretField({
+    title: "WeatherFlow token",
+    field: "token",
+    isSet: !!(cfg && cfg.token_set),
+    placeholder: "Paste your personal access token",
+    savedText: "Saved. Backfill starting.",
+    note: 'Optional. With it the dashboard backfills your station\'s real ' +
+      'history, so 24-hour, monthly and record figures are right from the ' +
+      'start instead of only counting from when this started running. Get ' +
+      'one at <a href="https://tempestwx.com/settings/tokens" target="_blank" ' +
+      'rel="noopener noreferrer" style="color:var(--accent)">tempestwx.com</a>. ' +
+      'Stored on the server and never sent back to a browser, including this one.',
+  }));
+
+  sheet.appendChild(secretField({
+    title: "Pollen key",
+    field: "pollen_key",
+    isSet: !!(cfg && cfg.pollen_key_set),
+    placeholder: "Paste your Google Pollen API key",
+    savedText: "Saved. Fetching pollen.",
+    note: 'Optional, and only needed for the Pollen card. No free keyless ' +
+      'source covers North America — Open-Meteo\'s pollen model is Europe ' +
+      'only. Enable the Pollen API in a ' +
+      '<a href="https://console.cloud.google.com/" target="_blank" ' +
+      'rel="noopener noreferrer" style="color:var(--accent)">Google Cloud</a> ' +
+      'project and paste the key here for tree, grass and weed counts plus ' +
+      'which plants are in season. Handled exactly like the token above.',
+  }));
 
   if (cfg && cfg.backfill && cfg.backfill.status && cfg.backfill.status !== "off") {
     const b = cfg.backfill;

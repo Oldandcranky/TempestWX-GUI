@@ -210,6 +210,188 @@ class ForecastFetcher(threading.Thread):
             return out
 
 
+class AirQualityFetcher(threading.Thread):
+    """Air quality from Open-Meteo. Free, no account, no key, and it does
+    cover North America — unlike their pollen, which is a European model."""
+
+    ENDPOINT = "https://air-quality-api.open-meteo.com/v1/air-quality"
+    REFRESH = 1800
+    RETRY = 120
+    FIELDS = ["us_aqi", "pm2_5", "pm10", "ozone", "nitrogen_dioxide",
+              "sulphur_dioxide", "carbon_monoxide", "dust"]
+
+    def __init__(self, lat, lon, stop_event):
+        threading.Thread.__init__(self, daemon=True)
+        self.lat, self.lon = lat, lon
+        self.stop_event = stop_event
+        self.lock = threading.Lock()
+        self.data = None
+        self.error = ""
+
+    def fetch_once(self):
+        url = self.ENDPOINT + "?" + urllib.parse.urlencode({
+            "latitude": "%.4f" % self.lat, "longitude": "%.4f" % self.lon,
+            "current": ",".join(self.FIELDS), "timezone": "auto",
+        })
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = json.loads(r.read().decode("utf-8"))
+        cur = raw.get("current") or {}
+        out = {"fetched_at": time.time(), "source": "Open-Meteo"}
+        for f in self.FIELDS:
+            out[f] = cur.get(f)
+        return out
+
+    def run(self):
+        fails = 0
+        while not self.stop_event.is_set():
+            try:
+                fresh = self.fetch_once()
+                with self.lock:
+                    self.data, self.error = fresh, ""
+                fails = 0
+                wait = self.REFRESH
+            except Exception as e:
+                with self.lock:
+                    self.error = "Air quality unavailable (%s)" % e.__class__.__name__
+                fails += 1
+                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
+            self.stop_event.wait(wait)
+
+    def snapshot(self):
+        with self.lock:
+            if self.data is None:
+                return {"available": False, "error": self.error}
+            out = dict(self.data)
+            out["available"] = True
+            out["error"] = self.error
+            return out
+
+
+class PollenFetcher(threading.Thread):
+    """Tree, grass and weed pollen from the Google Pollen API.
+
+    No free keyless source covers North America — Open-Meteo's pollen model
+    is European, and the one keyless US endpoint is undocumented and gated.
+    So this needs a key. It is optional: without one the thread never starts
+    and the card says what is missing. The key is handled like the
+    WeatherFlow token — stored server-side, never returned to a browser.
+    """
+
+    ENDPOINT = "https://pollen.googleapis.com/v1/forecast:lookup"
+    REFRESH = 3 * 3600        # pollen moves slowly; be frugal with quota
+    RETRY = 900
+    TYPES = {"TREE": "tree", "GRASS": "grass", "WEED": "weed"}
+
+    def __init__(self, lat, lon, key, stop_event):
+        threading.Thread.__init__(self, daemon=True)
+        self.lat, self.lon, self.key = lat, lon, key
+        self.stop_event = stop_event
+        self.lock = threading.Lock()
+        self.data = None
+        self.error = ""
+
+    @staticmethod
+    def _index(info):
+        """(value, category) from an indexInfo block, tolerating absence."""
+        idx = (info or {}).get("indexInfo") or {}
+        val = idx.get("value")
+        try:
+            val = None if val is None else float(val)
+        except (TypeError, ValueError):
+            val = None
+        return val, idx.get("category") or ""
+
+    def fetch_once(self):
+        url = self.ENDPOINT + "?" + urllib.parse.urlencode({
+            "key": self.key,
+            "location.latitude": "%.4f" % self.lat,
+            "location.longitude": "%.4f" % self.lon,
+            "days": "1",
+            "languageCode": "en",
+        })
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
+                          "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return self.parse(json.loads(r.read().decode("utf-8")))
+
+    @classmethod
+    def parse(cls, raw):
+        """Pull the response apart. Split out from the request so it can be
+        exercised against a real payload — several fields are simply absent
+        when a pollen type is out of season, rather than present and zero."""
+        days = raw.get("dailyInfo") or []
+        if not days:
+            raise ValueError("no dailyInfo in response")
+        day = days[0]
+
+        out = {"fetched_at": time.time(), "source": "Google Pollen",
+               "region": raw.get("regionCode") or "",
+               "tree": None, "grass": None, "weed": None,
+               "categories": {}, "plants": []}
+        for info in (day.get("pollenTypeInfo") or []):
+            key = cls.TYPES.get(info.get("code"))
+            if not key:
+                continue
+            val, cat = cls._index(info)
+            out[key] = val
+            if cat:
+                out["categories"][key] = cat
+
+        # Which plants are actually in season, worst first — more useful
+        # than three abstract indices on their own.
+        plants = []
+        for info in (day.get("plantInfo") or []):
+            if not info.get("inSeason"):
+                continue
+            val, cat = cls._index(info)
+            if val is None:
+                continue
+            plants.append({"name": info.get("displayName") or info.get("code"),
+                           "value": val, "category": cat})
+        plants.sort(key=lambda p: p["value"], reverse=True)
+        out["plants"] = plants[:3]
+        return out
+
+    def run(self):
+        fails = 0
+        while not self.stop_event.is_set():
+            try:
+                fresh = self.fetch_once()
+                with self.lock:
+                    self.data, self.error = fresh, ""
+                fails = 0
+                wait = self.REFRESH
+            except urllib.error.HTTPError as e:
+                with self.lock:
+                    if e.code in (400, 401, 403):
+                        self.error = ("Pollen key rejected — check it is valid "
+                                      "and the Pollen API is enabled")
+                    elif e.code == 429:
+                        self.error = "Pollen quota exceeded"
+                    else:
+                        self.error = "Pollen unavailable (HTTP %s)" % e.code
+                fails += 1
+                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
+            except Exception as e:
+                with self.lock:
+                    self.error = "Pollen unavailable (%s)" % e.__class__.__name__
+                fails += 1
+                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
+            self.stop_event.wait(wait)
+
+    def snapshot(self):
+        with self.lock:
+            if self.data is None:
+                return {"available": False, "error": self.error}
+            out = dict(self.data)
+            out["available"] = True
+            out["error"] = self.error
+            return out
+
+
 class AlertsFetcher(threading.Thread):
     """Active weather alerts for the station's location, from the US National
     Weather Service. No key and no account — the NWS only asks that clients
@@ -545,7 +727,8 @@ class Backfill(threading.Thread):
 
 
 CARD_NAMES = ["temperature", "wind", "pressure", "rainfall", "astronomy",
-              "forecast", "lightning", "radar", "records"]
+              "forecast", "lightning", "radar", "records", "air", "pollen",
+              "hardware"]
 
 
 class Config:
@@ -564,6 +747,7 @@ class Config:
         self.lock = threading.Lock()
         self.slots = list(defaults.get("slots") or [])
         self.token = defaults.get("token") or ""
+        self.pollen_key = defaults.get("pollen_key") or ""
         self.load()
 
     def load(self):
@@ -578,12 +762,15 @@ class Config:
                 self.slots = slots
             if isinstance(saved.get("token"), str) and saved["token"]:
                 self.token = saved["token"]
+            if isinstance(saved.get("pollen_key"), str) and saved["pollen_key"]:
+                self.pollen_key = saved["pollen_key"]
 
     def save(self):
         try:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"slots": self.slots, "token": self.token}, f, indent=2)
+                json.dump({"slots": self.slots, "token": self.token,
+                           "pollen_key": self.pollen_key}, f, indent=2)
             os.chmod(tmp, 0o600)          # it holds a token
             os.replace(tmp, self.path)
         except OSError:
@@ -606,7 +793,8 @@ class Config:
         with self.lock:
             return {"slots": list(self.slots),
                     "cards": CARD_NAMES,
-                    "token_set": bool(self.token)}
+                    "token_set": bool(self.token),
+                    "pollen_key_set": bool(self.pollen_key)}
 
     def apply(self, patch):
         """Returns (changed_fields, error)."""
@@ -621,6 +809,23 @@ class Config:
                 if slots != self.slots:
                     self.slots = slots
                     changed.append("slots")
+            for field, label in (("pollen_key", "pollen_key"),):
+                if field not in patch:
+                    continue
+                val = patch.get(field)
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    if getattr(self, field):
+                        setattr(self, field, "")
+                        changed.append(label + "_cleared")
+                elif isinstance(val, str):
+                    val = val.strip()
+                    if len(val) > 200:
+                        return [], "that key looks too long"
+                    if val != getattr(self, field):
+                        setattr(self, field, val)
+                        changed.append(label + "_set")
+                else:
+                    return [], "key must be text"
             if "token" in patch:
                 tok = patch.get("token")
                 if tok is None or (isinstance(tok, str) and not tok.strip()):
@@ -678,11 +883,31 @@ class Dashboard:
         self.backfill = None
         self.start_backfill()
 
+        self.air = None
+        if args.lat is not None and args.lon is not None:
+            self.air = AirQualityFetcher(args.lat, args.lon, self.stop)
+            self.air.start()
+
+        self.pollen = None
+        self.start_pollen()
+
         self.alerts = None
         if args.alerts and args.lat is not None and args.lon is not None:
             self.alerts = AlertsFetcher(args.lat, args.lon, self.stop)
             self.alerts.start()
         threading.Thread(target=self._housekeeping, daemon=True).start()
+
+    def start_pollen(self):
+        """Start the pollen fetcher once a key exists. Called at boot and
+        again when a key is saved, so it does not need a restart."""
+        if self.pollen is not None and self.pollen.is_alive():
+            return False
+        key = self.config.pollen_key
+        if not key or self.args.lat is None or self.args.lon is None:
+            return False
+        self.pollen = PollenFetcher(self.args.lat, self.args.lon, key, self.stop)
+        self.pollen.start()
+        return True
 
     def start_backfill(self):
         """Start the backfill thread if a token is configured and it is not
@@ -771,6 +996,11 @@ class Dashboard:
                          "dist": self.args.dist_unit}
         snap["station_name"] = self.args.name or snap.get("serial") or ""
         snap["lat"], snap["lon"] = self.args.lat, self.args.lon
+        snap["air"] = (self.air.snapshot() if self.air
+                       else {"available": False, "error": "Set --lat and --lon"})
+        snap["pollen"] = (self.pollen.snapshot() if self.pollen
+                          else {"available": False,
+                                "error": "Add a pollen key in settings"})
         snap["alerts"] = (self.alerts.snapshot() if self.alerts
                           else {"alerts": [], "error": "", "checked": False})
         snap["slots"] = self.config.slots
@@ -862,6 +1092,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if "token_set" in changed:
             dash.start_backfill()
+        if "pollen_key_set" in changed:
+            dash.start_pollen()
         body = dash.config.public()
         body["ok"] = True
         body["changed"] = changed
@@ -1019,8 +1251,7 @@ def parse_args(argv):
                        "TEMPEST_SLOTS",
                        "temperature,wind,pressure,rainfall,astronomy,forecast"),
                    help="comma-separated cards, in order. Choose from: "
-                        "temperature, wind, pressure, rainfall, astronomy, "
-                        "forecast, lightning, radar, records, blank")
+                        + ", ".join(CARD_NAMES) + ", blank")
     p.add_argument("--no-forecast", dest="forecast", action="store_false",
                    default=not env_default("TEMPEST_NO_FORECAST", ""),
                    help="do not fetch the Open-Meteo forecast (no outbound "
@@ -1041,8 +1272,7 @@ def parse_args(argv):
     if (args.lat is None) != (args.lon is None):
         p.error("--lat and --lon must be given together")
 
-    known = {"temperature", "wind", "pressure", "rainfall", "astronomy",
-             "forecast", "lightning", "radar", "records", "blank"}
+    known = set(CARD_NAMES) | {"blank"}
     slots = [x.strip().lower() for x in (args.slots or "").split(",")
              if x.strip()]
     bad = [x for x in slots if x not in known]

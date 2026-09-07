@@ -247,6 +247,40 @@ def pressure_outlook(delta_mb):
     return "Strong clearing — brisk wind possible"
 
 
+SENSOR_FAULTS = [
+    (0x000000001, "lightning sensor failed"),
+    (0x000000002, "lightning noise"),
+    (0x000000004, "lightning disturber"),
+    (0x000000008, "pressure sensor failed"),
+    (0x000000010, "temperature sensor failed"),
+    (0x000000020, "humidity sensor failed"),
+    (0x000000040, "wind sensor failed"),
+    (0x000000080, "precipitation sensor failed"),
+    (0x000000100, "light / UV sensor failed"),
+]
+
+
+def sensor_faults(status):
+    """Human-readable faults from a device_status sensor_status bitfield."""
+    try:
+        bits = int(status)
+    except (TypeError, ValueError):
+        return []
+    return [name for mask, name in SENSOR_FAULTS if bits & mask]
+
+
+def format_uptime(seconds):
+    try:
+        s = int(seconds)
+    except (TypeError, ValueError):
+        return None
+    if s < 3600:
+        return "%dm" % (s // 60)
+    if s < 86400:
+        return "%dh %dm" % (s // 3600, (s % 3600) // 60)
+    return "%dd %dh" % (s // 86400, (s % 86400) // 3600)
+
+
 def battery_pct(volts):
     """Rough Tempest state of charge: 2.355 V empty, 2.80 V full."""
     if volts is None:
@@ -325,7 +359,7 @@ class History:
     """Rolling 48 h of samples, thinned to one a minute and saved to disk so
     trends and 24-hour extremes survive a restart."""
 
-    KEYS = ("temp_c", "pres_mb", "wind_ms", "gust_ms", "rh", "dir")
+    KEYS = ("temp_c", "pres_mb", "wind_ms", "gust_ms", "rh", "dir", "battery")
 
     def __init__(self, path=None):
         self.path = path or HISTORY_FILE
@@ -608,6 +642,8 @@ class StationState:
         self.strike_events = []          # [{ts, dist_km, energy}]
         self.strikes_today = 0
         self.last_precip_time = None
+        self.device_status = {}     # firmware, uptime, signal, sensor health
+        self.hub_status = {}
         self.serial = ""            # the station, e.g. ST-00012345
         self.hub_serial = ""        # the hub it reports through, HB-...
         self.last_packet = None
@@ -777,9 +813,30 @@ class StationState:
             if evt:
                 self.last_precip_time = evt[0]
 
-        elif mtype in ("device_status", "hub_status"):
+        elif mtype == "device_status":
             if msg.get("voltage") is not None:
                 self.data["battery"] = msg["voltage"]
+            self.device_status = {
+                "voltage": msg.get("voltage"),
+                "firmware": msg.get("firmware_revision"),
+                "uptime": msg.get("uptime"),
+                "rssi": msg.get("rssi"),
+                "hub_rssi": msg.get("hub_rssi"),
+                "sensor_status": msg.get("sensor_status"),
+                "ts": msg.get("timestamp") or time.time(),
+            }
+
+        elif mtype == "hub_status":
+            radio = msg.get("radio_stats") or []
+            self.hub_status = {
+                "firmware": msg.get("firmware_revision"),
+                "uptime": msg.get("uptime"),
+                "rssi": msg.get("rssi"),
+                "reset_flags": msg.get("reset_flags"),
+                "reboots": radio[1] if len(radio) > 1 else None,
+                "radio_status": radio[3] if len(radio) > 3 else None,
+                "ts": msg.get("timestamp") or time.time(),
+            }
         else:
             known = False
 
@@ -808,6 +865,7 @@ class StationState:
             "gust_ms": d.get("wind_gust_ms"),
             "rh":      d.get("rh"),
             "dir":     d.get("wind_dir"),
+            "battery": d.get("battery"),
         })
 
     # ── read side ─────────────────────────────────────────────────────────
@@ -833,6 +891,8 @@ class StationState:
             strikes_today = self.strikes_today
             serial = self.serial
             hub_serial = self.hub_serial
+            dev = dict(self.device_status)
+            hub = dict(self.hub_status)
             last_packet = self.last_packet
             last_type = self.last_packet_type
             health = self.health()
@@ -848,6 +908,7 @@ class StationState:
         _g_lo, g_hi = hist.extremes("gust_ms")
 
         t_24 = hist.value_at("temp_c", 24, tolerance=3600)
+        bat_24 = hist.value_at("battery", 24, tolerance=3600)
         t_1 = hist.value_at("temp_c", 1, tolerance=900)
         p_1 = hist.value_at("pres_mb", 1, tolerance=900)
         p_3 = hist.value_at("pres_mb", 3)
@@ -940,6 +1001,19 @@ class StationState:
                                   if now - e["ts"] <= 3 * 3600),
             },
             "sun": sun,
+            "hardware": {
+                "station": dict(dev),
+                "hub": dict(hub),
+                "battery_v": d.get("battery"),
+                "battery_pct": battery_pct(d.get("battery")),
+                "battery_24h_delta": (
+                    None if d.get("battery") is None or bat_24 is None
+                    else d.get("battery") - bat_24),
+                "faults": sensor_faults(dev.get("sensor_status")),
+                "station_uptime": format_uptime(dev.get("uptime")),
+                "hub_uptime": format_uptime(hub.get("uptime")),
+                "report_interval_s": d.get("report_interval"),
+            },
             "records": {
                 "month": hist.temp_record("month"),
                 "year": hist.temp_record("year"),

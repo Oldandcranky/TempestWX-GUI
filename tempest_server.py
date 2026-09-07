@@ -32,7 +32,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import date, datetime, timedelta
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -394,6 +394,62 @@ class Backfill(threading.Thread):
         self.history.save(force=True)
         return len(merged)
 
+    def sweep_rain(self, device, days=400, chunk_days=4):
+        """Walk back through the year totalling rain per day.
+
+        The 48-hour sample merge cannot fill month- and year-to-date, because
+        it only covers two days. This asks for older windows a few days at a
+        time and keeps only the daily totals, which is all those figures need
+        — no point holding a year of minute data in memory.
+        """
+        done_key = "rain_swept_at"
+        already = self.history.meta.get(done_key)
+        if already and time.time() - already < 20 * 3600:
+            return 0                       # swept recently; nothing to do
+
+        today = date.today()
+        start_of_year = date(today.year, 1, 1)
+        oldest = max(start_of_year, today - timedelta(days=days))
+        totals = {}
+        cursor = oldest
+        requests = 0
+        while cursor <= today and not self.stop_event.is_set():
+            end = min(cursor + timedelta(days=chunk_days), today + timedelta(days=1))
+            try:
+                raw = self._get(self.DEVICE_OBS % device, {
+                    "time_start": int(time.mktime(cursor.timetuple())),
+                    "time_end": int(time.mktime(end.timetuple())),
+                })
+            except Exception:
+                cursor = end
+                continue                   # a gap is better than giving up
+            for obs in (raw.get("obs") or []):
+                if not isinstance(obs, list) or len(obs) < 13 or not obs[12]:
+                    continue
+                try:
+                    day = datetime.fromtimestamp(float(obs[0])).date().isoformat()
+                    totals[day] = totals.get(day, 0.0) + float(obs[12])
+                except (TypeError, ValueError, OSError):
+                    continue
+            requests += 1
+            cursor = end
+            self.stop_event.wait(0.4)      # be gentle with the API
+
+        added = 0
+        today_iso = today.isoformat()
+        for day, mm in totals.items():
+            # never overwrite today, which we are still measuring live
+            if day == today_iso or day in self.history.rain_days:
+                continue
+            self.history.rain_days[day] = round(mm, 3)
+            added += 1
+        self.history.meta[done_key] = time.time()
+        self.history.save(force=True)
+        print("  backfill : swept %d days of rainfall in %d requests, "
+              "filled %d" % ((today - oldest).days, requests, added))
+        sys.stdout.flush()
+        return added
+
     def run(self):
         while not self.stop_event.is_set():
             try:
@@ -415,6 +471,7 @@ class Backfill(threading.Thread):
                 print("  backfill : merged %d observations from WeatherFlow"
                       % added)
                 sys.stdout.flush()
+                self.sweep_rain(device)
                 wait = self.REFRESH
             except Exception as e:
                 with self.lock:

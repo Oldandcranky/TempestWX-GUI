@@ -331,6 +331,7 @@ class History:
         self.path = path or HISTORY_FILE
         self.samples = deque(maxlen=HISTORY_MAX)
         self.rain_days = {}        # "YYYY-MM-DD" → mm
+        self.meta = {}             # bookkeeping, e.g. when rain was swept
         self._last_saved = 0.0
         self.load()
 
@@ -349,6 +350,9 @@ class History:
                     self.samples.append(s)
             except (TypeError, ValueError, KeyError):
                 continue
+        meta = raw.get("meta")
+        if isinstance(meta, dict):
+            self.meta.update(meta)
         days = raw.get("rain_days")
         if isinstance(days, dict):
             for k, v in days.items():
@@ -372,7 +376,8 @@ class History:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"samples": list(self.samples),
-                           "rain_days": self.rain_days}, f)
+                           "rain_days": self.rain_days,
+                           "meta": self.meta}, f)
             os.replace(tmp, self.path)
         except OSError:
             pass

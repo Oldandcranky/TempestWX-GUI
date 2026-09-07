@@ -42,6 +42,10 @@ import tempest_core as core
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(HERE, "web")
 
+# Icons the page links to. Listed one by one so the static route stays a
+# closed set rather than anything that happens to sit in web/.
+ICON_PATHS = ("/favicon.svg", "/icon-32.png", "/apple-touch-icon.png")
+
 # The only file types the static route will hand out.
 STATIC_TYPES = {
     ".woff2": "font/woff2",
@@ -1147,7 +1151,7 @@ class Handler(BaseHTTPRequestHandler):
                                             "health": state.health(),
                                             "version": core.VERSION}),
                            "application/json")
-            elif path.startswith("/fonts/"):
+            elif path.startswith("/fonts/") or path in ICON_PATHS:
                 self._serve_static(path)
             elif path == "/favicon.ico":
                 self._send(204, b"", "image/x-icon")

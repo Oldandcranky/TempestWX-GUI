@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Tempest Weather Station</title>
+  <!-- Sun behind a cloud. Deliberately only two shapes' worth of detail: it
+       has to survive being drawn 16 pixels wide in a browser tab. The cloud
+       lobes share one fill so they union into a single silhouette. -->
+  <rect width="64" height="64" rx="14" fill="#12141c"/>
+  <circle cx="23" cy="21" r="12.5" fill="#ff8837"/>
+  <g fill="#e8eaed">
+    <circle cx="38" cy="37" r="13"/>
+    <circle cx="23" cy="41" r="9.5"/>
+    <rect x="19" y="42" width="35" height="13" rx="6.5"/>
+  </g>
+</svg>

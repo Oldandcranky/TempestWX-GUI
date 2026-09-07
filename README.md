@@ -40,6 +40,7 @@ tempest_core.py      measurements, meteorology, sun and moon, history, UDP liste
 tempest_server.py    the web server, and the forecast, alert and backfill fetchers
 web/index.html       the dashboard — one file, no build step, no CDN
 web/fonts/           Weather Icons (SIL OFL 1.1), vendored
+web/favicon.svg      tab icon, with PNG fallbacks beside it for iOS
 Dockerfile           for Synology Container Manager
 docker-compose.yml
 ```

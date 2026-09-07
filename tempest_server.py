@@ -429,6 +429,102 @@ class Backfill(threading.Thread):
                     "error": self.error}
 
 
+CARD_NAMES = ["temperature", "wind", "pressure", "rainfall", "astronomy",
+              "forecast", "lightning", "radar"]
+
+
+class Config:
+    """Settings the dashboard can change about itself, shared by every viewer.
+
+    The WeatherFlow token lives here but is deliberately write-only: it is
+    never included in anything the server hands back, so a browser can set or
+    clear it but never read it.
+    """
+
+    MAX_SLOTS = 6
+
+    def __init__(self, path, defaults):
+        self.path = path
+        self.lock = threading.Lock()
+        self.slots = list(defaults.get("slots") or [])
+        self.token = defaults.get("token") or ""
+        self.load()
+
+    def load(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+        except (OSError, ValueError):
+            return
+        slots = self.clean_slots(saved.get("slots"))
+        with self.lock:
+            if slots:
+                self.slots = slots
+            if isinstance(saved.get("token"), str) and saved["token"]:
+                self.token = saved["token"]
+
+    def save(self):
+        try:
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"slots": self.slots, "token": self.token}, f, indent=2)
+            os.chmod(tmp, 0o600)          # it holds a token
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
+
+    @classmethod
+    def clean_slots(cls, raw):
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for name in raw:
+            if isinstance(name, str):
+                name = name.strip().lower()
+                if name in CARD_NAMES and name not in out:
+                    out.append(name)
+        return out[:cls.MAX_SLOTS]
+
+    def public(self):
+        """Everything a browser may see — note the token itself is absent."""
+        with self.lock:
+            return {"slots": list(self.slots),
+                    "cards": CARD_NAMES,
+                    "token_set": bool(self.token)}
+
+    def apply(self, patch):
+        """Returns (changed_fields, error)."""
+        if not isinstance(patch, dict):
+            return [], "expected an object"
+        changed = []
+        with self.lock:
+            if "slots" in patch:
+                slots = self.clean_slots(patch.get("slots"))
+                if not slots:
+                    return [], "at least one valid card is required"
+                if slots != self.slots:
+                    self.slots = slots
+                    changed.append("slots")
+            if "token" in patch:
+                tok = patch.get("token")
+                if tok is None or (isinstance(tok, str) and not tok.strip()):
+                    if self.token:
+                        self.token = ""
+                        changed.append("token_cleared")
+                elif isinstance(tok, str):
+                    tok = tok.strip()
+                    if len(tok) > 200:
+                        return [], "that token looks too long"
+                    if tok != self.token:
+                        self.token = tok
+                        changed.append("token_set")
+                else:
+                    return [], "token must be text"
+        if changed:
+            self.save()
+        return changed, ""
+
+
 class Dashboard:
     """Owns the station state, the packet source and the on-disk history."""
 
@@ -442,6 +538,8 @@ class Dashboard:
                                        port=args.udp_port)
         self.settings_path = os.path.join(args.data_dir,
                                           "tempest_server_state.json")
+        self.config = Config(os.path.join(args.data_dir, "tempest_config.json"),
+                             {"slots": args.slots, "token": args.wf_token})
         self._load()
 
         if args.demo:
@@ -459,16 +557,25 @@ class Dashboard:
                 cache_path=os.path.join(args.data_dir, "tempest_forecast.json"))
             self.forecast.start()
         self.backfill = None
-        if args.wf_token:
-            self.backfill = Backfill(args.wf_token, self.history, self.state,
-                                     self.stop)
-            self.backfill.start()
+        self.start_backfill()
 
         self.alerts = None
         if args.alerts and args.lat is not None and args.lon is not None:
             self.alerts = AlertsFetcher(args.lat, args.lon, self.stop)
             self.alerts.start()
         threading.Thread(target=self._housekeeping, daemon=True).start()
+
+    def start_backfill(self):
+        """Start the backfill thread if a token is configured and it is not
+        already running. Called at boot and again when a token is saved."""
+        if self.backfill is not None and self.backfill.is_alive():
+            return False
+        token = self.config.token
+        if not token:
+            return False
+        self.backfill = Backfill(token, self.history, self.state, self.stop)
+        self.backfill.start()
+        return True
 
     # ── the day's counters survive a restart ──────────────────────────────
 
@@ -509,7 +616,7 @@ class Dashboard:
         snap["lat"], snap["lon"] = self.args.lat, self.args.lon
         snap["alerts"] = (self.alerts.snapshot() if self.alerts
                           else {"alerts": [], "error": "", "checked": False})
-        snap["slots"] = self.args.slots
+        snap["slots"] = self.config.slots
         snap["backfill"] = (self.backfill.snapshot() if self.backfill
                             else {"status": "off", "added": 0, "error": ""})
         snap["forecast"] = (self.forecast.snapshot() if self.forecast
@@ -555,6 +662,54 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
+    def do_POST(self):
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path != "/api/config":
+            self._send(404, "Not found\n", "text/plain; charset=utf-8")
+            return
+        # There is no login on this dashboard, so require a header a plain
+        # cross-site form cannot set. That blocks another page on the network
+        # from quietly reconfiguring this one.
+        if self.headers.get("X-Tempest-Config") != "1":
+            self._send(403, "Missing X-Tempest-Config header\n",
+                       "text/plain; charset=utf-8")
+            return
+        origin = self.headers.get("Origin")
+        if origin:
+            try:
+                host = urllib.parse.urlparse(origin).netloc
+            except ValueError:
+                host = ""
+            if host and host != self.headers.get("Host"):
+                self._send(403, "Cross-origin write refused\n",
+                           "text/plain; charset=utf-8")
+                return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 8192:
+            self._send(400, "Bad request body\n", "text/plain; charset=utf-8")
+            return
+        try:
+            patch = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._send(400, "Malformed JSON\n", "text/plain; charset=utf-8")
+            return
+
+        dash = self.server.dashboard
+        changed, err = dash.config.apply(patch)
+        if err:
+            self._send(400, json.dumps({"ok": False, "error": err}),
+                       "application/json; charset=utf-8")
+            return
+        if "token_set" in changed:
+            dash.start_backfill()
+        body = dash.config.public()
+        body["ok"] = True
+        body["changed"] = changed
+        self._send(200, json.dumps(body), "application/json; charset=utf-8")
+
     def do_GET(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         try:
@@ -581,6 +736,11 @@ class Handler(BaseHTTPRequestHandler):
                     "health": st.health(),
                 })
                 self._send(200, body, "application/json; charset=utf-8")
+            elif path == "/api/config":
+                cfg = self.server.dashboard.config.public()
+                cfg["backfill"] = self.server.dashboard.snapshot()["backfill"]
+                self._send(200, json.dumps(cfg),
+                           "application/json; charset=utf-8")
             elif path == "/healthz":
                 state = self.server.dashboard.state
                 self._send(200, json.dumps({"ok": True,
@@ -762,11 +922,13 @@ def main(argv):
     else:
         print("  location : %.4f, %.4f" % (args.lat, args.lon))
     print("  data dir : %s" % args.data_dir)
-    print("  cards    : %s" % ", ".join(args.slots))
+    print("  cards    : %s  (editable in the dashboard's settings)"
+          % ", ".join(dashboard.config.slots))
     if args.alerts and args.lat is not None:
         print("  alerts   : National Weather Service (no key needed)")
-    print("  backfill : %s" % ("WeatherFlow history" if args.wf_token
-                               else "off (set TEMPEST_WF_TOKEN to enable)"))
+    print("  backfill : %s" % ("WeatherFlow history"
+                               if dashboard.config.token
+                               else "off (add a token in settings)"))
     if args.forecast and args.lat is not None:
         print("  forecast : Open-Meteo (the only outbound call; --no-forecast "
               "disables)")

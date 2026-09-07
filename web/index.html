@@ -62,8 +62,25 @@ body.tv .unit-toggle{cursor:default}
 }
 @media (max-width:1100px){#grid{grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(3,1fr)}}
 @media (max-width:720px){
-  #grid{grid-template-columns:1fr;grid-template-rows:repeat(6,minmax(230px,1fr))}
-  body{overflow:auto} #app{height:auto;min-height:100%}
+  /* One card per screen. svh tracks Safari's collapsing toolbars, so a card
+     is never left half-hidden behind them. */
+  html,body{height:auto;overflow-y:auto}
+  body{scroll-snap-type:y mandatory;-webkit-overflow-scrolling:touch}
+  #app{height:auto;min-height:100svh;min-height:100vh}
+  #grid{
+    grid-template-columns:1fr !important;
+    grid-template-rows:none !important;
+    grid-auto-rows:calc(100svh - var(--chrome));
+    gap:var(--gap);
+  }
+  :root{--chrome:4.6rem}          /* footer + the page's own padding */
+  .card{scroll-snap-align:center;scroll-snap-stop:always}
+  footer{position:sticky;bottom:0;background:var(--bg);z-index:5}
+  #map,#settings{height:calc(100svh - var(--chrome));min-height:320px}
+  #alerts{scroll-snap-align:start}
+}
+@supports not (height: 100svh){
+  @media (max-width:720px){ #grid{grid-auto-rows:calc(100vh - var(--chrome))} }
 }
 
 .card{
@@ -119,6 +136,14 @@ body.tv .unit-toggle{cursor:default}
 .cell{flex:1;display:flex;flex-direction:column;align-items:center;
       justify-content:center;gap:.22em;min-width:0;text-align:center}
 .cell.inline{flex-direction:row;gap:.5em}
+/* Below this the label and value no longer fit side by side. */
+@container (max-width: 330px){
+  .cell.inline{flex-direction:column;gap:.12em}
+  .cell.inline .k{font-size:calc(var(--fs-label)*.92)}
+}
+@container (max-width: 260px){
+  .row{padding-inline:calc(var(--pad)*.35)}
+}
 .cell + .cell{border-left:1px solid var(--rule)}
 .k{font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;
    text-transform:uppercase;color:var(--label);white-space:nowrap}
@@ -267,8 +292,9 @@ body.tv{
 
 /* Weather map. The iframe is only created the first time it is opened, so
    nothing contacts a third party until you ask for it. */
-#map{display:none;flex:1;min-height:0;border-radius:var(--radius);
-     overflow:hidden;border:1px solid var(--card-edge);background:var(--card)}
+#map{display:none;flex:1 1 auto;min-height:min(60svh,420px);
+     border-radius:var(--radius);overflow:hidden;
+     border:1px solid var(--card-edge);background:var(--card)}
 #map iframe{width:100%;height:100%;border:0;display:block}
 #map .placeholder{display:flex;height:100%;align-items:center;
                   justify-content:center;color:var(--label);
@@ -304,6 +330,51 @@ body.show-map #map{display:block}
 .alert.sev-unknown{color:var(--muted)}
 body.tv .alert{font-size:clamp(15px,1.5vw,26px)}
 
+#settings{display:none;flex:1;min-height:0;overflow:auto;padding:4px 2px}
+body.show-settings #grid{display:none}
+body.show-settings #settings{display:block}
+.sheet{
+  max-width:640px;margin:0 auto;background:var(--card);
+  border:1px solid var(--card-edge);border-radius:var(--radius);
+  padding:clamp(14px,2vw,26px);
+}
+.sheet h2{font-size:clamp(13px,1.2vw,18px);font-weight:600;letter-spacing:.09em;
+          text-transform:uppercase;color:var(--label);margin-bottom:.8em}
+.sheet h2:not(:first-child){margin-top:1.6em}
+.sheet p.note{font-size:clamp(11px,1vw,14px);color:var(--label);
+              margin:-.4em 0 1em;line-height:1.5}
+.cardlist{display:flex;flex-direction:column;gap:6px}
+.cardrow{
+  display:flex;align-items:center;gap:.7em;padding:.55em .7em;
+  background:var(--inset);border:1px solid var(--inset-edge);
+  border-radius:var(--inset-radius);cursor:grab;
+  font-size:clamp(12px,1.1vw,16px);
+}
+.cardrow.drag-over{border-color:var(--accent)}
+.cardrow.dragging{opacity:.4}
+.cardrow .grip{color:var(--faint);letter-spacing:.15em;cursor:grab}
+.cardrow .nm{flex:1;text-transform:capitalize}
+.cardrow input{width:1.05em;height:1.05em;accent-color:var(--accent)}
+.sheet .row{display:flex;gap:.6em;align-items:center;flex-wrap:wrap}
+.sheet input[type=password],.sheet input[type=text]{
+  flex:1;min-width:220px;background:var(--inset);color:var(--text);
+  border:1px solid var(--inset-edge);border-radius:var(--inset-radius);
+  padding:.55em .7em;font:inherit;font-size:clamp(12px,1.1vw,16px);
+}
+.sheet button{
+  background:var(--inset);color:var(--text);border:1px solid var(--inset-edge);
+  border-radius:var(--inset-radius);padding:.55em 1.1em;font:inherit;
+  font-size:clamp(12px,1.1vw,16px);cursor:pointer;
+}
+.sheet button.primary{background:var(--accent);color:#101014;border-color:transparent;
+                      font-weight:600}
+.sheet button:hover{border-color:var(--accent)}
+.state{font-size:clamp(11px,1vw,14px);color:var(--label);min-height:1.4em}
+.state.ok{color:var(--green)} .state.bad{color:var(--red)}
+.card[draggable="true"]{cursor:grab}
+.card.dragging{opacity:.45;outline:2px dashed var(--accent)}
+.card.drop-target{outline:2px solid var(--accent)}
+
 #banner{
   display:none;padding:.5em 1em;border-radius:var(--inset-radius);
   background:var(--card);border:1px solid var(--red);color:var(--red);
@@ -318,6 +389,7 @@ body.tv .alert{font-size:clamp(15px,1.5vw,26px)}
   <div id="alerts"></div>
   <div id="grid"></div>
   <div id="map" aria-hidden="true"></div>
+  <div id="settings" aria-hidden="true"></div>
   <footer>
     <span class="clock" id="clock">--:--:--</span>
     <span class="date" id="date"></span>
@@ -335,6 +407,7 @@ body.tv .alert{font-size:clamp(15px,1.5vw,26px)}
                 stroke-width="1.8"/>
         </svg>
       </button>
+      <button id="setBtn" title="Settings (s)" aria-pressed="false">⚙</button>
       <button id="themeBtn" title="Light / dark (t)">◐</button>
       <button id="tvBtn" title="TV layout (f)">TV</button>
     </span>
@@ -1164,21 +1237,236 @@ function renderAlerts(s){
   }));
 }
 
+/* ── settings: card order, which cards, and the token ────────────────── */
+let cfg = null;                     // last /api/config payload
+let paused = false;                 // hold the 2 s re-render while dragging
+
+async function loadConfig(){
+  try {
+    const r = await fetch("api/config", {cache:"no-store"});
+    if (r.ok) cfg = await r.json();
+  } catch (e) { /* the dashboard still runs on the server's defaults */ }
+  return cfg;
+}
+
+async function saveConfig(patch, statusEl){
+  try {
+    const r = await fetch("api/config", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Tempest-Config": "1"},
+      body: JSON.stringify(patch),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok || body.ok === false) throw new Error(body.error || ("HTTP " + r.status));
+    cfg = body;
+    if (statusEl) { statusEl.className = "state ok"; statusEl.textContent = "Saved."; }
+    poll();
+    return true;
+  } catch (e) {
+    if (statusEl) { statusEl.className = "state bad"; statusEl.textContent = "Could not save — " + e.message; }
+    return false;
+  }
+}
+
+function renderSettings(){
+  const host = document.getElementById("settings");
+  const all = (cfg && cfg.cards) || [];
+  const on = (cfg && cfg.slots) || [];
+  // chosen cards first, in their order, then the rest
+  const ordered = on.concat(all.filter(c => !on.includes(c)));
+
+  const sheet = el("div","sheet");
+  sheet.innerHTML = '<h2>Cards</h2>' +
+    '<p class="note">Tick the cards you want, drag to reorder. Up to six. ' +
+    'This layout is shared by every screen — the TV included.</p>';
+
+  const list = el("div","cardlist");
+  for (const name of ordered) {
+    const row = el("div","cardrow");
+    row.draggable = true;
+    row.dataset.card = name;
+    row.innerHTML = '<span class="grip">⠿</span>' +
+      '<span class="nm">' + esc(name) + '</span>' +
+      '<input type="checkbox"' + (on.includes(name) ? " checked" : "") + '>';
+    list.appendChild(row);
+  }
+  wireRowDrag(list);
+  sheet.appendChild(list);
+
+  const status = el("div","state");
+  const apply = el("button","primary","Save layout");
+  apply.addEventListener("click", () => {
+    const picked = [...list.querySelectorAll(".cardrow")]
+      .filter(r => r.querySelector("input").checked)
+      .map(r => r.dataset.card).slice(0, 6);
+    if (!picked.length) {
+      status.className = "state bad";
+      status.textContent = "Pick at least one card.";
+      return;
+    }
+    saveConfig({slots: picked}, status);
+  });
+  const applyRow = el("div","row");
+  applyRow.append(apply, status);
+  sheet.appendChild(applyRow);
+
+  // ── token ─────────────────────────────────────────────────────────────
+  const tokenSet = !!(cfg && cfg.token_set);
+  const h = el("div");
+  h.innerHTML = '<h2>WeatherFlow token</h2>' +
+    '<p class="note">Optional. With it the dashboard backfills your station\'s ' +
+    'real history, so 24-hour and monthly figures are right from the start ' +
+    'instead of only counting from when this started running. Get one at ' +
+    '<a href="https://tempestwx.com/settings/tokens" target="_blank" ' +
+    'rel="noopener noreferrer" style="color:var(--accent)">tempestwx.com</a>. ' +
+    'It is stored on the server and never sent back to a browser — including ' +
+    'this one.</p>';
+  sheet.appendChild(h);
+
+  const field = document.createElement("input");
+  field.type = "password";
+  field.autocomplete = "off";
+  field.spellcheck = false;
+  field.placeholder = tokenSet ? "A token is configured — type to replace it"
+                               : "Paste your personal access token";
+  const tState = el("div","state", tokenSet ? "Status: configured." : "Status: not set.");
+  const saveTok = el("button","primary","Save token");
+  saveTok.addEventListener("click", async () => {
+    if (!field.value.trim()) {
+      tState.className = "state bad"; tState.textContent = "Nothing to save.";
+      return;
+    }
+    const ok = await saveConfig({token: field.value}, tState);
+    field.value = "";
+    if (ok) { tState.className = "state ok"; tState.textContent = "Saved. Backfill starting."; }
+  });
+  const clearTok = el("button",null,"Clear");
+  clearTok.addEventListener("click", async () => {
+    const ok = await saveConfig({token: ""}, tState);
+    field.value = "";
+    if (ok) { tState.className = "state"; tState.textContent = "Status: not set."; }
+  });
+  const tRow = el("div","row");
+  tRow.append(field, saveTok, clearTok);
+  sheet.append(tRow, tState);
+
+  if (cfg && cfg.backfill && cfg.backfill.status && cfg.backfill.status !== "off") {
+    const b = cfg.backfill;
+    sheet.appendChild(el("div","state",
+      "Backfill: " + b.status + (b.added ? " — " + b.added + " observations merged" : "") +
+      (b.error ? " (" + b.error + ")" : "")));
+  }
+  host.replaceChildren(sheet);
+}
+
+/* Drag rows in the settings list. */
+function wireRowDrag(list){
+  let src = null;
+  list.addEventListener("dragstart", e => {
+    src = e.target.closest(".cardrow");
+    if (!src) return;
+    src.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", src.dataset.card); } catch (x) {}
+  });
+  list.addEventListener("dragend", () => {
+    if (src) src.classList.remove("dragging");
+    [...list.children].forEach(c => c.classList.remove("drag-over"));
+    src = null;
+  });
+  list.addEventListener("dragover", e => {
+    e.preventDefault();
+    const over = e.target.closest(".cardrow");
+    if (!over || over === src) return;
+    [...list.children].forEach(c => c.classList.toggle("drag-over", c === over));
+  });
+  list.addEventListener("drop", e => {
+    e.preventDefault();
+    const over = e.target.closest(".cardrow");
+    if (!over || !src || over === src) return;
+    const rows = [...list.children];
+    list.insertBefore(src, rows.indexOf(src) < rows.indexOf(over)
+                           ? over.nextSibling : over);
+    [...list.children].forEach(c => c.classList.remove("drag-over"));
+  });
+}
+
+/* Drag the cards on the dashboard itself. */
+function wireCardDrag(){
+  let src = null;
+  grid.addEventListener("dragstart", e => {
+    src = e.target.closest(".card");
+    if (!src) return;
+    paused = true;                       // do not re-render mid-drag
+    src.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", src.id); } catch (x) {}
+  });
+  grid.addEventListener("dragover", e => {
+    if (!src) return;
+    e.preventDefault();
+    const over = e.target.closest(".card");
+    [...grid.children].forEach(c => c.classList.toggle("drop-target",
+                                                        c === over && c !== src));
+  });
+  grid.addEventListener("drop", e => {
+    if (!src) return;
+    e.preventDefault();
+    const over = e.target.closest(".card");
+    if (over && over !== src) {
+      const kids = [...grid.children];
+      grid.insertBefore(src, kids.indexOf(src) < kids.indexOf(over)
+                             ? over.nextSibling : over);
+    }
+    [...grid.children].forEach(c => c.classList.remove("drop-target"));
+  });
+  grid.addEventListener("dragend", () => {
+    if (src) src.classList.remove("dragging");
+    [...grid.children].forEach(c => c.classList.remove("drop-target"));
+    src = null;
+    paused = false;
+    const order = [...grid.children]
+      .map(c => c.id.replace("card-", ""))
+      .map(n => n === "bolt" ? "lightning" : n === "sky" ? "astronomy"
+              : n === "pres" ? "pressure" : n === "temp" ? "temperature"
+              : n === "rain" ? "rainfall" : n === "fc" ? "forecast" : n)
+      .filter(n => (cfg && cfg.cards || []).includes(n));
+    if (order.length) saveConfig({slots: order});
+  });
+}
+
 /* ── render loop ─────────────────────────────────────────────────────── */
 let last = null;
 const grid = document.getElementById("grid");
 
 function render(s){
   last = s;
-  if (document.body.classList.contains("show-map")) {
+  if (paused) return;                       // a drag is in progress
+  if (document.body.classList.contains("show-map") ||
+      document.body.classList.contains("show-settings")) {
     updateFooter(s);
     return;                                   // cards are hidden; skip the work
   }
   const scroll = window.scrollY;
   const slots = (s.slots && s.slots.length) ? s.slots
     : ["temperature","wind","pressure","rainfall","astronomy","forecast"];
-  grid.replaceChildren(...slots.map(name =>
-    (CARD_BUILDERS[name] || buildBlank)(s)));
+  const cards = slots.map(name => {
+    const c = (CARD_BUILDERS[name] || buildBlank)(s);
+    c.draggable = true;
+    c.title = "Drag to rearrange";
+    return c;
+  });
+  grid.replaceChildren(...cards);
+  // keep the grid balanced when fewer than six cards are shown
+  if (window.matchMedia("(max-width:720px)").matches) {
+    grid.style.removeProperty("grid-template-columns");
+    grid.style.removeProperty("grid-template-rows");
+  } else {
+    const cols = Math.max(1, Math.min(3, Math.ceil(cards.length / 2)));
+    grid.style.gridTemplateColumns = "repeat(" + cols + ",1fr)";
+    grid.style.gridTemplateRows =
+      "repeat(" + Math.ceil(cards.length / cols) + ",1fr)";
+  }
   window.scrollTo(0, scroll);
   renderAlerts(s);
   updateFooter(s);
@@ -1323,6 +1611,24 @@ function toggleMap(force){
   else swap();
 }
 
+function toggleSettings(force){
+  const swap = () => {
+    const on = force != null ? force
+      : !document.body.classList.contains("show-settings");
+    document.body.classList.toggle("show-settings", on);
+    if (on) document.body.classList.remove("show-map");
+    document.getElementById("settings").setAttribute("aria-hidden", on ? "false" : "true");
+    document.getElementById("setBtn").setAttribute("aria-pressed", on ? "true" : "false");
+    if (on) renderSettings();
+  };
+  if (document.startViewTransition) document.startViewTransition(swap);
+  else swap();
+}
+
+document.getElementById("setBtn").addEventListener("click", async () => {
+  if (!cfg) await loadConfig();
+  toggleSettings();
+});
 document.getElementById("mapBtn").addEventListener("click", () => toggleMap());
 document.getElementById("themeBtn").addEventListener("click", toggleTheme);
 document.getElementById("tvBtn").addEventListener("click",
@@ -1331,6 +1637,10 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "t") toggleTheme();
   if (e.key === "f") setTv(!document.body.classList.contains("tv"));
   if (e.key === "w") toggleMap();
+  if (e.key === "s") { if (!cfg) loadConfig().then(() => toggleSettings());
+                       else toggleSettings(); }
+  if (e.key === "Escape" && document.body.classList.contains("show-settings"))
+    toggleSettings(false);
   if (e.key === "Escape" && document.body.classList.contains("show-map"))
     toggleMap(false);
 });
@@ -1343,6 +1653,8 @@ document.addEventListener("keydown", (e) => {
   loadPrefs(null);
   tickClock();
   setInterval(tickClock, 1000);
+  loadConfig();
+  wireCardDrag();
   poll();
   setInterval(poll, 2000);
   setInterval(pollWind, 900);

@@ -4,7 +4,7 @@
 # Version 3.1.0
 #
 # MIT License
-# Copyright (c) 2026  Michael Walker VA3MW  &  Claude (Anthropic)
+# Copyright (c) 2026  Chris Goodman  &  Claude (Anthropic)
 # See tempest_weather.py for the full licence text.
 # =============================================================================
 #

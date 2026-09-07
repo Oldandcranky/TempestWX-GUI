@@ -10,7 +10,7 @@ nothing from a CDN.
 
 Built to run on a NAS. It runs on a Synology DS723+.
 
-**Author:** Michael Walker VA3MW &nbsp;·&nbsp; Built with [Claude](https://claude.ai) (Anthropic)
+**Author:** Chris Goodman &nbsp;·&nbsp; Built with [Claude](https://claude.ai) (Anthropic)
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue) ![Version](https://img.shields.io/badge/Version-3.4.0-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Dependencies](https://img.shields.io/badge/Dependencies-none-brightgreen)
 

@@ -44,7 +44,8 @@ WEB_DIR = os.path.join(HERE, "web")
 
 # Icons the page links to. Listed one by one so the static route stays a
 # closed set rather than anything that happens to sit in web/.
-ICON_PATHS = ("/favicon.svg", "/icon-32.png", "/apple-touch-icon.png")
+ICON_PATHS = ("/favicon.svg", "/favicon.ico", "/icon-32.png",
+              "/apple-touch-icon.png")
 
 # The only file types the static route will hand out.
 STATIC_TYPES = {
@@ -54,6 +55,7 @@ STATIC_TYPES = {
     ".js":    "application/javascript; charset=utf-8",
     ".svg":   "image/svg+xml",
     ".png":   "image/png",
+    ".ico":   "image/vnd.microsoft.icon",
     ".txt":   "text/plain; charset=utf-8",
 }
 
@@ -1153,8 +1155,6 @@ class Handler(BaseHTTPRequestHandler):
                            "application/json")
             elif path.startswith("/fonts/") or path in ICON_PATHS:
                 self._serve_static(path)
-            elif path == "/favicon.ico":
-                self._send(204, b"", "image/x-icon")
             else:
                 self._send(404, "Not found\n", "text/plain; charset=utf-8")
         except BrokenPipeError:

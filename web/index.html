@@ -73,8 +73,24 @@ body.tv .unit-toggle{cursor:default}
     grid-auto-rows:calc(100svh - var(--chrome));
     gap:var(--gap);
   }
-  :root{--chrome:4.6rem}          /* footer + the page's own padding */
-  .card{scroll-snap-align:center;scroll-snap-stop:always}
+  /* --chrome is measured at runtime from the real footer, because Safari's
+     toolbars make any guess wrong on some device or other. */
+  :root{--chrome:4.6rem}
+  .card{scroll-snap-align:start;scroll-snap-stop:always}
+
+  /* A phone card is narrow but nearly a screen tall. Sizing type mostly by
+     width leaves the middle stranded in empty space, so lean on width much
+     harder here and spread the rows out to fill. */
+  .card{
+    --fs-hero:calc(clamp(2.6rem,min(21cqh,27cqw),5.5rem)*var(--fit));
+    --fs-unit:calc(clamp(1rem,min(6.5cqh,8cqw),2rem)*var(--fit));
+    --fs-value:calc(clamp(1rem,min(6.5cqh,8.5cqw),2rem)*var(--fit));
+    --fs-value-sm:calc(clamp(.9rem,min(5cqh,6.4cqw),1.7rem)*var(--fit));
+    --fs-title:calc(clamp(.7rem,min(3.6cqh,4.2cqw),1.15rem)*var(--fit));
+    --fs-label:calc(clamp(.7rem,min(3.6cqh,4.2cqw),1.15rem)*var(--fit));
+  }
+  .card-body{justify-content:space-evenly;gap:clamp(4px,1.6cqh,18px)}
+  .mid{min-height:0}
   footer{position:sticky;bottom:0;background:var(--bg);z-index:5}
   #map,#settings{height:calc(100svh - var(--chrome));min-height:320px}
   #alerts{scroll-snap-align:start}
@@ -1329,6 +1345,46 @@ function renderSettings(){
   field.spellcheck = false;
   field.placeholder = tokenSet ? "A token is configured — type to replace it"
                                : "Paste your personal access token";
+  // Reveal toggle — you cannot spot a stray space in a field of dots.
+  const eye = el("button", null, "");
+  eye.type = "button";
+  eye.setAttribute("aria-label", "Show token");
+  eye.setAttribute("aria-pressed", "false");
+  eye.style.cssText = "padding:.5em .7em;line-height:0";
+  const EYE_OPEN = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none">' +
+    '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" ' +
+    'stroke="currentColor" stroke-width="1.7"/>' +
+    '<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg>';
+  const EYE_SHUT = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none">' +
+    '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" ' +
+    'stroke="currentColor" stroke-width="1.7"/>' +
+    '<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/>' +
+    '<path d="M4 20 20 4" stroke="currentColor" stroke-width="1.7" ' +
+    'stroke-linecap="round"/></svg>';
+  eye.innerHTML = EYE_OPEN;
+  eye.addEventListener("click", () => {
+    const show = field.type === "password";
+    field.type = show ? "text" : "password";
+    eye.innerHTML = show ? EYE_SHUT : EYE_OPEN;
+    eye.setAttribute("aria-label", show ? "Hide token" : "Show token");
+    eye.setAttribute("aria-pressed", show ? "true" : "false");
+    field.focus();
+  });
+
+  // Live check for the things that actually go wrong when pasting a token.
+  const hint = el("div","state");
+  field.addEventListener("input", () => {
+    const v = field.value;
+    if (!v) { hint.className = "state"; hint.textContent = ""; return; }
+    const notes = [v.length + " characters"];
+    let bad = false;
+    if (v !== v.trim()) { notes.push("leading or trailing space — trimmed on save"); bad = true; }
+    if (/\s/.test(v.trim())) { notes.push("contains a space in the middle"); bad = true; }
+    if (/[\u2018\u2019\u201c\u201d]/.test(v)) { notes.push("contains a curly quote"); bad = true; }
+    hint.className = "state" + (bad ? " bad" : " ok");
+    hint.textContent = notes.join(" · ");
+  });
+
   const tState = el("div","state", tokenSet ? "Status: configured." : "Status: not set.");
   const saveTok = el("button","primary","Save token");
   saveTok.addEventListener("click", async () => {
@@ -1338,17 +1394,21 @@ function renderSettings(){
     }
     const ok = await saveConfig({token: field.value}, tState);
     field.value = "";
+    hint.className = "state"; hint.textContent = "";
+    field.type = "password"; eye.innerHTML = EYE_OPEN;
+    eye.setAttribute("aria-pressed", "false");
     if (ok) { tState.className = "state ok"; tState.textContent = "Saved. Backfill starting."; }
   });
   const clearTok = el("button",null,"Clear");
   clearTok.addEventListener("click", async () => {
     const ok = await saveConfig({token: ""}, tState);
     field.value = "";
+    hint.className = "state"; hint.textContent = "";
     if (ok) { tState.className = "state"; tState.textContent = "Status: not set."; }
   });
   const tRow = el("div","row");
-  tRow.append(field, saveTok, clearTok);
-  sheet.append(tRow, tState);
+  tRow.append(field, eye, saveTok, clearTok);
+  sheet.append(tRow, hint, tState);
 
   if (cfg && cfg.backfill && cfg.backfill.status && cfg.backfill.status !== "off") {
     const b = cfg.backfill;
@@ -1548,6 +1608,18 @@ async function poll(){
   }
 }
 
+/* On a phone each card is sized to the screen minus the footer. Guessing that
+   height goes wrong as Safari shows and hides its toolbars, so measure the
+   footer we actually rendered and hand it to the CSS. */
+function measureChrome(){
+  if (!window.matchMedia("(max-width:720px)").matches) return;
+  const f = document.querySelector("footer");
+  if (!f) return;
+  const pad = parseFloat(getComputedStyle(document.getElementById("app")).paddingTop) || 0;
+  const chrome = Math.round(f.getBoundingClientRect().height + pad * 3);
+  document.documentElement.style.setProperty("--chrome", chrome + "px");
+}
+
 /* ── chrome ──────────────────────────────────────────────────────────── */
 function applyTheme(t){
   document.documentElement.dataset.theme = t;
@@ -1658,8 +1730,11 @@ document.addEventListener("keydown", (e) => {
   poll();
   setInterval(poll, 2000);
   setInterval(pollWind, 900);
+  measureChrome();
+  addEventListener("orientationchange", () => setTimeout(measureChrome, 250));
   let fitJob = null;
   addEventListener("resize", () => {
+    measureChrome();
     clearTimeout(fitJob);
     fitJob = setTimeout(() => { fitCache.clear(); fitCards(); }, 120);
   });

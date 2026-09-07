@@ -12,14 +12,21 @@ Built to run on a NAS. It runs on a Synology DS723+.
 
 **Author:** Michael Walker VA3MW &nbsp;·&nbsp; Built with [Claude](https://claude.ai) (Anthropic)
 
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue) ![Version](https://img.shields.io/badge/Version-3.3.0-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Dependencies](https://img.shields.io/badge/Dependencies-none-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue) ![Version](https://img.shields.io/badge/Version-3.4.0-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Dependencies](https://img.shields.io/badge/Dependencies-none-brightgreen)
+
+![The dashboard running on a Synology NAS](docs/dashboard.png)
+
+*Live station data, twelve cards, dark and light themes. Every hero number
+is a unit toggle — click it to cycle °F / °C / K, mph / km/h / m/s / kts,
+and so on. The choice is remembered per browser, so the TV and your phone
+can disagree.*
 
 ---
 
 ## Quick start
 
 ```bash
-python3 tempest_server.py --lat 42.1681 --lon -88.4281
+python3 tempest_server.py --lat 45.4215 --lon -75.6972   # your own coordinates
 ```
 
 Open `http://<that-host>:8444/`. The server prints the addresses it can be
@@ -41,7 +48,7 @@ docker-compose.yml
 
 ## What is on it
 
-Nine cards. Pick which ones you want and drag them into the order you like —
+Twelve cards. Pick which ones you want and drag them into the order you like —
 the grid rearranges itself for however many you choose.
 
 | Card | Shows |
@@ -55,6 +62,9 @@ the grid rearranges itself for however many you choose.
 | **Records** | Hottest and coldest with dates, for the month, the year and all time, over a band showing the station's whole range |
 | **Lightning** | Strikes today, nearest, last strike, last hour and last three hours |
 | **Radar** | Live radar for your location |
+| **Air quality** | US AQI on a banded scale, with PM2.5, PM10 and ozone (Open-Meteo, no key) |
+| **Pollen** | Tree, grass and weed indices with the season's active allergens (Google Pollen, key needed) |
+| **Station** | Battery voltage and charge, station and hub firmware, uptime, signal strength, and any sensor faults |
 
 Three more pages, each behind an icon in the footer:
 
@@ -223,6 +233,23 @@ The whole page drifts through a few pixels on a slow cycle, and TV mode pulls
 peak brightness back slightly. Both reduce the risk of burning a static layout
 into an OLED. It reduces the risk rather than removing it — a sleep schedule on
 the TV itself still does more.
+
+### Checking the alert banner
+
+Severe weather alerts appear above the cards, coloured by severity, worst
+first. Extreme is filled rather than outlined — at TV distance a tornado
+warning should not read as the same thing as a small-craft advisory.
+
+You will mostly see nothing, which is the point. To check it renders on your
+screen without waiting for weather, add `?testalert`:
+
+| | |
+|---|---|
+| `?testalert` | one sample of every severity |
+| `?testalert=extreme` | just that one |
+| `?testalert=minor,unknown` | the quieter end of the scale |
+
+Samples are prefixed `PREVIEW` so they cannot be mistaken for live warnings.
 
 ---
 

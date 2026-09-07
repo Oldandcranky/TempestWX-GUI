@@ -27,7 +27,7 @@ import time
 from collections import deque
 from datetime import date, datetime, timedelta
 
-VERSION      = "3.1.0"
+VERSION      = "3.4.0"
 DEFAULT_PORT = 50222
 
 _HERE         = os.path.dirname(os.path.abspath(__file__))

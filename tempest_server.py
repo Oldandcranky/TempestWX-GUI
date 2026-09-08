@@ -417,6 +417,7 @@ class SpeedtestFetcher(threading.Thread):
     RETRY = 60
     WINDOW = 24               # results to pull, i.e. a day at hourly
     WINDOW_H = 24.0           # and how far back those results may reach
+    DOWN_AFTER = 3            # consecutive failures before the line is "down"
 
     # What counts as a problem worth putting on a wall display.
     LOSS_PCT = 1.0            # packet loss above this is not noise
@@ -568,8 +569,15 @@ class SpeedtestFetcher(threading.Thread):
 
         # -- what is wrong, in the order it matters -----------------------
         issues = out["issues"]
-        if rows and not cls._ok(rows[0]):
+        # One failed test is common enough — a server hiccup, a restart — that
+        # calling the line down for it would cry wolf on a wall display. Three
+        # in a row is a pattern. A single failure still shows as an issue, so
+        # the card reads degraded rather than silent.
+        recent = rows[:cls.DOWN_AFTER]
+        if len(recent) == cls.DOWN_AFTER and not any(cls._ok(r) for r in recent):
             out["status"] = "down"
+            issues.append("Last %d tests failed" % cls.DOWN_AFTER)
+        elif rows and not cls._ok(rows[0]):
             issues.append("Most recent test failed")
         if out["loss"] is not None and out["loss"] > cls.LOSS_PCT:
             issues.append("Packet loss %.1f%%" % out["loss"])

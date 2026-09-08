@@ -306,6 +306,37 @@ checked against the Host.
   page and is handled like the other two, stored `0600` and never sent to a
   browser. `--plan-down` and `--plan-up` are optional and let the card say
   what fraction of the advertised rate you are getting.
+- The card asks for a fixed number of results and used to treat them as "the
+  last day". With a gap in the history that was badly wrong — a live dashboard
+  reported a 2468-hour window. Results reaching further back than the window
+  are now discarded, so it means what it says.
+- One failed test no longer reads as **Down**. A single failure is common
+  enough — a server hiccup, a restart — that calling the line down for it
+  cries wolf on a wall display; three in a row is a pattern. A lone failure
+  still shows as an issue, so the card reads degraded rather than saying
+  nothing.
+
+### v3.4.0
+- **Three new cards.** Air quality (US AQI on a banded scale with PM2.5, PM10
+  and ozone, from Open-Meteo, no key), Pollen (tree, grass and weed indices
+  with the season's active allergens, from Google Pollen, key needed) and
+  Station (battery voltage and charge, station and hub firmware, uptime,
+  signal strength, and any sensor faults decoded from the status bitfield).
+- **Weather alerts, tested at last.** The alert path had never actually run —
+  the station stayed clear — so it was exercised against genuine active NWS
+  alerts. A feature with null properties used to become a blank "Weather
+  alert" banner and is now dropped. Extreme renders filled rather than
+  outlined: at TV distance a tornado warning should not read as the same
+  thing as a small-craft advisory. `?testalert` previews the banner without
+  waiting for weather.
+- **A favicon**, which took three attempts to satisfy every browser. Safari
+  cannot decode SVG favicons, and the server was answering `/favicon.ico`
+  with an empty 204 — which Safari reads as "this site's icon is blank", so
+  it never fell through to the other tags. It now serves a real `.ico` with
+  16, 32 and 48 pixel images.
+- Footer buttons could be pushed off-screen: a `nowrap` flex item needs
+  `min-width:0` before it will shrink.
+- README brought back in line with the code, and a screenshot added.
 
 ### v3.3.0
 - Watchdogs on both sides: the server rebuilds the hub listener if its thread

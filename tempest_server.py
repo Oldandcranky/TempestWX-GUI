@@ -416,6 +416,7 @@ class SpeedtestFetcher(threading.Thread):
     REFRESH = 300             # tests run hourly; this is just staleness
     RETRY = 60
     WINDOW = 24               # results to pull, i.e. a day at hourly
+    WINDOW_H = 24.0           # and how far back those results may reach
 
     # What counts as a problem worth putting on a wall display.
     LOSS_PCT = 1.0            # packet loss above this is not noise
@@ -472,6 +473,19 @@ class SpeedtestFetcher(threading.Thread):
         v = cls._num(bytes_per_s)
         return None if v is None else v * 8 / 1e6
 
+    @classmethod
+    def _trim(cls, rows):
+        """Drop anything reaching further back than WINDOW_H before the newest
+        result. A fixed number of rows is asked for, so a gap in the history
+        would otherwise stretch "the last day" to weeks. Rows whose timestamp
+        will not parse are kept: a bad date is no reason to discard a result."""
+        stamped = [(r, cls._epoch(r.get("created_at"))) for r in rows]
+        newest = max((s for _, s in stamped if s), default=None)
+        if newest is None:
+            return list(rows)
+        floor = newest - cls.WINDOW_H * 3600
+        return [r for r, s in stamped if s is None or s >= floor]
+
     @staticmethod
     def _ok(row):
         status = str(row.get("status") or "").lower()
@@ -495,6 +509,7 @@ class SpeedtestFetcher(threading.Thread):
         rows = raw.get("data")
         if not isinstance(rows, list):
             raise ValueError("no result list in response")
+        rows = cls._trim(rows)
 
         out = {"fetched_at": time.time(), "tests": len(rows),
                "failures": 0, "issues": [], "status": "unknown",

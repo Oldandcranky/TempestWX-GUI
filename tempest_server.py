@@ -397,6 +397,229 @@ class PollenFetcher(threading.Thread):
             return out
 
 
+class SpeedtestFetcher(threading.Thread):
+    """Internet health, from a self-hosted Speedtest Tracker on the LAN.
+
+    Speedtest Tracker already stores the history, so this pulls the last
+    day of results in one request rather than keeping a second copy: the
+    newest entry is the card's headline, and the rest of the window is
+    what "any problems lately?" is answered from.
+
+    The interesting number is not the speed. A connection that has gone
+    bad usually still tests fast; what changes is latency *under load*
+    (bufferbloat) and packet loss. Both are in the payload already.
+
+    The token is handled like the WeatherFlow token — server-side only,
+    never returned to a browser.
+    """
+
+    REFRESH = 300             # tests run hourly; this is just staleness
+    RETRY = 60
+    WINDOW = 24               # results to pull, i.e. a day at hourly
+
+    # What counts as a problem worth putting on a wall display.
+    LOSS_PCT = 1.0            # packet loss above this is not noise
+    BLOAT_MS = 100.0          # added latency under load
+    JITTER_MS = 30.0
+    PLAN_FRAC = 0.5           # this fraction of the advertised rate
+
+    def __init__(self, base_url, token, stop_event,
+                 plan_down=0.0, plan_up=0.0):
+        threading.Thread.__init__(self, daemon=True)
+        self.base = (base_url or "").rstrip("/")
+        self.token = token
+        self.plan_down = plan_down or 0.0
+        self.plan_up = plan_up or 0.0
+        self.stop_event = stop_event
+        self.lock = threading.Lock()
+        self.data = None
+        self.error = ""
+
+    # -- helpers ----------------------------------------------------------
+    @staticmethod
+    def _epoch(text):
+        """ISO 8601 to epoch seconds. Python 3.8's fromisoformat will not
+        take a trailing Z, and the API sends one."""
+        if not isinstance(text, str) or not text:
+            return None
+        t = text.strip().replace("Z", "+00:00")
+        if "." in t:                       # trim fractional seconds
+            head, _, tail = t.partition(".")
+            keep = ""
+            for ch in tail:
+                if not ch.isdigit():
+                    keep = tail[tail.index(ch):]
+                    break
+            t = head + keep
+        try:
+            return datetime.fromisoformat(t).timestamp()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _num(v):
+        try:
+            return None if v is None else float(v)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _mbps(cls, bits, bytes_per_s):
+        """Prefer the bits field; fall back to bytes/s x 8."""
+        v = cls._num(bits)
+        if v is not None and v > 0:
+            return v / 1e6
+        v = cls._num(bytes_per_s)
+        return None if v is None else v * 8 / 1e6
+
+    @staticmethod
+    def _ok(row):
+        status = str(row.get("status") or "").lower()
+        return status in ("", "completed") and row.get("download") is not None
+
+    # -- fetch ------------------------------------------------------------
+    def fetch_once(self):
+        url = (self.base + "/api/v1/results?"
+               + urllib.parse.urlencode({"per.page": self.WINDOW,
+                                         "sort": "-created_at"}))
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
+                          "Accept": "application/json",
+                          "Authorization": "Bearer " + self.token})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = json.loads(r.read().decode("utf-8"))
+        return self.parse(raw, self.plan_down, self.plan_up)
+
+    @classmethod
+    def parse(cls, raw, plan_down=0.0, plan_up=0.0):
+        rows = raw.get("data")
+        if not isinstance(rows, list):
+            raise ValueError("no result list in response")
+
+        out = {"fetched_at": time.time(), "tests": len(rows),
+               "failures": 0, "issues": [], "status": "unknown",
+               "plan_down": plan_down or None, "plan_up": plan_up or None}
+
+        failures = [r for r in rows if not cls._ok(r)]
+        good = [r for r in rows if cls._ok(r)]
+        out["failures"] = len(failures)
+
+        if good:
+            downs = [cls._mbps(r.get("download_bits"), r.get("download"))
+                     for r in good]
+            ups = [cls._mbps(r.get("upload_bits"), r.get("upload"))
+                   for r in good]
+            downs = [v for v in downs if v is not None]
+            ups = [v for v in ups if v is not None]
+            out["avg_down"] = sum(downs) / len(downs) if downs else None
+            out["avg_up"] = sum(ups) / len(ups) if ups else None
+
+        stamps = [cls._epoch(r.get("created_at")) for r in rows]
+        stamps = [s for s in stamps if s]
+        out["window_h"] = ((max(stamps) - min(stamps)) / 3600.0
+                           if len(stamps) > 1 else 0.0)
+
+        latest = good[0] if good else None
+        if latest is None:
+            out["status"] = "down"
+            out["issues"].append("No successful test in the window")
+            return out
+
+        d = latest.get("data") or {}
+        ping = d.get("ping") or {}
+        out["at"] = cls._epoch(latest.get("created_at"))
+        out["down"] = cls._mbps(latest.get("download_bits"),
+                                latest.get("download"))
+        out["up"] = cls._mbps(latest.get("upload_bits"), latest.get("upload"))
+        out["ping"] = cls._num(ping.get("latency"))
+        if out["ping"] is None:
+            out["ping"] = cls._num(latest.get("ping"))
+        out["jitter"] = cls._num(ping.get("jitter"))
+        out["loss"] = cls._num(d.get("packetLoss"))
+        out["isp"] = d.get("isp") or ""
+        out["server"] = ((d.get("server") or {}).get("name") or "")
+        out["healthy"] = latest.get("healthy")
+
+        # Latency while the line is saturated, versus when it is idle.
+        bloat = None
+        for leg in ("download", "upload"):
+            iqm = cls._num(((d.get(leg) or {}).get("latency") or {}).get("iqm"))
+            if iqm is None or out["ping"] is None:
+                continue
+            delta = iqm - out["ping"]
+            if bloat is None or delta > bloat:
+                bloat = delta
+        out["bloat"] = bloat
+
+        # -- what is wrong, in the order it matters -----------------------
+        issues = out["issues"]
+        if rows and not cls._ok(rows[0]):
+            out["status"] = "down"
+            issues.append("Most recent test failed")
+        if out["loss"] is not None and out["loss"] > cls.LOSS_PCT:
+            issues.append("Packet loss %.1f%%" % out["loss"])
+        if bloat is not None and bloat > cls.BLOAT_MS:
+            issues.append("Latency +%d ms under load" % round(bloat))
+        if out["jitter"] is not None and out["jitter"] > cls.JITTER_MS:
+            issues.append("Jitter %d ms" % round(out["jitter"]))
+        if plan_down and out["down"] is not None \
+                and out["down"] < plan_down * cls.PLAN_FRAC:
+            issues.append("Download %d%% of plan"
+                          % round(out["down"] / plan_down * 100))
+        if plan_up and out["up"] is not None \
+                and out["up"] < plan_up * cls.PLAN_FRAC:
+            issues.append("Upload %d%% of plan"
+                          % round(out["up"] / plan_up * 100))
+        if out["failures"]:
+            issues.append("%d failed test%s in %dh"
+                          % (out["failures"],
+                             "" if out["failures"] == 1 else "s",
+                             round(out["window_h"]) or 24))
+        if out["healthy"] is False:
+            issues.append("Below your threshold")
+
+        if out["status"] != "down":
+            out["status"] = "degraded" if issues else "good"
+        return out
+
+    def run(self):
+        fails = 0
+        while not self.stop_event.is_set():
+            try:
+                fresh = self.fetch_once()
+                with self.lock:
+                    self.data, self.error = fresh, ""
+                fails = 0
+                wait = self.REFRESH
+            except urllib.error.HTTPError as e:
+                with self.lock:
+                    if e.code in (401, 403):
+                        self.error = ("Speedtest token rejected — it needs "
+                                      "the results:read ability")
+                    elif e.code == 406:
+                        self.error = "Speedtest Tracker refused the request"
+                    else:
+                        self.error = "Speedtest unavailable (HTTP %s)" % e.code
+                fails += 1
+                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
+            except Exception as e:
+                with self.lock:
+                    self.error = ("Speedtest unavailable (%s)"
+                                  % e.__class__.__name__)
+                fails += 1
+                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
+            self.stop_event.wait(wait)
+
+    def snapshot(self):
+        with self.lock:
+            if self.data is None:
+                return {"available": False, "error": self.error}
+            out = dict(self.data)
+            out["available"] = True
+            out["error"] = self.error
+            return out
+
+
 class AlertsFetcher(threading.Thread):
     """Active weather alerts for the station's location, from the US National
     Weather Service. No key and no account — the NWS only asks that clients
@@ -744,7 +967,7 @@ class Backfill(threading.Thread):
 
 CARD_NAMES = ["temperature", "wind", "pressure", "rainfall", "astronomy",
               "forecast", "lightning", "radar", "records", "air", "pollen",
-              "hardware"]
+              "internet", "hardware"]
 
 
 class Config:
@@ -764,6 +987,7 @@ class Config:
         self.slots = list(defaults.get("slots") or [])
         self.token = defaults.get("token") or ""
         self.pollen_key = defaults.get("pollen_key") or ""
+        self.speedtest_token = defaults.get("speedtest_token") or ""
         self.load()
 
     def load(self):
@@ -780,13 +1004,18 @@ class Config:
                 self.token = saved["token"]
             if isinstance(saved.get("pollen_key"), str) and saved["pollen_key"]:
                 self.pollen_key = saved["pollen_key"]
+            if isinstance(saved.get("speedtest_token"), str) \
+                    and saved["speedtest_token"]:
+                self.speedtest_token = saved["speedtest_token"]
 
     def save(self):
         try:
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"slots": self.slots, "token": self.token,
-                           "pollen_key": self.pollen_key}, f, indent=2)
+                           "pollen_key": self.pollen_key,
+                           "speedtest_token": self.speedtest_token},
+                          f, indent=2)
             os.chmod(tmp, 0o600)          # it holds a token
             os.replace(tmp, self.path)
         except OSError:
@@ -810,7 +1039,8 @@ class Config:
             return {"slots": list(self.slots),
                     "cards": CARD_NAMES,
                     "token_set": bool(self.token),
-                    "pollen_key_set": bool(self.pollen_key)}
+                    "pollen_key_set": bool(self.pollen_key),
+                    "speedtest_token_set": bool(self.speedtest_token)}
 
     def apply(self, patch):
         """Returns (changed_fields, error)."""
@@ -825,7 +1055,8 @@ class Config:
                 if slots != self.slots:
                     self.slots = slots
                     changed.append("slots")
-            for field, label in (("pollen_key", "pollen_key"),):
+            for field, label in (("pollen_key", "pollen_key"),
+                                 ("speedtest_token", "speedtest_token")):
                 if field not in patch:
                     continue
                 val = patch.get(field)
@@ -907,6 +1138,9 @@ class Dashboard:
         self.pollen = None
         self.start_pollen()
 
+        self.speedtest = None
+        self.start_speedtest()
+
         self.alerts = None
         if args.alerts and args.lat is not None and args.lon is not None:
             self.alerts = AlertsFetcher(args.lat, args.lon, self.stop)
@@ -923,6 +1157,21 @@ class Dashboard:
             return False
         self.pollen = PollenFetcher(self.args.lat, self.args.lon, key, self.stop)
         self.pollen.start()
+        return True
+
+    def start_speedtest(self):
+        """Start the Speedtest Tracker fetcher once a token exists. Called at
+        boot and again when a token is saved, so it needs no restart."""
+        if self.speedtest is not None and self.speedtest.is_alive():
+            return False
+        token = self.config.speedtest_token
+        if not token or not self.args.speedtest_url:
+            return False
+        self.speedtest = SpeedtestFetcher(self.args.speedtest_url, token,
+                                          self.stop,
+                                          plan_down=self.args.plan_down,
+                                          plan_up=self.args.plan_up)
+        self.speedtest.start()
         return True
 
     def start_backfill(self):
@@ -1017,6 +1266,9 @@ class Dashboard:
         snap["pollen"] = (self.pollen.snapshot() if self.pollen
                           else {"available": False,
                                 "error": "Add a pollen key in settings"})
+        snap["internet"] = (self.speedtest.snapshot() if self.speedtest
+                            else {"available": False,
+                                  "error": "Add a Speedtest token in settings"})
         snap["alerts"] = (self.alerts.snapshot() if self.alerts
                           else {"alerts": [], "error": "", "checked": False})
         snap["slots"] = self.config.slots
@@ -1110,6 +1362,8 @@ class Handler(BaseHTTPRequestHandler):
             dash.start_backfill()
         if "pollen_key_set" in changed:
             dash.start_pollen()
+        if "speedtest_token_set" in changed:
+            dash.start_speedtest()
         body = dash.config.public()
         body["ok"] = True
         body["changed"] = changed
@@ -1258,6 +1512,18 @@ def parse_args(argv):
                         "used to backfill history so 24-hour and monthly "
                         "figures are real from day one. Get one at "
                         "tempestwx.com/settings/tokens")
+    p.add_argument("--speedtest-url",
+                   default=env_default("TEMPEST_SPEEDTEST_URL",
+                                       "http://127.0.0.1:8080"),
+                   help="base URL of your Speedtest Tracker instance. The "
+                        "token itself is set on the settings page, not here")
+    p.add_argument("--plan-down", type=float,
+                   default=env_default("TEMPEST_PLAN_DOWN", 0.0, float),
+                   help="advertised download rate in Mbps, so the card can "
+                        "say what fraction of it you are getting")
+    p.add_argument("--plan-up", type=float,
+                   default=env_default("TEMPEST_PLAN_UP", 0.0, float),
+                   help="advertised upload rate in Mbps")
     p.add_argument("--no-alerts", dest="alerts", action="store_false",
                    default=not env_default("TEMPEST_NO_ALERTS", ""),
                    help="do not fetch National Weather Service alerts")

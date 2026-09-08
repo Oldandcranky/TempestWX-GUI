@@ -42,7 +42,8 @@ html[data-theme="light"]{
   font-weight:normal;font-style:normal;font-display:swap;
 }
 .wi{
-  font-family:weathericons;font-style:normal;font-weight:normal;
+  font-family:weathericons,system-ui,-apple-system,"Segoe UI Symbol",sans-serif;
+  font-style:normal;font-weight:normal;
   font-variant:normal;text-transform:none;line-height:1;
   display:inline-block;speak:never;
 }
@@ -1661,13 +1662,71 @@ function buildHardware(s){
   return c;
 }
 
+/* Internet health, from Speedtest Tracker. Speed is the headline because it
+   is what people look for, but the wording underneath is driven by packet
+   loss, jitter and latency under load — a line can test fast and still be
+   unusable, and those are the numbers that say so. */
+const NET_TONE = {good:"green", degraded:"accent", down:"red", unknown:"muted"};
+const NET_WORD = {good:"No problems", degraded:"Degraded", down:"Down",
+                  unknown:"Unknown"};
+
+function buildInternet(s){
+  const n = s.internet || {};
+  const {card:c, body:b} = card("internet","Internet","\u21c5","cold",s.health);
+  if (!n.available) {
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption(n.error || "Speedtest unavailable"));
+    b.appendChild(el("div","mid"));
+    return c;
+  }
+  const tone = NET_TONE[n.status] || "muted";
+  const mb = v => v == null ? DASH : (v >= 100 ? String(Math.round(v)) : v.toFixed(1));
+  const pct = (v, plan) => (v == null || !plan) ? null
+    : Math.round(v / plan * 100) + "% of " + Math.round(plan);
+
+  b.appendChild(cells([
+    {k:"Download", v:mb(n.down), u:"Mbps", sub:pct(n.down, n.plan_down)},
+    {k:"Upload",   v:mb(n.up),   u:"Mbps", sub:pct(n.up, n.plan_up)},
+  ], {grow:true}));
+
+  b.appendChild(caption(NET_WORD[n.status] || "Unknown"));
+  b.querySelector(".caption").style.color = "var(--" + tone + ")";
+
+  const issues = Array.isArray(n.issues) ? n.issues : [];
+  const list = el("div","sub");
+  list.style.textAlign = "center";
+  list.innerHTML = issues.length
+    ? issues.map(esc).join("<br>")
+    : esc("Nothing flagged in " + (Math.round(n.window_h) || 24) + " hours");
+  if (issues.length) list.style.color = "var(--" + tone + ")";
+  b.appendChild(list);
+
+  b.appendChild(cells([
+    {k:"Latency",   v:n.ping == null ? DASH : fg(n.ping), small:true, u:"ms"},
+    {k:"Jitter",    v:n.jitter == null ? DASH : fg(n.jitter), small:true, u:"ms"},
+    {k:"Under load", v:n.bloat == null ? DASH : sign(n.bloat, 0), small:true, u:"ms",
+     tone:(n.bloat != null && n.bloat > 100) ? "red" : null},
+    {k:"Loss",      v:n.loss == null ? DASH : fg(n.loss), small:true, u:"%",
+     tone:(n.loss != null && n.loss > 1) ? "red" : null},
+  ]));
+
+  const bits = [];
+  if (n.isp) bits.push(n.isp);
+  if (n.at) bits.push("tested " + ago(Date.now()/1000 - n.at) + " ago");
+  if (n.avg_down != null)
+    bits.push("avg " + mb(n.avg_down) + " Mbps / " + n.tests + " tests");
+  b.appendChild(caption(bits.join(" · ") || "Speedtest Tracker", "faint"));
+  return c;
+}
+
 function buildBlank(){ return el("div","card"); }
 
 const CARD_BUILDERS = {
   temperature: buildTemperature, wind: buildWind, pressure: buildPressure,
   rainfall: buildRainfall, astronomy: buildSky, forecast: buildForecast,
   lightning: buildLightning, radar: buildRadar, records: buildRecords,
-  air: buildAirQuality, pollen: buildPollen, hardware: buildHardware,
+  air: buildAirQuality, pollen: buildPollen, internet: buildInternet,
+  hardware: buildHardware,
   blank: buildBlank,
 };
 
@@ -1888,6 +1947,19 @@ function renderSettings(){
       'rel="noopener noreferrer" style="color:var(--accent)">Google Cloud</a> ' +
       'project and paste the key here for tree, grass and weed counts plus ' +
       'which plants are in season. Handled exactly like the token above.',
+  }));
+
+  sheet.appendChild(secretField({
+    title: "Speedtest token",
+    field: "speedtest_token",
+    isSet: !!(cfg && cfg.speedtest_token_set),
+    placeholder: "Paste your Speedtest Tracker API token",
+    savedText: "Saved. Fetching results.",
+    note: 'Optional, and only needed for the Internet card. Create one under ' +
+      'Profile \u2192 API tokens in your own Speedtest Tracker, with the ' +
+      'results:read ability. The instance URL is set with ' +
+      '<code>TEMPEST_SPEEDTEST_URL</code>; only the token lives here, ' +
+      'handled exactly like the two above.',
   }));
 
   if (cfg && cfg.backfill && cfg.backfill.status && cfg.backfill.status !== "off") {

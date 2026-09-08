@@ -12,7 +12,7 @@ Built to run on a NAS. It runs on a Synology DS723+.
 
 **Author:** Chris Goodman &nbsp;·&nbsp; Built with [Claude](https://claude.ai) (Anthropic)
 
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue) ![Version](https://img.shields.io/badge/Version-3.4.0-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Dependencies](https://img.shields.io/badge/Dependencies-none-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue) ![Version](https://img.shields.io/badge/Version-3.5.0-orange) ![License](https://img.shields.io/badge/License-MIT-green) ![Dependencies](https://img.shields.io/badge/Dependencies-none-brightgreen)
 
 ![The dashboard running on a Synology NAS](docs/dashboard.png)
 
@@ -49,7 +49,7 @@ docker-compose.yml
 
 ## What is on it
 
-Twelve cards. Pick which ones you want and drag them into the order you like —
+Thirteen cards. Pick which ones you want and drag them into the order you like —
 the grid rearranges itself for however many you choose.
 
 | Card | Shows |
@@ -65,6 +65,7 @@ the grid rearranges itself for however many you choose.
 | **Radar** | Live radar for your location |
 | **Air quality** | US AQI on a banded scale, with PM2.5, PM10 and ozone (Open-Meteo, no key) |
 | **Pollen** | Tree, grass and weed indices with the season's active allergens (Google Pollen, key needed) |
+| **Internet** | Download and upload from a self-hosted Speedtest Tracker, with a health word driven by packet loss, jitter and latency under load rather than by speed |
 | **Station** | Battery voltage and charge, station and hub firmware, uptime, signal strength, and any sensor faults |
 
 Three more pages, each behind an icon in the footer:
@@ -149,6 +150,9 @@ settings page wins, because it is written to `tempest_config.json` at runtime.
 | `--name` | `TEMPEST_NAME` | station serial | Label in the footer |
 | `--slots` | `TEMPEST_SLOTS` | six cards | Which cards, in order |
 | `--wf-token` | `TEMPEST_WF_TOKEN` | unset | WeatherFlow token for history backfill |
+| `--speedtest-url` | `TEMPEST_SPEEDTEST_URL` | `http://127.0.0.1:8080` | Base URL of your Speedtest Tracker instance, for the Internet card |
+| `--plan-down` | `TEMPEST_PLAN_DOWN` | `0` | Advertised download rate in Mbps, so the card can show what fraction you are getting |
+| `--plan-up` | `TEMPEST_PLAN_UP` | `0` | Advertised upload rate in Mbps |
 | `--data-dir` | `TEMPEST_DATA_DIR` | beside the script | Where history is written |
 | `--demo` | `TEMPEST_DEMO` | off | Synthetic weather, no hub |
 | `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
@@ -290,6 +294,18 @@ checked against the Host.
 ---
 
 ## Changelog
+
+### v3.5.0
+- **Internet card.** Reads a self-hosted
+  [Speedtest Tracker](https://speedtest-tracker.dev) instance and reports
+  whether the connection is actually usable. Download and upload are the
+  headline because that is what people look for, but the status word comes
+  from packet loss, jitter, latency under load and failed tests — a line can
+  test fast and still be unusable, and those are the numbers that say so.
+  Set the instance with `--speedtest-url`; the API token goes on the settings
+  page and is handled like the other two, stored `0600` and never sent to a
+  browser. `--plan-down` and `--plan-up` are optional and let the card say
+  what fraction of the advertised rate you are getting.
 
 ### v3.3.0
 - Watchdogs on both sides: the server rebuilds the hub listener if its thread

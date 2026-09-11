@@ -171,14 +171,26 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
    transform rather than a rebuild — and because the grid is replaced every
    two seconds, a card that is rendered already-flipped simply starts that
    way and does not re-animate. */
-.card.flip{perspective:1400px}
-.flipper{position:absolute;inset:0;transform-style:preserve-3d;
-         transition:transform .5s cubic-bezier(.3,.7,.3,1)}
-.card.flipped .flipper{transform:rotateY(180deg)}
-.face{position:absolute;inset:0;display:flex;flex-direction:column;
-      backface-visibility:hidden;-webkit-backface-visibility:hidden}
-.face.back{transform:rotateY(180deg)}
-@media (prefers-reduced-motion:reduce){.flipper{transition:none}}
+.card.flip{position:relative}
+.flipper{position:absolute;inset:0}
+/* The turned-away face is collapsed, not rotated away in 3-D.
+   A 3-D flip needs transform-style:preserve-3d to survive on .card, which also
+   carries container-type:size; a browser that reads that as containment
+   flattens the context, and then backface-visibility hides nothing — both
+   faces paint at once and the one turned away comes out mirrored. scaleX has
+   no such dependency: it is a plain 2-D transform, a zero-width box paints
+   nothing, and no text can ever render backwards. The two halves are staggered
+   so one face has finished collapsing before the other opens, which reads as a
+   flip without needing a third dimension. */
+.face{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  transform-origin:50% 50%;transition:transform .24s ease-in-out;
+}
+.face.back{transform:scaleX(0)}
+.face.front{transform:scaleX(1);transition-delay:.24s}
+.card.flipped .face.front{transform:scaleX(0);transition-delay:0s}
+.card.flipped .face.back{transform:scaleX(1);transition-delay:.24s}
+@media (prefers-reduced-motion:reduce){.face{transition:none}}
 .flipbtn{
   background:none;border:0;padding:0;margin-left:.1em;line-height:0;
   color:var(--faint);cursor:pointer;-webkit-tap-highlight-color:transparent;
@@ -1918,8 +1930,10 @@ function buildInternet(s){
   if (netFlipped) c.classList.add("flipped");
   const flipper = el("div","flipper");
   c.appendChild(flipper);
-  const face = (cls, label, to) => {
-    const {card:tmp, body} = card("internet","Internet","\u21c5","cold",s.health);
+  // The back carries no glyph: the arrows say "this is the internet card",
+  // which the face you just turned over already told you.
+  const face = (cls, glyph, label, to) => {
+    const {card:tmp, body} = card("internet","Internet",glyph,"cold",s.health);
     const f = el("div","face " + cls);
     while (tmp.firstChild) f.appendChild(tmp.firstChild);
     f.querySelector(".card-head").appendChild(flipBtn(label, to));
@@ -1927,8 +1941,8 @@ function buildInternet(s){
     return body;
   };
 
-  const b = face("front", "Show the test history", true);
-  const back = face("back", "Back to the summary", false);
+  const b = face("front", "\u21c5", "Show the test history", true);
+  const back = face("back", "", "Back to the summary", false);
 
   const tone = NET_TONE[n.status] || "muted";
   const pct = (v, plan) => (v == null || !plan) ? null

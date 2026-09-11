@@ -165,6 +165,32 @@ body.tv .unit-toggle{cursor:default}
 
 svg.plot{width:100%;height:100%;display:block;overflow:visible}
 
+/* ── The internet card has two sides ─────────────────────────────────────
+   The glance view stays the front; the corner button turns it over to the
+   test history. Both faces are built every render, so the flip is a CSS
+   transform rather than a rebuild — and because the grid is replaced every
+   two seconds, a card that is rendered already-flipped simply starts that
+   way and does not re-animate. */
+.card.flip{perspective:1400px}
+.flipper{position:absolute;inset:0;transform-style:preserve-3d;
+         transition:transform .5s cubic-bezier(.3,.7,.3,1)}
+.card.flipped .flipper{transform:rotateY(180deg)}
+.face{position:absolute;inset:0;display:flex;flex-direction:column;
+      backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.face.back{transform:rotateY(180deg)}
+@media (prefers-reduced-motion:reduce){.flipper{transition:none}}
+.flipbtn{
+  background:none;border:0;padding:0;margin-left:.1em;line-height:0;
+  color:var(--faint);cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
+.flipbtn:hover{color:var(--accent)}
+.flipbtn svg{width:1.05em;height:1.05em;display:block}
+/* Axis labels ride on top of the plot as HTML: the SVG is stretched to the
+   card, so text inside it would be stretched too. */
+.netplot{position:relative;display:block}
+.netplot .ax{position:absolute;font-size:var(--fs-label);color:var(--faint);
+             line-height:1;white-space:nowrap}
+
 /* Wind card backdrop: a tree that leans and rustles with the real wind. */
 .card{position:relative}
 .tree{
@@ -524,6 +550,10 @@ body.show-settings #settings{display:block}
      each pair instead of shrinking them into ellipsis. */
   .row.n3 .cell.inline{flex-direction:column;gap:.08em}
   .row.n3 .cell.inline .k{font-size:calc(var(--fs-label)*.9)}
+
+  /* A phone card is tall, and a growing plot would take half the screen with
+     most of it empty axis. Cap it and let the figures below have the room. */
+  .card-body > .netplot{flex:0 0 auto;height:clamp(140px,30cqh,320px)}
 
   /* Summary lines are long. On a narrow card let them wrap rather than
      truncate — there is plenty of height to spare. */
@@ -1314,11 +1344,16 @@ const FIT_MIN = 0.6;
 
 function fitCards(){
   for (const card of document.querySelectorAll(".card")) {
-    const body = card.querySelector(".card-body");
+    // A two-sided card holds two bodies; only the one facing out is worth
+    // measuring, and each side is sized on its own.
+    const flipped = card.classList.contains("flipped");
+    const body = card.querySelector(flipped ? ".face.back .card-body"
+                                            : ".card-body");
     if (!body) continue;
     const w = card.clientWidth, h = card.clientHeight;
     if (!w || !h) continue;
-    const cached = fitCache.get(card.id);
+    const key = card.id + (flipped ? "#back" : "");
+    const cached = fitCache.get(key);
     let fit = (cached && cached.w === w && cached.h === h) ? cached.fit : 1;
     card.style.setProperty("--fit", fit);
 
@@ -1337,7 +1372,7 @@ function fitCards(){
       }
       fit = next;
     }
-    fitCache.set(card.id, {w, h, fit});
+    fitCache.set(key, {w, h, fit});
   }
 }
 
@@ -1669,24 +1704,239 @@ function buildHardware(s){
 const NET_TONE = {good:"green", degraded:"accent", down:"red", unknown:"muted"};
 const NET_WORD = {good:"No problems", degraded:"Degraded", down:"Down",
                   unknown:"Unknown"};
+const BLOAT_BAD = 100;                 // ms added under load — matches the server
+const netMb = v => v == null ? DASH
+  : (v >= 100 ? String(Math.round(v)) : v.toFixed(1));
+
+/* Which side of the internet card is showing. The grid is rebuilt every two
+   seconds, so this cannot live in the DOM: the class is put on the live node
+   when you press the button, which is what runs the transition, and put back
+   on each rebuilt node, which is what makes it survive. */
+let netFlipped = false;
+let netFlipTimer = null;
+const NET_FLIP_SEC = 30;    // a wall display finds its way back on its own
+
+function netFlip(on){
+  netFlipped = on;
+  const live = document.getElementById("card-internet");
+  if (live) live.classList.toggle("flipped", on);
+  clearTimeout(netFlipTimer);
+  if (on) netFlipTimer = setTimeout(() => netFlip(false), NET_FLIP_SEC*1000);
+  // The two sides are fitted independently but share the card's --fit, so
+  // refit at the half-turn, while the card is edge-on: doing it now would
+  // resize the face still facing the room. Sooner than the 2 s re-render.
+  setTimeout(fitCards, 250);        // half of the CSS transition
+}
+
+const FLIP_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3.5V9h-5.5"/></svg>';
+
+/* The label belongs to the face, not to the flip state: a face always means
+   the same thing, and a state-derived label would go stale between renders. */
+function flipBtn(label, to){
+  const b = el("button", "flipbtn", FLIP_ICON);
+  b.type = "button";
+  b.draggable = false;              // do not start a card drag from the button
+  b.title = label;
+  b.setAttribute("aria-label", label);
+  b.addEventListener("click", (e) => { e.stopPropagation(); netFlip(to); });
+  return b;
+}
+
+/* Latency across the window, idle against loaded. The band between the two
+   lines is the bufferbloat, and it is the point of the plot: a line can test
+   at full speed and still be unusable, and that shows up here as a thick
+   band rather than a low number. Failed tests break the line and get a
+   marker of their own, since a hole in the history is worth seeing. */
+function netPlot(pts, tone){
+  const W = 100, H = 46, top = 4, base = H - 6;   // the strip below holds labels
+  const wrap = el("div", "mid netplot");
+  const seen = pts.filter(p => p.ping != null || p.loaded != null);
+  if (seen.length < 2) {
+    wrap.appendChild(caption("Not enough tests yet"));
+    return wrap;
+  }
+  const n = pts.length;
+  const x = (i) => n === 1 ? W/2 : i/(n-1)*W;
+  let hi = 0;
+  for (const p of pts) hi = Math.max(hi, p.ping || 0, p.loaded || 0);
+  hi = Math.max(50, hi*1.15);
+  // Log scale, because one bad hour is ten times the normal figure and a
+  // linear axis would press every good hour flat against the baseline —
+  // losing exactly the band this plot exists to show. Decade rules give the
+  // eye something absolute to read the curve against.
+  const LO = 1;                                   // 1 ms floor
+  const span = Math.log(hi/LO);
+  const y = (v) => base - (Math.log(Math.max(v, LO)/LO)/span)*(base - top);
+
+  // Each series is drawn in runs, so a failed test leaves a gap rather than a
+  // straight line pretending the connection was fine across it.
+  const line = (key) => {
+    let d = "", pen = false;
+    pts.forEach((p, i) => {
+      if (p[key] == null) { pen = false; return; }
+      d += (pen ? "L" : "M") + x(i).toFixed(2) + " " + y(p[key]).toFixed(2) + " ";
+      pen = true;
+    });
+    return d.trim();
+  };
+  const band = () => {
+    let d = "", run = [];
+    const flush = () => {
+      if (run.length > 1) {
+        d += "M" + run.map(r => r[0].toFixed(2)+" "+r[1].toFixed(2)).join("L") +
+             "L" + run.slice().reverse()
+                      .map(r => r[0].toFixed(2)+" "+r[2].toFixed(2)).join("L") + "Z";
+      }
+      run = [];
+    };
+    pts.forEach((p, i) => {
+      if (p.ping == null || p.loaded == null) { flush(); return; }
+      run.push([x(i), y(p.loaded), y(p.ping)]);
+    });
+    flush();
+    return d;
+  };
+
+  let marks = "";
+  pts.forEach((p, i) => {
+    const xi = x(i).toFixed(2);
+    if (!p.ok)
+      marks += '<line x1="'+xi+'" y1="'+top+'" x2="'+xi+'" y2="'+base+'" ' +
+        'stroke="var(--red)" stroke-width="1.2" stroke-dasharray="2 2" ' +
+        'vector-effect="non-scaling-stroke"/>';
+    else if (p.loss)
+      marks += '<line x1="'+xi+'" y1="'+top+'" x2="'+xi+'" y2="'+(top+4)+'" ' +
+        'stroke="var(--red)" stroke-width="2" vector-effect="non-scaling-stroke"/>';
+  });
+
+  const decades = [10, 100, 1000].filter(v => v < hi);
+  let rules = "";
+  for (const v of decades)
+    rules += '<line x1="0" y1="'+y(v).toFixed(2)+'" x2="'+W+'" y2="'+y(v).toFixed(2)+
+      '" stroke="var(--rule)" stroke-dasharray="1 3" '+
+      'vector-effect="non-scaling-stroke"/>';
+
+  wrap.innerHTML =
+    '<svg class="plot" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+      rules+
+      '<line x1="0" y1="'+base+'" x2="'+W+'" y2="'+base+'" stroke="var(--rule)" '+
+        'vector-effect="non-scaling-stroke"/>'+
+      marks+
+      '<path d="'+band()+'" fill="var(--'+tone+')" fill-opacity=".22" stroke="none"/>'+
+      '<path d="'+line("loaded")+'" fill="none" stroke="var(--'+tone+')" '+
+        'stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'+
+      '<path d="'+line("ping")+'" fill="none" stroke="var(--cold)" '+
+        'stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>'+
+    '</svg>';
+
+  const label = (text, css) => {
+    const nd = el("div", "ax", esc(text));
+    Object.assign(nd.style, css);
+    wrap.appendChild(nd);
+  };
+  for (const v of decades)
+    // Below the rule, not above it: the curve rides just over each decade,
+    // so a label above would sit on top of the line it is labelling.
+    label(v + " ms", {left:"0", top:(y(v)/H*100).toFixed(1)+"%",
+                      transform:"translateY(15%)"});
+  // Hung off the axis rather than the bottom of the box: the plot is stretched
+  // to whatever height the card has left, and a strip measured in viewBox
+  // units would drift further from the axis the taller the card gets.
+  const foot = {top:(base/H*100).toFixed(1)+"%", transform:"translateY(20%)"};
+  const oldest = pts.find(p => p.at);
+  if (oldest) label(ago(Date.now()/1000 - oldest.at) + " ago",
+                    Object.assign({left:"0"}, foot));
+  label("now", Object.assign({right:"0"}, foot));
+  return wrap;
+}
+
+/* The back of the card: what the line has actually been doing, test by test. */
+function netDetail(b, n){
+  const pts = Array.isArray(n.history) ? n.history : [];
+  if (!pts.length) {
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption("No test history yet"));
+    b.appendChild(el("div","mid"));
+    return;
+  }
+  const worst = (key) => {
+    const vals = pts.map(p => p[key]).filter(v => v != null);
+    return vals.length ? Math.max(...vals) : null;
+  };
+  const bloats = pts.filter(p => p.ping != null && p.loaded != null)
+                    .map(p => p.loaded - p.ping);
+  const peak = bloats.length ? Math.max(...bloats) : null;
+  const tone = peak != null && peak > BLOAT_BAD ? "red" : "accent";
+  const failed = pts.filter(p => !p.ok).length;
+  const loss = worst("loss");
+  const downs = pts.map(p => p.down).filter(v => v != null);
+  const ups = pts.map(p => p.up).filter(v => v != null);
+  const range = (a) => a.length < 2 ? null
+    : netMb(Math.min(...a)) + "–" + netMb(Math.max(...a));
+
+  b.appendChild(caption("Latency — idle vs under load", "faint"));
+  b.appendChild(netPlot(pts, tone));
+  // Short labels: three of them share a card, and a phone card is narrow.
+  // The qualifier goes on the sub-line rather than into the label.
+  b.appendChild(cells([
+    {k:"Load", v:peak == null ? DASH : sign(peak, 0), u:"ms", small:true,
+     sub:"worst", tone:(peak != null && peak > BLOAT_BAD) ? "red" : null},
+    {k:"Loss", v:loss == null ? DASH : fg(loss), u:"%", small:true,
+     sub:"worst", tone:loss ? "red" : null},
+    {k:"Failed", v:String(failed), small:true, sub:"of " + pts.length,
+     tone:failed ? "red" : null},
+  ]));
+  b.appendChild(cells([
+    {k:"Down", v:downs.length ? netMb(n.avg_down) : DASH, u:"Mbps", small:true,
+     sub:range(downs)},
+    {k:"Up",   v:ups.length ? netMb(n.avg_up) : DASH, u:"Mbps", small:true,
+     sub:range(ups)},
+  ]));
+  const bits = [pts.length + " test" + (pts.length === 1 ? "" : "s") +
+                " over " + (Math.round(n.window_h) || 24) + "h"];
+  if (n.server) bits.push("via " + n.server);
+  b.appendChild(caption(bits.join(" · "), "faint"));
+}
 
 function buildInternet(s){
   const n = s.internet || {};
-  const {card:c, body:b} = card("internet","Internet","\u21c5","cold",s.health);
   if (!n.available) {
+    const {card:c, body:b} = card("internet","Internet","\u21c5","cold",s.health);
     b.appendChild(el("div","mid"));
     b.appendChild(caption(n.error || "Speedtest unavailable"));
     b.appendChild(el("div","mid"));
     return c;
   }
+
+  // Two faces in one card. card() builds a head and a body, which is exactly
+  // what a face needs, so borrow its children and drop the wrapper it came in.
+  const c = el("div","card flip");
+  c.id = "card-internet";
+  if (netFlipped) c.classList.add("flipped");
+  const flipper = el("div","flipper");
+  c.appendChild(flipper);
+  const face = (cls, label, to) => {
+    const {card:tmp, body} = card("internet","Internet","\u21c5","cold",s.health);
+    const f = el("div","face " + cls);
+    while (tmp.firstChild) f.appendChild(tmp.firstChild);
+    f.querySelector(".card-head").appendChild(flipBtn(label, to));
+    flipper.appendChild(f);
+    return body;
+  };
+
+  const b = face("front", "Show the test history", true);
+  const back = face("back", "Back to the summary", false);
+
   const tone = NET_TONE[n.status] || "muted";
-  const mb = v => v == null ? DASH : (v >= 100 ? String(Math.round(v)) : v.toFixed(1));
   const pct = (v, plan) => (v == null || !plan) ? null
     : Math.round(v / plan * 100) + "% of " + Math.round(plan);
 
   b.appendChild(cells([
-    {k:"Download", v:mb(n.down), u:"Mbps", sub:pct(n.down, n.plan_down)},
-    {k:"Upload",   v:mb(n.up),   u:"Mbps", sub:pct(n.up, n.plan_up)},
+    {k:"Download", v:netMb(n.down), u:"Mbps", sub:pct(n.down, n.plan_down)},
+    {k:"Upload",   v:netMb(n.up),   u:"Mbps", sub:pct(n.up, n.plan_up)},
   ], {grow:true}));
 
   b.appendChild(caption(NET_WORD[n.status] || "Unknown"));
@@ -1705,7 +1955,7 @@ function buildInternet(s){
     {k:"Latency",   v:n.ping == null ? DASH : fg(n.ping), small:true, u:"ms"},
     {k:"Jitter",    v:n.jitter == null ? DASH : fg(n.jitter), small:true, u:"ms"},
     {k:"Under load", v:n.bloat == null ? DASH : sign(n.bloat, 0), small:true, u:"ms",
-     tone:(n.bloat != null && n.bloat > 100) ? "red" : null},
+     tone:(n.bloat != null && n.bloat > BLOAT_BAD) ? "red" : null},
     {k:"Loss",      v:n.loss == null ? DASH : fg(n.loss), small:true, u:"%",
      tone:(n.loss != null && n.loss > 1) ? "red" : null},
   ]));
@@ -1714,8 +1964,10 @@ function buildInternet(s){
   if (n.isp) bits.push(n.isp);
   if (n.at) bits.push("tested " + ago(Date.now()/1000 - n.at) + " ago");
   if (n.avg_down != null)
-    bits.push("avg " + mb(n.avg_down) + " Mbps / " + n.tests + " tests");
+    bits.push("avg " + netMb(n.avg_down) + " Mbps / " + n.tests + " tests");
   b.appendChild(caption(bits.join(" · ") || "Speedtest Tracker", "faint"));
+
+  netDetail(back, n);
   return c;
 }
 

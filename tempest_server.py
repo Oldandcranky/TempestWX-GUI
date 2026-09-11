@@ -492,6 +492,22 @@ class SpeedtestFetcher(threading.Thread):
         status = str(row.get("status") or "").lower()
         return status in ("", "completed") and row.get("download") is not None
 
+    @classmethod
+    def _latency(cls, row):
+        """Idle ping and the worst latency while the line is saturated, in ms.
+        The gap between the two is the bufferbloat, which is what actually
+        makes a connection feel broken."""
+        d = row.get("data") or {}
+        idle = cls._num((d.get("ping") or {}).get("latency"))
+        if idle is None:
+            idle = cls._num(row.get("ping"))
+        loaded = None
+        for leg in ("download", "upload"):
+            iqm = cls._num(((d.get(leg) or {}).get("latency") or {}).get("iqm"))
+            if iqm is not None and (loaded is None or iqm > loaded):
+                loaded = iqm
+        return idle, loaded
+
     # -- fetch ------------------------------------------------------------
     def fetch_once(self):
         url = (self.base + "/api/v1/results?"
@@ -535,6 +551,26 @@ class SpeedtestFetcher(threading.Thread):
         out["window_h"] = ((max(stamps) - min(stamps)) / 3600.0
                            if len(stamps) > 1 else 0.0)
 
+        # The per-test series behind the card's detail view. Every row the
+        # window holds is already in hand, so this costs no extra request —
+        # and failed tests are kept, because a gap in the line is the whole
+        # point of looking. Oldest first, so it plots left to right.
+        def rnd(v, dp=1):
+            return None if v is None else round(v, dp)
+
+        history = []
+        for r in reversed(rows):
+            idle, load = cls._latency(r)
+            history.append({
+                "at": cls._epoch(r.get("created_at")),
+                "ok": cls._ok(r),
+                "ping": rnd(idle),
+                "loaded": rnd(load),
+                "loss": rnd(cls._num((r.get("data") or {}).get("packetLoss")), 2),
+                "down": rnd(cls._mbps(r.get("download_bits"), r.get("download"))),
+                "up": rnd(cls._mbps(r.get("upload_bits"), r.get("upload")))})
+        out["history"] = history
+
         latest = good[0] if good else None
         if latest is None:
             out["status"] = "down"
@@ -547,24 +583,15 @@ class SpeedtestFetcher(threading.Thread):
         out["down"] = cls._mbps(latest.get("download_bits"),
                                 latest.get("download"))
         out["up"] = cls._mbps(latest.get("upload_bits"), latest.get("upload"))
-        out["ping"] = cls._num(ping.get("latency"))
-        if out["ping"] is None:
-            out["ping"] = cls._num(latest.get("ping"))
+        out["ping"], loaded = cls._latency(latest)
         out["jitter"] = cls._num(ping.get("jitter"))
         out["loss"] = cls._num(d.get("packetLoss"))
         out["isp"] = d.get("isp") or ""
         out["server"] = ((d.get("server") or {}).get("name") or "")
         out["healthy"] = latest.get("healthy")
 
-        # Latency while the line is saturated, versus when it is idle.
-        bloat = None
-        for leg in ("download", "upload"):
-            iqm = cls._num(((d.get(leg) or {}).get("latency") or {}).get("iqm"))
-            if iqm is None or out["ping"] is None:
-                continue
-            delta = iqm - out["ping"]
-            if bloat is None or delta > bloat:
-                bloat = delta
+        bloat = (None if loaded is None or out["ping"] is None
+                 else loaded - out["ping"])
         out["bloat"] = bloat
 
         # -- what is wrong, in the order it matters -----------------------

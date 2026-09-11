@@ -65,7 +65,7 @@ the grid rearranges itself for however many you choose.
 | **Radar** | Live radar for your location |
 | **Air quality** | US AQI on a banded scale, with PM2.5, PM10 and ozone (Open-Meteo, no key) |
 | **Pollen** | Tree, grass and weed indices with the season's active allergens (Google Pollen, key needed) |
-| **Internet** | Download and upload from a self-hosted Speedtest Tracker, with a health word driven by packet loss, jitter and latency under load rather than by speed |
+| **Internet** | Download and upload from a self-hosted Speedtest Tracker, with a health word driven by packet loss, jitter and latency under load rather than by speed. Turns over to a plot of the last day's tests |
 | **Station** | Battery voltage and charge, station and hub firmware, uptime, signal strength, and any sensor faults |
 
 Three more pages, each behind an icon in the footer:
@@ -306,6 +306,14 @@ checked against the Host.
   page and is handled like the other two, stored `0600` and never sent to a
   browser. `--plan-down` and `--plan-up` are optional and let the card say
   what fraction of the advertised rate you are getting.
+- **The Internet card has a second side.** The button in its corner turns the
+  card over to the test history: idle latency and latency under load plotted
+  across the window, with the band between them — the bufferbloat — as the
+  thing you actually read, plus markers for failed tests and packet loss, the
+  worst figures of the window and the range of speeds behind the average. The
+  results were already being fetched for the summary, so the detail costs no
+  extra request. It turns itself back over after half a minute, because it
+  lives on a wall.
 - The card asks for a fixed number of results and used to treat them as "the
   last day". With a gap in the history that was badly wrong — a live dashboard
   reported a 2468-hour window. Results reaching further back than the window

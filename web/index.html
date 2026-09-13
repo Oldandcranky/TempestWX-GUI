@@ -234,8 +234,30 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
   0%,100%{transform:rotate(calc(var(--lean,2deg) * -1))}
   50%    {transform:rotate(var(--lean,2deg))}
 }
+/* Pollen card backdrop: the same placement as the tree, a little smaller so
+   the word in front of it still has room to breathe. */
+.pollenface{
+  position:absolute;left:50%;top:53%;transform:translate(-50%,-50%);
+  width:min(58cqw,54cqh,20rem);aspect-ratio:200/220;
+  opacity:.42;pointer-events:none;z-index:0;
+}
+.pollenface svg{width:100%;height:100%;display:block}
+/* Pivot at the neck, so the sneeze throws the head rather than sliding it.
+   Almost all of the cycle is spent still: it is punctuation, not a fidget. */
+.pollenface .head{
+  transform-origin:50% 82%;
+  animation:achoo var(--achoo,14s) ease-in-out infinite;
+}
+.pollenface.calm .head{animation:none}
+@keyframes achoo{
+  0%,86%,100%{transform:rotate(0deg) translateY(0)}
+  90%        {transform:rotate(-7deg) translateY(-4px)}
+  94%        {transform:rotate(9deg)  translateY(5px)}
+  97%        {transform:rotate(-2deg) translateY(1px)}
+}
 @media (prefers-reduced-motion:reduce){
   .tree .crown,.tree .crown .leafA{animation:none}
+  .pollenface .head{animation:none}
 }
 .card-body,.card-head{position:relative;z-index:1}
 
@@ -840,6 +862,92 @@ function tree(windMs){
           '<ellipse cx="76"  cy="88" rx="22" ry="17" fill="#3e5f2c"/>' +
           '<ellipse cx="104" cy="58" rx="20" ry="15" fill="#456a31"/>' +
         '</g>' +
+      '</g>' +
+    '</svg>';
+  return n;
+}
+
+/* A face that dresses for the pollen count, behind the Pollen card.
+
+   The same idea as the wind card's tree: the picture should tell you the
+   reading before the number does. The worst of the three indices picks the
+   gear — nothing, a tissue, a surgical mask, a respirator, a hood — and sets
+   how often it sneezes, from not at all to every few seconds. The eyes redden
+   on the way up.
+
+   Everything is drawn on one head so the tiers differ only in what is worn,
+   which is the joke: the same person, having a progressively worse day. */
+function pollenFace(worst){
+  const i = worst == null ? 0 : Math.max(0, Math.min(5, Math.round(worst)));
+  const n = el("div", "pollenface" + (i ? "" : " calm"));
+  // Nothing in the air, nothing to sneeze at; from there they crowd together.
+  if (i) n.style.setProperty("--achoo", (17 - i * 2.4).toFixed(1) + "s");
+
+  const skin = "#c9a687", dark = "#2e2620";
+  const flush = (i / 5 * 0.8).toFixed(2);        // how bloodshot, 0 to .8
+
+  // Worn over the face. Ordered so each tier reads as more desperate.
+  const gear = [
+    // 0 — nothing at all, and a faint smile about it
+    '<path d="M86 140 Q100 150 114 140" fill="none" stroke="' + dark +
+      '" stroke-width="3" stroke-linecap="round"/>',
+    // 1-2 — a tissue, pinched at the nose and flaring below it. Drawn as the
+    // gesture rather than the object: a rectangle over the mouth reads as
+    // tape, not as someone holding a kleenex.
+    '<path d="M100 116 C86 128 70 140 66 168 C84 178 118 178 136 166 ' +
+      'C130 138 114 127 100 116 Z" fill="#f4f6f9"/>' +
+    '<g stroke="#d3dae2" stroke-width="2.2" fill="none" stroke-linecap="round">' +
+      '<path d="M99 122 L80 164"/><path d="M101 122 L103 172"/>' +
+      '<path d="M102 122 L124 162"/></g>' +
+    '<g fill="#b98f70">' +          // fingers, pinching it shut
+      '<rect x="88" y="112" width="9" height="16" rx="4.5"/>' +
+      '<rect x="101" y="112" width="9" height="16" rx="4.5"/></g>',
+    null,                                        // 2 shares the tissue
+    // 3 — a surgical mask
+    '<path d="M62 118 Q100 112 138 118 L134 152 Q100 172 66 152 Z" fill="#9fd3e0"/>' +
+    '<g stroke="#7fb9c8" stroke-width="2.4" fill="none">' +
+      '<path d="M64 130 Q100 124 136 130"/><path d="M65 142 Q100 136 135 142"/></g>' +
+    '<g stroke="#7fb9c8" stroke-width="3" fill="none" stroke-linecap="round">' +
+      '<path d="M62 120 Q44 126 46 112"/><path d="M138 120 Q156 126 154 112"/></g>',
+    // 4 — a respirator, valve and all
+    '<path d="M60 116 Q100 108 140 116 Q142 146 100 172 Q58 146 60 116 Z" ' +
+      'fill="#eceff3"/>' +
+    '<path d="M60 116 Q100 126 140 116" fill="none" stroke="#c3c9d2" stroke-width="2.5"/>' +
+    '<circle cx="100" cy="148" r="11" fill="#c3c9d2"/>' +
+    '<circle cx="100" cy="148" r="5" fill="#8c949f"/>' +
+    '<g stroke="#c3c9d2" stroke-width="4" fill="none" stroke-linecap="round">' +
+      '<path d="M60 120 L34 106"/><path d="M140 120 L166 106"/></g>',
+    // 5 — full hood, and giving up on the outdoors
+    '<path d="M40 120 Q40 44 100 44 Q160 44 160 120 L160 178 Q100 194 40 178 Z" ' +
+      'fill="#d8c23f"/>' +
+    '<path d="M56 96 Q100 84 144 96 L144 134 Q100 148 56 134 Z" fill="#2b3440" ' +
+      'opacity=".88"/>' +
+    '<path d="M60 100 Q100 90 140 100" fill="none" stroke="#7b8798" stroke-width="3"/>' +
+    '<path d="M44 168 Q100 182 156 168" fill="none" stroke="#b9a52f" stroke-width="5"/>',
+  ];
+  const worn = gear[i] || gear[1];               // 2 falls back to the tissue
+  const hooded = i >= 5;
+
+  n.innerHTML =
+    '<svg viewBox="0 0 200 220" xmlns="http://www.w3.org/2000/svg">' +
+      '<g class="head">' +
+        '<path d="M58 220 Q60 184 100 178 Q140 184 142 220 Z" fill="#3a4352"/>' +
+        '<circle cx="46" cy="120" r="9" fill="' + skin + '"/>' +
+        '<circle cx="154" cy="120" r="9" fill="' + skin + '"/>' +
+        '<circle cx="100" cy="116" r="54" fill="' + skin + '"/>' +
+        (hooded ? "" :
+          '<path d="M50 104 Q56 58 100 58 Q144 58 150 104 Q138 82 100 80 ' +
+            'Q62 82 50 104 Z" fill="' + dark + '"/>') +
+        // eyes, with the irritation under them
+        '<g class="eyes">' +
+          '<ellipse cx="80" cy="124" rx="11" ry="6" fill="var(--red)" ' +
+            'opacity="' + flush + '"/>' +
+          '<ellipse cx="120" cy="124" rx="11" ry="6" fill="var(--red)" ' +
+            'opacity="' + flush + '"/>' +
+          '<circle cx="80" cy="116" r="5" fill="' + dark + '"/>' +
+          '<circle cx="120" cy="116" r="5" fill="' + dark + '"/>' +
+        '</g>' +
+        worn +
       '</g>' +
     '</svg>';
   return n;
@@ -1642,6 +1750,8 @@ function buildPollen(s){
                     : worstKey === "grass" ? p.grass : p.weed) : null;
   const word = worstKey ? (cats[worstKey] || pollenWord(worstVal)[0]) : DASH;
   const colour = pollenWord(worstVal)[1];
+
+  c.insertBefore(pollenFace(worstVal), c.firstChild);
 
   const hero = el("div","hero");
   hero.innerHTML = '<span class="v" style="color:' + colour + '">' +

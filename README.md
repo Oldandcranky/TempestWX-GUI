@@ -306,6 +306,12 @@ checked against the Host.
   page and is handled like the other two, stored `0600` and never sent to a
   browser. `--plan-down` and `--plan-up` are optional and let the card say
   what fraction of the advertised rate you are getting.
+- **The Pollen card has a face behind it**, the way the Wind card has a tree.
+  The worst of the three indices decides what it is wearing — nothing, a
+  tissue, a surgical mask, a respirator, a hood — and how often it sneezes,
+  from not at all at zero to every five seconds at very high. The eyes redden
+  on the way up. Like the tree, the point is that the picture tells you the
+  reading before the number does.
 - **Speed bars on the Internet card**, one under each of download and upload,
   filling against your plan rate and coloured green at or above 80% of it,
   yellow down to 50%, red below. The thresholds are fractions rather than

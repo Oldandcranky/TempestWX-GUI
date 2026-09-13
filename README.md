@@ -43,6 +43,7 @@ web/fonts/           Weather Icons (SIL OFL 1.1), vendored
 web/favicon.svg      tab icon, with PNG fallbacks beside it for iOS
 Dockerfile           for Synology Container Manager
 docker-compose.yml
+deploy.sh            ship this checkout to the NAS and rebuild
 ```
 
 ---
@@ -119,6 +120,24 @@ ssh YOURUSER@YOUR-NAS 'cd /volume1/docker/tempest && \
 Your DSM account needs to be in **administrators** (for SSH) and **docker** (so
 `docker` works without sudo — Container Manager adds administrators to it).
 Check with `id`.
+
+### Updating it afterwards
+
+Step 1 is the only part you do once. After that `deploy.sh` is the same four
+steps in one command, run from a machine on the LAN whose key the NAS knows:
+
+```bash
+NAS=YOURUSER@YOUR-NAS ./deploy.sh
+```
+
+It ships the code, fixes the permissions, rebuilds, and then waits until the
+NAS is actually serving the page you just sent — the server reports a digest
+of `web/index.html` in `/api/state`, so "deployed" means the new page is up,
+not merely that docker exited zero.
+
+It deliberately leaves `docker-compose.yml`, `.env` and `data/` alone. Those
+hold your location, your units, your tokens and your history, and they are
+meant to differ from what is in git.
 
 Three DSM quirks worth knowing:
 
@@ -296,6 +315,9 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **`deploy.sh`.** The four SSH steps from the hosting section, in one
+  command, ending with a check that the NAS is serving the page you just
+  shipped rather than the one it already had.
 - **Internet card.** Reads a self-hosted
   [Speedtest Tracker](https://speedtest-tracker.dev) instance and reports
   whether the connection is actually usable. Download and upload are the

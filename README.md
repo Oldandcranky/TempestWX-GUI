@@ -306,6 +306,13 @@ checked against the Host.
   page and is handled like the other two, stored `0600` and never sent to a
   browser. `--plan-down` and `--plan-up` are optional and let the card say
   what fraction of the advertised rate you are getting.
+- The fit pass measures width as well as height. It only ever checked whether
+  a card's content was too tall, so a long word ran off the side unnoticed and
+  was clipped by the card's own `overflow:hidden` — "Very high" needed 457
+  pixels of a 372 pixel Pollen card on a phone, and the pressure reading
+  overflowed too, both with the fit left at 1 because nothing was too tall.
+  Cards that already fitted are untouched: on a desktop layout not one of them
+  changes.
 - **The Pollen card has a face behind it**, the way the Wind card has a tree.
   The worst of the three indices decides what it is wearing — nothing, a
   tissue, a surgical mask, a respirator, a hood — and how often it sneezes,

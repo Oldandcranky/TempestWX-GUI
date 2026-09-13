@@ -306,6 +306,17 @@ checked against the Host.
   page and is handled like the other two, stored `0600` and never sent to a
   browser. `--plan-down` and `--plan-up` are optional and let the card say
   what fraction of the advertised rate you are getting.
+- **Speed bars on the Internet card**, one under each of download and upload,
+  filling against your plan rate and coloured green at or above 80% of it,
+  yellow down to 50%, red below. The thresholds are fractions rather than
+  fixed rates: download and upload run on scales an order of magnitude apart,
+  and a rule written for one paints the other permanently red. Set the rates
+  with `--plan-down` and `--plan-up`; without them there is no ceiling to be a
+  fraction of, so there is no bar.
+- The Internet card's header now turns it over as well as the button in it.
+  The header only: the body holds figures people read, and a card that flips
+  whenever someone brushes past a touchscreen is worse than one that needs
+  aiming. Dragging a card by its header still reorders it.
 - On a phone the Internet card's four small figures ran into each other:
   "Under load" needed half again the width of its quarter-card cell, and the
   first cell's label and value both crossed the divider into the next. That

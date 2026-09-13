@@ -191,6 +191,23 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
 .card.flipped .face.front{transform:scaleX(0);transition-delay:0s}
 .card.flipped .face.back{transform:scaleX(1);transition-delay:.24s}
 @media (prefers-reduced-motion:reduce){.face{transition:none}}
+/* The header turns the card over, so it has to look like it does. */
+.fliphead{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.fliphead:hover .flipbtn{color:var(--accent)}
+
+/* Speed against the plan rate. Colour carries the reading, so the bar itself
+   stays thin — it sits under a figure that is already the headline, and is
+   there to be caught out of the corner of the eye, not studied. */
+.gauge{
+  width:78%;height:clamp(4px,1.1cqh,10px);margin-top:.55em;
+  background:var(--inset);border:1px solid var(--inset-edge);
+  border-radius:999px;overflow:hidden;flex:0 0 auto;
+}
+.gauge .fill{height:100%;border-radius:999px}
+.gauge .fill.green{background:var(--green)}
+.gauge .fill.yellow{background:var(--yellow)}
+.gauge .fill.red{background:var(--red)}
+
 .flipbtn{
   background:none;border:0;padding:0;margin-left:.1em;line-height:0;
   color:var(--faint);cursor:pointer;-webkit-tap-highlight-color:transparent;
@@ -1765,6 +1782,29 @@ function flipBtn(label, to){
   return b;
 }
 
+/* Speed against the plan rate, as a bar under the figure.
+
+   The thresholds are fractions of the plan, not fixed Mbps: download and
+   upload run on scales an order of magnitude apart, and a rule written for
+   one paints the other permanently red. As fractions, "most of what I pay
+   for" means the same thing in both.
+
+   No plan rate, no bar — without a ceiling a bar has nothing to be a
+   fraction of, and a full-looking one would be a lie. */
+const SPEED_GOOD = 0.8;          // at or above this much of the plan
+const SPEED_FAIR = 0.5;
+
+function speedBar(v, cap){
+  if (v == null || !cap) return null;
+  const frac = Math.max(0, Math.min(1, v / cap));
+  const tone = frac >= SPEED_GOOD ? "green" : frac >= SPEED_FAIR ? "yellow" : "red";
+  const wrap = el("div", "gauge");
+  const fill = el("div", "fill " + tone);
+  fill.style.width = (frac * 100).toFixed(1) + "%";
+  wrap.appendChild(fill);
+  return wrap;
+}
+
 /* Latency across the window, idle against loaded. The band between the two
    lines is the bufferbloat, and it is the point of the plot: a line can test
    at full speed and still be unusable, and that shows up here as a thick
@@ -1944,7 +1984,16 @@ function buildInternet(s){
     const {card:tmp, body} = card("internet","Internet",glyph,"cold",s.health);
     const f = el("div","face " + cls);
     while (tmp.firstChild) f.appendChild(tmp.firstChild);
-    f.querySelector(".card-head").appendChild(flipBtn(label, to));
+    // The header is the tap target, not the whole card: the body holds the
+    // figures people read and sometimes select, and on a touchscreen a card
+    // that turns over when anyone brushes past it is worse than one that
+    // needs aiming. The button stays inside it — discoverable, and the part
+    // a keyboard can reach.
+    const head = f.querySelector(".card-head");
+    head.classList.add("fliphead");
+    head.title = label;
+    head.addEventListener("click", () => netFlip(to));
+    head.appendChild(flipBtn(label, to));
     flipper.appendChild(f);
     return body;
   };
@@ -1956,10 +2005,19 @@ function buildInternet(s){
   const pct = (v, plan) => (v == null || !plan) ? null
     : Math.round(v / plan * 100) + "% of " + Math.round(plan);
 
-  b.appendChild(cells([
+  const speeds = cells([
     {k:"Download", v:netMb(n.down), u:"Mbps", sub:pct(n.down, n.plan_down)},
     {k:"Upload",   v:netMb(n.up),   u:"Mbps", sub:pct(n.up, n.plan_up)},
-  ], {grow:true}));
+  ], {grow:true});
+  // Appended rather than passed through cells(): every other card in the
+  // dashboard uses that helper unchanged, and one card wanting a bar is not
+  // reason enough to grow the shared shape.
+  const speedCells = speeds.querySelectorAll(".cell");
+  [[n.down, n.plan_down], [n.up, n.plan_up]].forEach(([v, cap], i) => {
+    const bar = speedBar(v, cap);
+    if (bar) speedCells[i].appendChild(bar);
+  });
+  b.appendChild(speeds);
 
   b.appendChild(caption(NET_WORD[n.status] || "Unknown"));
   b.querySelector(".caption").style.color = "var(--" + tone + ")";

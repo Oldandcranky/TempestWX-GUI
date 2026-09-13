@@ -1502,8 +1502,15 @@ function fitCards(){
     let fit = (cached && cached.w === w && cached.h === h) ? cached.fit : 1;
     card.style.setProperty("--fit", fit);
 
+    // Width as well as height. Measuring only height let a long word run off
+    // the side of a card unnoticed — the Pollen card's "Very high" needed 457
+    // pixels of a 372 pixel card on a phone and was simply clipped, with the
+    // fit left at 1 because nothing was too tall.
+    const overflows = () => body.scrollHeight > body.clientHeight + 1
+                         || body.scrollWidth  > body.clientWidth  + 1;
+
     let guard = 0;
-    while (body.scrollHeight > body.clientHeight + 1 && fit > FIT_MIN && guard++ < 14) {
+    while (overflows() && fit > FIT_MIN && guard++ < 14) {
       fit = Math.max(FIT_MIN, Math.round((fit - 0.035) * 1000) / 1000);
       card.style.setProperty("--fit", fit);
     }
@@ -1511,7 +1518,7 @@ function fitCards(){
     while (fit < 1 && guard++ < 26) {
       const next = Math.min(1, Math.round((fit + 0.02) * 1000) / 1000);
       card.style.setProperty("--fit", next);
-      if (body.scrollHeight > body.clientHeight + 1) {
+      if (overflows()) {
         card.style.setProperty("--fit", fit);
         break;
       }

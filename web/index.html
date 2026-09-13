@@ -234,14 +234,12 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
   0%,100%{transform:rotate(calc(var(--lean,2deg) * -1))}
   50%    {transform:rotate(var(--lean,2deg))}
 }
-/* Pollen card backdrop: the same placement as the tree, a little smaller so
-   the word in front of it still has room to breathe. */
-.pollenface{
-  position:absolute;left:50%;top:53%;transform:translate(-50%,-50%);
-  width:min(58cqw,54cqh,20rem);aspect-ratio:200/220;
-  opacity:.42;pointer-events:none;z-index:0;
-}
-.pollenface svg{width:100%;height:100%;display:block}
+/* The Pollen card's face fills whatever space the card has going spare —
+   it is the middle spacer, so it shrinks with the card instead of covering it.
+   A little more present than the wind card's tree, which has to sit behind
+   the numbers; this one has its own room. */
+.pollenface{opacity:.55;pointer-events:none;overflow:hidden}
+.pollenface svg{height:100%;width:auto;max-width:100%;display:block}
 /* Pivot at the neck, so the sneeze throws the head rather than sliding it.
    Almost all of the cycle is spent still: it is punctuation, not a fidget. */
 .pollenface .head{
@@ -879,7 +877,12 @@ function tree(windMs){
    which is the joke: the same person, having a progressively worse day. */
 function pollenFace(worst){
   const i = worst == null ? 0 : Math.max(0, Math.min(5, Math.round(worst)));
-  const n = el("div", "pollenface" + (i ? "" : " calm"));
+  // It IS the card's middle spacer rather than a layer floating over the card.
+  // Floated, it had to guess how much room the layout had left, and it guessed
+  // from the two roomiest cases: on any card shorter than about 470px it sat
+  // across the caption and the figures. As the spacer, flex hands it exactly
+  // what is going spare and it cannot overlap anything by construction.
+  const n = el("div", "mid pollenface" + (i ? "" : " calm"));
   // Nothing in the air, nothing to sneeze at; from there they crowd together.
   if (i) n.style.setProperty("--achoo", (17 - i * 2.4).toFixed(1) + "s");
 
@@ -1758,14 +1761,12 @@ function buildPollen(s){
   const word = worstKey ? (cats[worstKey] || pollenWord(worstVal)[0]) : DASH;
   const colour = pollenWord(worstVal)[1];
 
-  c.insertBefore(pollenFace(worstVal), c.firstChild);
-
   const hero = el("div","hero");
   hero.innerHTML = '<span class="v" style="color:' + colour + '">' +
     esc(word) + '</span>';
   b.appendChild(hero);
   b.appendChild(caption(worstKey ? "Highest: " + worstKey : "No pollen reported"));
-  b.appendChild(el("div","mid"));
+  b.appendChild(pollenFace(worstVal));
 
   const one = (label, key, v) => ({
     k: label,

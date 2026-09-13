@@ -306,6 +306,11 @@ checked against the Host.
   page and is handled like the other two, stored `0600` and never sent to a
   browser. `--plan-down` and `--plan-up` are optional and let the card say
   what fraction of the advertised rate you are getting.
+- The Pollen card's face is the card's middle spacer rather than a layer over
+  the card. Floating, it had to guess how much room the layout had left, and
+  on any card shorter than about 470px it guessed wrong and sat across the
+  caption and the figures. As the spacer it gets exactly what is going spare,
+  so it shrinks with the card instead of covering it.
 - The fit pass measures width as well as height. It only ever checked whether
   a card's content was too tall, so a long word ran off the side unnoticed and
   was clipped by the card's own `overflow:hidden` — "Very high" needed 457

@@ -306,6 +306,12 @@ checked against the Host.
   page and is handled like the other two, stored `0600` and never sent to a
   browser. `--plan-down` and `--plan-up` are optional and let the card say
   what fraction of the advertised rate you are getting.
+- On a phone the Internet card's four small figures ran into each other:
+  "Under load" needed half again the width of its quarter-card cell, and the
+  first cell's label and value both crossed the divider into the next. That
+  figure is now "Load" — what the card's own detail side already calls it —
+  and four-column rows use slightly smaller type on narrow screens. Wall
+  displays are unaffected; they had the room all along.
 - **The dashboard notices when it is out of date.** A page left open polls for
   data but never re-fetches itself, so a wall display went on running whatever
   HTML and CSS it started with, however many times the server was rebuilt

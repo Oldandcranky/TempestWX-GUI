@@ -24,6 +24,7 @@
 # =============================================================================
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -41,6 +42,29 @@ import tempest_core as core
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(HERE, "web")
+
+
+def ui_fingerprint():
+    """A short digest of the page this server serves.
+
+    A dashboard left open polls for data but never re-fetches itself, so it
+    keeps running whatever HTML and CSS it loaded with — a rebuilt server can
+    sit behind a wall display showing a stale interface indefinitely. The page
+    watches this value and reloads when it changes.
+
+    VERSION will not do: it moves on releases, not on every rebuild, and the
+    rebuild nobody remembered to bump is exactly the one that strands a wall
+    display. Reading the file is right because the page is baked into the
+    image — a changed page means a restarted server means a fresh digest.
+    """
+    try:
+        with open(os.path.join(WEB_DIR, "index.html"), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:12]
+    except OSError:
+        return ""          # no page to serve; the UI has bigger problems
+
+
+UI_ID = ui_fingerprint()
 
 # Icons the page links to. Listed one by one so the static route stays a
 # closed set rather than anything that happens to sit in web/.
@@ -1306,6 +1330,7 @@ class Dashboard:
         snap["source_alive"] = bool(self.source and self.source.is_alive())
         snap["uptime_s"] = time.time() - self.started
         snap["poll_ms"] = POLL_HINT_MS
+        snap["ui"] = UI_ID
         snap["units"] = {"temp": self.args.temp_unit, "wind": self.args.wind_unit,
                          "pres": self.args.pres_unit, "rain": self.args.rain_unit,
                          "dist": self.args.dist_unit}

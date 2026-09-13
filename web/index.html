@@ -2510,6 +2510,24 @@ function watchdogTick(){
 }
 
 let failures = 0;
+/* A dashboard left open polls for data but never re-fetches itself, so it goes
+   on running the HTML and CSS it started with however many times the server is
+   rebuilt beneath it — a wall display can show a stale interface for weeks and
+   look perfectly healthy doing it, because the numbers on it are current. The
+   server sends a digest of the page it would serve; when that stops matching
+   the page we are, the update has landed and we are the old one. */
+let uiId = null;
+function checkUi(s){
+  if (!s.ui) return;                       // server too old to say
+  if (uiId == null) { uiId = s.ui; return; }
+  if (s.ui === uiId) return;
+  // Not mid-drag and not mid-settings: reloading would throw away a token
+  // half-typed or a card half-moved. The next poll will catch it once they
+  // are done, which is soon enough for a change that already shipped.
+  if (paused || document.body.classList.contains("show-settings")) return;
+  location.reload();
+}
+
 async function poll(){
   try {
     const res = await fetch("api/state", {cache:"no-store"});
@@ -2518,6 +2536,7 @@ async function poll(){
     if (!Object.keys(prefs).length) loadPrefs(s.units);
     failures = 0;
     WATCH.failingSince = null;
+    checkUi(s);
     render(s);
   } catch (e) {
     failures++;

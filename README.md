@@ -306,6 +306,15 @@ checked against the Host.
   page and is handled like the other two, stored `0600` and never sent to a
   browser. `--plan-down` and `--plan-up` are optional and let the card say
   what fraction of the advertised rate you are getting.
+- **The dashboard notices when it is out of date.** A page left open polls for
+  data but never re-fetches itself, so a wall display went on running whatever
+  HTML and CSS it started with, however many times the server was rebuilt
+  beneath it — current numbers in a stale interface, looking perfectly healthy.
+  The server now sends a digest of the page it would serve, and a page that no
+  longer matches reloads itself. Not while a card is being dragged or the
+  settings sheet is open; it waits for the next poll instead. The digest is of
+  the page itself rather than the version string, because the rebuild nobody
+  remembered to bump is exactly the one that strands a display.
 - **The Internet card has a second side.** The button in its corner turns the
   card over to the test history: idle latency and latency under load plotted
   across the window, with the band between them — the bufferbloat — as the

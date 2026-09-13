@@ -558,6 +558,14 @@ body.show-settings #settings{display:block}
   .cell .sub{max-width:100%;overflow:hidden;text-overflow:ellipsis}
   .cell .k,.cell .v{overflow:visible;text-overflow:clip}
 
+  /* Four columns is one more than a phone card has room for, and the internet
+     card is the only one that asks for it. At full size the first cell's label
+     and its value both cross the divider into the next. Trim the type for that
+     row rather than the words — a shorter label would have to lose meaning,
+     and this is narrow screens only, so the wall display keeps its full size. */
+  .row.n4 .k{font-size:calc(var(--fs-label)*.88)}
+  .row.n4 .v{font-size:calc(var(--fs-value-sm)*.88)}
+
   /* Three label/value pairs will not sit side by side on a phone, so stack
      each pair instead of shrinking them into ellipsis. */
   .row.n3 .cell.inline{flex-direction:column;gap:.08em}
@@ -1968,7 +1976,10 @@ function buildInternet(s){
   b.appendChild(cells([
     {k:"Latency",   v:n.ping == null ? DASH : fg(n.ping), small:true, u:"ms"},
     {k:"Jitter",    v:n.jitter == null ? DASH : fg(n.jitter), small:true, u:"ms"},
-    {k:"Under load", v:n.bloat == null ? DASH : sign(n.bloat, 0), small:true, u:"ms",
+    // "Under load" needs half again the width of its quarter-card cell on a
+    // phone, and no font size that stays readable closes that gap. "Load" is
+    // what the detail side already calls this number, so the two agree.
+    {k:"Load", v:n.bloat == null ? DASH : sign(n.bloat, 0), small:true, u:"ms",
      tone:(n.bloat != null && n.bloat > BLOAT_BAD) ? "red" : null},
     {k:"Loss",      v:n.loss == null ? DASH : fg(n.loss), small:true, u:"%",
      tone:(n.loss != null && n.loss > 1) ? "red" : null},

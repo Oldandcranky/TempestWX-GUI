@@ -1031,7 +1031,8 @@ function buildTemperature(s){
   // Three degrees C, roughly five F: a still night reads flat instead of
   // having the sensor's last decimal stretched across the card.
   b.appendChild(trace24(s.series && s.series.temp_c,
-    {floor:3, tone:"amber", cls:"temptrace", empty:"Building a baseline"}));
+    {floor:3, tone:"amber", cls:"temptrace", empty:"Building a baseline",
+     band:s.temp_normal_c}));
   b.appendChild(cells([
     {k:"Min", v:fg(temp(d.temp_min && d.temp_min.v)), u:d.temp_min ? prefs.temp : "", tone:"cold",
      sub:d.temp_min ? clock(d.temp_min.t) : ""},
@@ -1255,7 +1256,7 @@ function buildPressure(s){
    `floor` is the smallest range the scale will show, in whatever units the
    rows are in. Without one, a settled day gets stretched to fill the card
    and sensor noise reads as weather. */
-function trace24(rows, {floor, tone, cls, empty}){
+function trace24(rows, {floor, tone, cls, empty, band}){
   const W = 100, H = 46, pad = 4;
   const wrap = el("div", "mid " + cls);
   const pts = (rows || []).filter(r => r && r[1] != null);
@@ -1269,6 +1270,17 @@ function trace24(rows, {floor, tone, cls, empty}){
 
   let lo = Infinity, hi = -Infinity;
   for (const p of pts) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
+
+  // The band has to sit inside the scale, or a day far warmer than normal
+  // pushes it off the top — which is exactly the day you want to see it.
+  let bHi = null, bLo = null;
+  if (band) {
+    bHi = pts.map(p => monthlyAt(band.hi, new Date(p[0] * 1000)));
+    bLo = pts.map(p => monthlyAt(band.lo, new Date(p[0] * 1000)));
+    for (const v of bHi) hi = Math.max(hi, v);
+    for (const v of bLo) lo = Math.min(lo, v);
+  }
+
   if (hi - lo < floor) {
     const mid = (hi + lo) / 2;
     lo = mid - floor / 2; hi = mid + floor / 2;
@@ -1294,8 +1306,24 @@ function trace24(rows, {floor, tone, cls, empty}){
       'stroke="var(--rule)" stroke-dasharray="1 3" vector-effect="non-scaling-stroke"/>';
   }
 
+  // Normal for the time of year, as a band rather than a line: a day crosses
+  // its own mean twice before breakfast, so one line would say nothing. The
+  // trace leaving the top is a day warmer than it ought to be.
+  let bandArt = "";
+  if (bHi) {
+    const at = (v, i) => x(pts[i][0]).toFixed(2) + " " + y(v).toFixed(2);
+    const top = bHi.map(at), bot = bLo.map(at);
+    const edge = (pt) => '<path d="M'+pt.join("L")+'" fill="none" '+
+      'stroke="var(--label)" stroke-width="1" stroke-dasharray="3 3" '+
+      'opacity=".55" vector-effect="non-scaling-stroke"/>';
+    bandArt = '<path d="M'+top.join("L")+'L'+bot.slice().reverse().join("L")+'Z" '+
+                'fill="var(--label)" fill-opacity=".10" stroke="none"/>'+
+              edge(top) + edge(bot);
+  }
+
   wrap.innerHTML =
     '<svg class="plot" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+      bandArt+
       rules+
       '<path d="'+d.trim()+'" fill="none" stroke="var(--'+tone+')" stroke-width="2.4" '+
         'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'+
@@ -1405,6 +1433,21 @@ function buildRainfall(s){
    by today, so above the line is a wet year and below it a dry one. Without
    a normal configured there is nothing to fill against and the card just
    shows its figures. */
+/* A monthly figure read for one particular day. Monthly normals are
+   mid-month values, so interpolate between the two nearest midpoints rather
+   than stepping on the 1st: by 30 September the September figure is already
+   most of the way to October's, and here that is thirteen degrees. */
+function monthlyAt(vals, dt){
+  const y = dt.getFullYear(), m = dt.getMonth();
+  const mid = (mm) => new Date(y, mm, 15);
+  const after = dt >= mid(m);
+  const a = after ? m : (m + 11) % 12;
+  const from = after ? mid(m) : mid(m - 1);
+  const to   = after ? mid(m + 1) : mid(m);
+  const t = Math.max(0, Math.min(1, (dt - from) / (to - from)));
+  return vals[a] + (vals[(a + 1) % 12] - vals[a]) * t;
+}
+
 /* Normal rainfall between two dates, in inches, from twelve monthly figures
    pro-rated by the days in each month. A day at a time rather than arithmetic
    on month boundaries: at most 365 turns, and obviously right. */

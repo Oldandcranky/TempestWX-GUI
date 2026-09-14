@@ -191,6 +191,8 @@ settings page wins, because it is written to `tempest_config.json` at runtime.
 | `--plan-up` | `TEMPEST_PLAN_UP` | `0` | Advertised upload rate in Mbps |
 | `--rain-normal` | `TEMPEST_RAIN_NORMAL` | `0` | A normal year's rainfall where you are, in inches, so the Rainfall card can fill against it. NOAA publishes these |
 | `--rain-monthly` | `TEMPEST_RAIN_MONTHLY` | unset | The same thing month by month — twelve figures in inches, January first, comma separated. Overrides `--rain-normal`, and makes the card's pace mark honest |
+| `--temp-normal-high` | `TEMPEST_TEMP_NORMAL_HIGH` | unset | Twelve normal monthly high temperatures in Fahrenheit, January first. Drawn behind the Temperature trace |
+| `--temp-normal-low` | `TEMPEST_TEMP_NORMAL_LOW` | unset | Twelve normal monthly lows, also Fahrenheit. Both are needed or neither is used |
 | `--data-dir` | `TEMPEST_DATA_DIR` | beside the script | Where history is written |
 | `--demo` | `TEMPEST_DEMO` | off | Synthetic weather, no hub |
 | `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
@@ -334,6 +336,17 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Normal for the time of year, behind the Temperature trace.** Give it
+  twelve monthly highs and twelve lows (`TEMPEST_TEMP_NORMAL_HIGH` and
+  `..._LOW`, in Fahrenheit) and the card shades the band between them, so
+  the trace leaving the top is a day warmer than it ought to be. A band and
+  not a line, because a single line would be the daily mean and every day
+  crosses its own mean twice before breakfast. The figures are read as
+  mid-month values and interpolated, since by the 30th of September the
+  September normal is most of the way to October's — thirteen degrees away,
+  here. Pressure deliberately has no such mark: what matters there is which
+  way it is going and for how long, and a line near the middle would imply
+  the level means something.
 - **Rainfall leads with the year.** The headline is the year's total, drawn
   as a gauge filling the card, where full is a normal year where you are.
   The dashed mark is what a normal year would have delivered by today —

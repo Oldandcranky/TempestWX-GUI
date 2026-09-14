@@ -27,9 +27,11 @@ sha256() { command -v shasum >/dev/null && shasum -a 256 "$1" || sha256sum "$1";
 want=$(sha256 web/index.html | cut -c1-12)
 
 echo "==> shipping to $NAS:$APP (ui $want)"
-# DSM restricts SFTP, so stream a tar over ssh. COPYFILE_DISABLE keeps macOS
-# tar from sprinkling ._ resource-fork files through the build context.
-COPYFILE_DISABLE=1 tar czf - \
+# DSM restricts SFTP, so stream a tar over ssh. The two macOS guards: without
+# COPYFILE_DISABLE its tar sprinkles ._ resource-fork files through the build
+# context, and without --no-xattrs it writes com.apple.provenance and friends
+# as pax headers, which GNU tar on the NAS then complains about once per file.
+COPYFILE_DISABLE=1 tar --no-xattrs -czf - \
     tempest_core.py tempest_server.py web Dockerfile .dockerignore \
   | ssh "$NAS" "mkdir -p '$APP' && tar xzf - -C '$APP'"
 

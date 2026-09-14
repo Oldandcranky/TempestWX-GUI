@@ -992,6 +992,10 @@ class StationState:
                     (date.today() - timedelta(days=1)).isoformat(), 0.0),
                 "rain_month_mm": hist.rain_month(),
                 "rain_year_mm": hist.rain_year(),
+                # The earliest day the rain record actually covers. A fresh
+                # install has days, not years, and the Rainfall card says so
+                # rather than letting a week of rain pose as a year of it.
+                "rain_from": min(hist.rain_days) if hist.rain_days else None,
                 "uv_category": uv_category(d.get("uv")),
                 "strikes_today": strikes_today,
                 "strike_nearest_km": nearest,

@@ -868,6 +868,19 @@ function card(id, title, glyph, tone, health){
   return {card:c, body:body};
 }
 
+/* A card's dot for a card fed by a fetcher rather than by the hub.
+
+   Every fetcher keeps its last good reading and sets `error` when a refresh
+   fails, so available-with-an-error is exactly "what you are looking at is
+   old" — the state you would otherwise never catch, because a card showing
+   yesterday's pollen count looks identical to one showing today's. Nothing
+   at all is grey rather than red: the card body already says why in words,
+   and red is worth keeping for the station itself going quiet. */
+function srcHealth(src){
+  if (!src || !src.available) return "waiting";
+  return src.error ? "stale" : "live";
+}
+
 /* ── decorative + computed graphics ──────────────────────────────────── */
 
 /* A stylised tree behind the wind card. Lean and sway speed come from the
@@ -1502,7 +1515,10 @@ function rainFill(gotIn, normalIn, pace){
 function buildSky(s){
   const d = s.derived, o = s.obs, sun = s.sun || {}, moon = s.moon || {};
   const {card:c, body:b} =
-    card("sky","Astronomy", wiMoon(moon.age_days), "yellow", s.health);
+    // Sun and moon are worked out here from the location and the clock, with
+    // nothing to fetch and nothing to fail, so this dot has only one honest
+    // colour. The hub going quiet is not this card's news.
+    card("sky","Astronomy", wiMoon(moon.age_days), "yellow", "live");
   if (sun.rise && sun.set) {
     b.appendChild(cells([
       {k:wi("sunrise")+" Sunrise", v:clock(sun.rise), tone:"accent", small:true, raw:true},
@@ -1623,7 +1639,7 @@ function skyArc(sun, moon){
    like, humidity) the card shows the station's own reading. */
 function buildForecast(s){
   const fc = s.forecast || {};
-  const {card:c, body:b} = card("fc","Forecast","day-sunny","yellow",s.health);
+  const {card:c, body:b} = card("fc","Forecast","day-sunny","yellow",srcHealth(s.forecast));
 
   if (!fc.available) {
     b.appendChild(el("div","mid"));
@@ -1891,7 +1907,7 @@ function aqiBand(v){
 
 function buildAirQuality(s){
   const a = s.air || {};
-  const {card:c, body:b} = card("air","Air quality","fog","green",s.health);
+  const {card:c, body:b} = card("air","Air quality","fog","green",srcHealth(s.air));
   if (!a.available) {
     b.appendChild(el("div","mid"));
     b.appendChild(caption(a.error || "Air quality unavailable"));
@@ -1944,7 +1960,7 @@ function pollenWord(v){
 
 function buildPollen(s){
   const p = s.pollen || {};
-  const {card:c, body:b} = card("pollen","Pollen","sprinkle","green",s.health);
+  const {card:c, body:b} = card("pollen","Pollen","sprinkle","green",srcHealth(s.pollen));
   if (!p.available) {
     b.appendChild(el("div","mid"));
     b.appendChild(caption(p.error || "Pollen unavailable"));
@@ -2290,7 +2306,7 @@ function netDetail(b, n){
 function buildInternet(s){
   const n = s.internet || {};
   if (!n.available) {
-    const {card:c, body:b} = card("internet","Internet","\u21c5","cold",s.health);
+    const {card:c, body:b} = card("internet","Internet","\u21c5","cold",srcHealth(n));
     b.appendChild(el("div","mid"));
     b.appendChild(caption(n.error || "Speedtest unavailable"));
     b.appendChild(el("div","mid"));
@@ -2307,7 +2323,7 @@ function buildInternet(s){
   // The back carries no glyph: the arrows say "this is the internet card",
   // which the face you just turned over already told you.
   const face = (cls, glyph, label, to) => {
-    const {card:tmp, body} = card("internet","Internet",glyph,"cold",s.health);
+    const {card:tmp, body} = card("internet","Internet",glyph,"cold",srcHealth(n));
     const f = el("div","face " + cls);
     while (tmp.firstChild) f.appendChild(tmp.firstChild);
     // The header is the tap target, not the whole card: the body holds the

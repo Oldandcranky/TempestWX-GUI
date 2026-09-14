@@ -1309,19 +1309,29 @@ function buildRainfall(s){
   const raining = (s.obs.rain_mm || 0) > 0;
   const yearIn = d.rain_year_mm == null ? null : d.rain_year_mm / 25.4;
 
-  // How far through the year we are. Rain does not fall evenly across a year
-  // — May and June are far wetter than January here — so a straight line is
-  // an approximation, and a generous one in spring. It is still much closer
-  // to the question being asked than no mark at all.
-  const now = new Date();
-  const y = now.getFullYear();
-  const pace = (now - new Date(y,0,1)) / (new Date(y+1,0,1) - new Date(y,0,1));
-  // A gauge only means anything if the record covers the year it claims to
-  // measure. On a week-old install it would stand nearly empty and read, from
-  // across a room, as a drought — and the caption saying otherwise is far too
-  // small to argue with it at that distance. So: no record, no gauge.
-  const covered = d.rain_from && d.rain_from <= y + "-01-02";
-  c.insertBefore(rainFill(covered ? yearIn : null, s.rain_normal_in, pace),
+  // The card's full height is a normal year. The mark is what a normal year
+  // would have delivered by now, counted from the day the record actually
+  // starts — which on a station installed in May is not the first of
+  // January. That is what lets the gauge stay honest on a part year: the
+  // fill is low because the record is short, and the mark is just as low,
+  // so the two still read against each other.
+  const monthly = s.rain_monthly_in;
+  const annual = monthly ? monthly.reduce((a, b) => a + b, 0) : 0;
+  const now = new Date(), y = now.getFullYear(), jan1 = new Date(y, 0, 1);
+  let start = jan1;
+  if (d.rain_from) {
+    const p = d.rain_from.split("-").map(Number);
+    const from = new Date(p[0], p[1] - 1, p[2]);
+    if (from > start) start = from;
+  }
+  // floor, not round: start is midnight and now is partway through a day,
+  // so rounding counts a thirteen-day record as fourteen.
+  const days = Math.floor((now - start) / 864e5) + 1;
+  const expect = monthly ? normalBetween(monthly, start, now) : 0;
+  // Under a fortnight the ratio is noise — a single thunderstorm reads as
+  // 400% of normal — so the card says how little it has instead.
+  const enough = monthly && d.rain_from && days >= 14 && expect > 0;
+  c.insertBefore(rainFill(enough ? yearIn : null, annual, expect / (annual || 1)),
                  c.firstChild);
 
   // a rate dial in the card header, like the reference
@@ -1355,18 +1365,19 @@ function buildRainfall(s){
   // Say what the total is measured against, and — more important — say when
   // the record actually starts. A week-old install must not let seven days of
   // rain pose as a year of it.
-  if (!covered)
+  if (enough) {
+    // The fill says how much of a year's rain has fallen; this says whether
+    // that is a lot or a little for the stretch it covers, which is the
+    // question people mean when they look at the gauge.
+    const pct = Math.round(yearIn / expect * 100);
+    b.appendChild(caption(pct + "% of normal " + (start > jan1
+      ? "since " + start.toLocaleDateString(undefined,
+          {month: "short", day: "numeric"})
+      : "this year"), pct < 85 ? "yellow" : null));
+  }
+  else if (monthly)
     b.appendChild(caption(d.rain_from ? "Only since " + d.rain_from
                                       : "No rain recorded yet", "yellow"));
-  else if (s.rain_normal_in && yearIn != null) {
-    // The fill answers "how much of a year have we had"; this answers the
-    // question people mean by it, which is whether that is a lot or a little
-    // for mid-September.
-    const got = yearIn / s.rain_normal_in, gap = got - pace;
-    b.appendChild(caption(Math.round(got * 100) + "% of normal \u00b7 " +
-      (gap > .05 ? "ahead of pace" : gap < -.05 ? "behind pace" : "on pace"),
-      gap < -.05 ? "yellow" : null));
-  }
   else
     b.appendChild(caption(raining ? "Raining now" : "Currently dry",
                           raining ? "cold" : null));
@@ -1394,6 +1405,20 @@ function buildRainfall(s){
    by today, so above the line is a wet year and below it a dry one. Without
    a normal configured there is nothing to fill against and the card just
    shows its figures. */
+/* Normal rainfall between two dates, in inches, from twelve monthly figures
+   pro-rated by the days in each month. A day at a time rather than arithmetic
+   on month boundaries: at most 365 turns, and obviously right. */
+function normalBetween(monthly, start, end){
+  let total = 0;
+  const d = new Date(start);
+  while (d <= end) {
+    total += monthly[d.getMonth()] /
+             new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(d.getDate() + 1);
+  }
+  return total;
+}
+
 function rainFill(gotIn, normalIn, pace){
   const n = el("div","rainfill");
   if (!normalIn || gotIn == null) return n;

@@ -66,6 +66,27 @@ def ui_fingerprint():
 
 UI_ID = ui_fingerprint()
 
+
+def rain_monthly(monthly, annual):
+    """Twelve normal monthly rainfalls in inches, January first, or None.
+
+    Rain is not spread evenly through a year — May here is more than twice
+    February — so the card's pace mark is only honest against the shape.
+    A plain annual figure still works and is spread evenly, which is the
+    same straight line as before and better than nothing.
+    """
+    parts = [p.strip() for p in (monthly or "").split(",") if p.strip()]
+    if len(parts) == 12:
+        try:
+            return [float(p) for p in parts]
+        except ValueError:
+            print("Ignoring --rain-monthly: twelve numbers expected, in "
+                  "inches, January first", file=sys.stderr)
+    elif parts:
+        print("Ignoring --rain-monthly: got %d values, need 12"
+              % len(parts), file=sys.stderr)
+    return [annual / 12.0] * 12 if annual else None
+
 # Icons the page links to. Listed one by one so the static route stays a
 # closed set rather than anything that happens to sit in web/.
 ICON_PATHS = ("/favicon.svg", "/favicon.ico", "/apple-touch-icon.png")
@@ -1172,6 +1193,8 @@ class Dashboard:
 
     def __init__(self, args):
         self.args = args
+        self.rain_monthly = rain_monthly(args.rain_monthly,
+                                         args.rain_normal)
         self.started = time.time()
         self.stop = threading.Event()
         history_path = os.path.join(args.data_dir, "tempest_history.json")
@@ -1330,7 +1353,7 @@ class Dashboard:
         snap["source_alive"] = bool(self.source and self.source.is_alive())
         snap["uptime_s"] = time.time() - self.started
         snap["poll_ms"] = POLL_HINT_MS
-        snap["rain_normal_in"] = self.args.rain_normal or None
+        snap["rain_monthly_in"] = self.rain_monthly
         snap["ui"] = UI_ID
         snap["units"] = {"temp": self.args.temp_unit, "wind": self.args.wind_unit,
                          "pres": self.args.pres_unit, "rain": self.args.rain_unit,
@@ -1605,6 +1628,13 @@ def parse_args(argv):
                    help="a normal year's rainfall where you are, in inches, "
                         "so the card can fill against it. NOAA publishes "
                         "these; without one the card just shows the total")
+    p.add_argument("--rain-monthly",
+                   default=env_default("TEMPEST_RAIN_MONTHLY", ""),
+                   help="twelve normal monthly rainfalls in inches, January "
+                        "first, comma separated. More accurate than "
+                        "--rain-normal, which it overrides: rain is not "
+                        "spread evenly through a year, and the card's pace "
+                        "mark is only honest if it knows the shape")
     p.add_argument("--no-alerts", dest="alerts", action="store_false",
                    default=not env_default("TEMPEST_NO_ALERTS", ""),
                    help="do not fetch National Weather Service alerts")

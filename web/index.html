@@ -325,7 +325,7 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
               border-right:.42em solid transparent;
               border-bottom:.42em solid var(--accent)}
 .mid{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
-.mid.gauge{flex:0 1 auto;height:clamp(52px,28cqh,155px);min-height:0}
+.mid.trace{flex:0 1 auto;height:clamp(52px,28cqh,155px);min-height:0}
 .mid.arc{flex:1 1 auto;min-height:0}
 
 footer{
@@ -1189,7 +1189,7 @@ function buildPressure(s){
   const d = s.derived, o = s.obs;
   const {card:c, body:b} = card("pres","Pressure","barometer","accent",s.health);
   const lo = d.pres_min ? d.pres_min.v : null, hi = d.pres_max ? d.pres_max.v : null;
-  const g = gauge(o.pres_mb, lo, hi); g.classList.add("gauge"); b.appendChild(g);
+  b.appendChild(presPlot(s.series && s.series.pres_mb));
   b.appendChild(hero(o.pres_mb == null ? DASH : pres(o.pres_mb).toFixed(presDp()),
                      prefs.pres, null, "pres"));
   const rate = d.pres_1h_delta_mb == null ? null
@@ -1212,39 +1212,65 @@ function buildPressure(s){
   return c;
 }
 
-function gauge(mb, lo, hi){
-  const wrap = el("div","mid");
-  if (lo == null || hi == null || hi - lo < 0.6) { lo = (mb||1013)-3; hi = (mb||1013)+3; }
-  const frac = mb == null ? null : Math.max(0, Math.min(1, (mb-lo)/(hi-lo)));
-  const R = 42, cx = 50, cy = 46;
-  const pt = (f) => [cx - R*Math.cos(Math.PI*f), cy - R*Math.sin(Math.PI*f)];
-  const arc = (f) => {
-    const [x,y] = pt(f);
-    return "M "+(cx-R)+" "+cy+" A "+R+" "+R+" 0 0 1 "+x.toFixed(2)+" "+y.toFixed(2);
-  };
-  let needle = "";
-  if (frac != null) {
-    const [x,y] = pt(frac);
-    needle = '<line x1="'+cx+'" y1="'+cy+'" x2="'+x.toFixed(2)+'" y2="'+y.toFixed(2)+
-      '" stroke="var(--text)" stroke-width="1.6" vector-effect="non-scaling-stroke"/>'+
-      '<circle cx="'+cx+'" cy="'+cy+'" r="2.6" fill="var(--text)"/>';
+/* Twenty-four hours of pressure, in the slot the needle gauge used to hold.
+   The gauge showed where this reading sits in today's range; the figures row
+   below already says that in numbers. What it could not show is how the
+   reading got there, and for pressure that is the whole forecast — 1014 mb
+   means nothing to anyone, but six hours of falling means a front.
+
+   Deliberately no fill under the line: the floor here is an arbitrary
+   minimum rather than zero, so shading down to it would give every wiggle a
+   mass it has not earned. */
+function presPlot(rows){
+  const W = 100, H = 46, pad = 4;
+  const wrap = el("div","mid trace");
+  const pts = (rows || []).filter(r => r && r[1] != null);
+  if (pts.length < 2) {
+    wrap.appendChild(caption("Building a baseline"));
+    return wrap;
   }
-  // small ticks above the arc at the quarter points
-  let ticks = "";
-  for (const [t, colour] of [[0.25,"var(--cold)"],[0.5,"var(--label)"],[0.75,"var(--accent)"]]) {
-    const [ix,iy] = pt(t), [ox,oy] = [cx - (R+4)*Math.cos(Math.PI*t), cy - (R+4)*Math.sin(Math.PI*t)];
-    ticks += '<line x1="'+ix.toFixed(2)+'" y1="'+iy.toFixed(2)+'" x2="'+ox.toFixed(2)+
-             '" y2="'+oy.toFixed(2)+'" stroke="'+colour+'" stroke-width="1.4" '+
-             'stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+  const t0 = pts[0][0], t1 = pts[pts.length-1][0];
+  const span = Math.max(1, t1 - t0);
+  const x = (t) => (t - t0) / span * W;
+
+  let lo = Infinity, hi = -Infinity;
+  for (const p of pts) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
+  // A settled day moves less than a millibar. Without a floor on the range,
+  // the scale would stretch that to fill the card and sensor noise would
+  // read as weather. Four millibars is about an ordinary day's swing, so a
+  // quiet one looks flat — which is the honest picture — and a real front
+  // still has room to run off the top.
+  const FLOOR_MB = 4;
+  if (hi - lo < FLOOR_MB) {
+    const mid = (hi + lo) / 2;
+    lo = mid - FLOOR_MB / 2; hi = mid + FLOOR_MB / 2;
   }
+  const y = (v) => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
+
+  // Break the line across a hole in the history rather than drawing a
+  // straight run that claims the pressure held steady through a restart.
+  const step = span / (pts.length - 1);
+  let d = "", prev = null;
+  for (const p of pts) {
+    d += (prev != null && p[0] - prev < step * 3 ? "L" : "M") +
+         x(p[0]).toFixed(2) + " " + y(p[1]).toFixed(2) + " ";
+    prev = p[0];
+  }
+
+  // Six-hour rules, counted back from now, so "falling since when" is
+  // readable off the plot without any axis labels.
+  let rules = "";
+  for (let h = 6; h * 3600 < span; h += 6) {
+    const rx = x(t1 - h * 3600).toFixed(2);
+    rules += '<line x1="'+rx+'" y1="0" x2="'+rx+'" y2="'+H+'" '+
+      'stroke="var(--rule)" stroke-dasharray="1 3" vector-effect="non-scaling-stroke"/>';
+  }
+
   wrap.innerHTML =
-    '<svg class="plot" viewBox="0 0 100 58" preserveAspectRatio="xMidYMid meet">'+
-      ticks+
-      '<path d="'+arc(1)+'" fill="none" stroke="var(--rule)" stroke-width="4" stroke-linecap="round"/>'+
-      (frac ? '<path d="'+arc(frac)+'" fill="none" stroke="var(--accent)" stroke-width="4" stroke-linecap="round"/>' : "")+
-      '<circle cx="'+(cx-R)+'" cy="'+cy+'" r="2" fill="var(--cold)"/>'+
-      '<circle cx="'+(cx+R)+'" cy="'+cy+'" r="2" fill="var(--red)"/>'+
-      needle+
+    '<svg class="plot" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+      rules+
+      '<path d="'+d.trim()+'" fill="none" stroke="var(--accent)" stroke-width="2.4" '+
+        'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'+
     '</svg>';
   return wrap;
 }

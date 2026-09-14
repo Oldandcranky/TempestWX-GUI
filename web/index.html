@@ -238,8 +238,22 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
   border-top:1px solid rgba(0,188,212,.5);
   transition:height .8s ease-out;
 }
+/* The band between what fell and what normally falls. A hairline is the
+   wrong encoding for a wall display — one pixel of grey on blue measured
+   1.6:1, against a floor of 3:1 — so the difference is an area instead,
+   and its size is how far off normal you are. Blue above, and a dry warm
+   tint for the shortfall below, in the empty card the water never reached. */
+.rainfill .gap{position:absolute;left:0;right:0;transition:all .8s ease-out}
+.rainfill .gap.over{background:rgba(0,188,212,.34)}
+  /* Fading upward, the way the water itself is drawn. A flat slab of
+     amber over the blue read as mud rather than as absence. */
+.rainfill .gap.under{
+  background:linear-gradient(to top,rgba(255,171,64,.20),rgba(255,171,64,.03));
+}
 .rainfill .pace{
-  position:absolute;left:0;right:0;border-top:1px dashed var(--label);opacity:.45;
+  position:absolute;left:0;right:0;
+  border-top:2px dashed rgba(232,234,237,.6);   /* 6.2:1 on card, 5.3:1 on blue */
+  transition:bottom .8s ease-out;
 }
 .tree .crown{transform-origin:50% 88%;animation:sway var(--sway,6s) ease-in-out infinite}
 .tree .crown .leafA{transform-origin:50% 88%;animation:sway calc(var(--sway,6s)*.72) ease-in-out infinite}
@@ -1465,11 +1479,22 @@ function normalBetween(monthly, start, end){
 function rainFill(gotIn, normalIn, pace){
   const n = el("div","rainfill");
   if (!normalIn || gotIn == null) return n;
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  const got = clamp(gotIn / normalIn), want = clamp(pace);
+
   const level = el("div","level");
-  level.style.height = (Math.max(0, Math.min(1, gotIn / normalIn)) * 100).toFixed(1) + "%";
+  level.style.height = (got * 100).toFixed(1) + "%";
   n.appendChild(level);
+
+  // The gap between the two, as a band. Above normal it brightens the top of
+  // the water; below, it tints the dry card the water has not reached.
+  const gap = el("div", "gap " + (got >= want ? "over" : "under"));
+  gap.style.bottom = (Math.min(got, want) * 100).toFixed(1) + "%";
+  gap.style.height = (Math.abs(got - want) * 100).toFixed(1) + "%";
+  n.appendChild(gap);
+
   const mark = el("div","pace");
-  mark.style.bottom = (Math.max(0, Math.min(1, pace)) * 100).toFixed(1) + "%";
+  mark.style.bottom = (want * 100).toFixed(1) + "%";
   n.appendChild(mark);
   return n;
 }

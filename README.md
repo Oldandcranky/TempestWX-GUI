@@ -189,6 +189,7 @@ settings page wins, because it is written to `tempest_config.json` at runtime.
 | `--speedtest-url` | `TEMPEST_SPEEDTEST_URL` | `http://127.0.0.1:8080` | Base URL of your Speedtest Tracker instance, for the Internet card |
 | `--plan-down` | `TEMPEST_PLAN_DOWN` | `0` | Advertised download rate in Mbps, so the card can show what fraction you are getting |
 | `--plan-up` | `TEMPEST_PLAN_UP` | `0` | Advertised upload rate in Mbps |
+| `--rain-normal` | `TEMPEST_RAIN_NORMAL` | `0` | A normal year's rainfall where you are, in inches, so the Rainfall card can fill against it. NOAA publishes these |
 | `--data-dir` | `TEMPEST_DATA_DIR` | beside the script | Where history is written |
 | `--demo` | `TEMPEST_DEMO` | off | Synthetic weather, no hub |
 | `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
@@ -332,6 +333,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Rainfall leads with the year.** The headline is the year's total against
+  a normal year for your latitude (`TEMPEST_RAIN_NORMAL`, in inches), drawn
+  as a gauge filling the card, with a dashed line at where a normal year
+  would be by today — so above the line is a wet year and below it a dry one.
+  The rate keeps its dial in the header and moves into the figures. Tapping
+  the figure no longer switches units: rain follows the server's setting, so
+  a stray tap on a wall display cannot leave it in millimetres. If the rain
+  record does not reach back to January the gauge is not drawn at all and
+  the card says how far back it goes, because a nearly empty gauge reads as
+  a drought from across a room and a small caption cannot argue with it.
 - **Temperature shows its last 24 hours too.** Same trace as the Pressure
   card, from the same history, now drawn by one shared function. Pressure
   needed the shape because its number means nothing on its own; temperature

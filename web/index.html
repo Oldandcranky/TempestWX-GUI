@@ -228,6 +228,19 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
   opacity:.42;pointer-events:none;z-index:0;
 }
 .tree svg{width:100%;height:100%;display:block}
+
+/* The rain gauge behind the Rainfall card. Cold blue, kept faint: it is a
+   backdrop to read the figures against, not a thing to look at. */
+.rainfill{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.rainfill .level{
+  position:absolute;left:0;right:0;bottom:0;
+  background:linear-gradient(to top,rgba(0,188,212,.28),rgba(0,188,212,.07));
+  border-top:1px solid rgba(0,188,212,.5);
+  transition:height .8s ease-out;
+}
+.rainfill .pace{
+  position:absolute;left:0;right:0;border-top:1px dashed var(--label);opacity:.45;
+}
 .tree .crown{transform-origin:50% 88%;animation:sway var(--sway,6s) ease-in-out infinite}
 .tree .crown .leafA{transform-origin:50% 88%;animation:sway calc(var(--sway,6s)*.72) ease-in-out infinite}
 @keyframes sway{
@@ -700,7 +713,11 @@ const prefs = {};
 function loadPrefs(serverUnits){
   for (const k of Object.keys(UNITS)) {
     let v = null;
-    try { v = localStorage.getItem("unit."+k); } catch (e) { /* private mode */ }
+    // Rain is the exception: its figure is no longer a tap target, so there
+    // is no way back from a stored choice. It follows the server setting,
+    // which is what a viewer who once tapped it to mm would want now.
+    if (k !== "rain")
+      try { v = localStorage.getItem("unit."+k); } catch (e) { /* private mode */ }
     if (!UNITS[k].includes(v)) v = (serverUnits && serverUnits[k]) || UNITS[k][0];
     prefs[k] = v;
   }
@@ -1290,6 +1307,22 @@ function buildRainfall(s){
   const d = s.derived;
   const {card:c, body:b} = card("rain","Rainfall","raindrop","cold",s.health);
   const raining = (s.obs.rain_mm || 0) > 0;
+  const yearIn = d.rain_year_mm == null ? null : d.rain_year_mm / 25.4;
+
+  // How far through the year we are. Rain does not fall evenly across a year
+  // — May and June are far wetter than January here — so a straight line is
+  // an approximation, and a generous one in spring. It is still much closer
+  // to the question being asked than no mark at all.
+  const now = new Date();
+  const y = now.getFullYear();
+  const pace = (now - new Date(y,0,1)) / (new Date(y+1,0,1) - new Date(y,0,1));
+  // A gauge only means anything if the record covers the year it claims to
+  // measure. On a week-old install it would stand nearly empty and read, from
+  // across a room, as a drought — and the caption saying otherwise is far too
+  // small to argue with it at that distance. So: no record, no gauge.
+  const covered = d.rain_from && d.rain_from <= y + "-01-02";
+  c.insertBefore(rainFill(covered ? yearIn : null, s.rain_normal_in, pace),
+                 c.firstChild);
 
   // a rate dial in the card header, like the reference
   const dial = el("span","headicon");
@@ -1312,12 +1345,36 @@ function buildRainfall(s){
     'stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>Raw';
   head.appendChild(chip);
   b.appendChild(head);
-  b.appendChild(hero(fx(rain(d.rain_rate_mm_h), rainDp()), prefs.rain+"/hr",
-                     raining ? "cold" : null, "rain"));
-  b.appendChild(caption(raining ? "Raining now" : "Currently dry",
-                        raining ? "cold" : null));
+
+  // The year is the headline, and it is not a tap target: the rain unit
+  // follows the server setting so a stray tap cannot switch the wall display
+  // into millimetres.
+  b.appendChild(hero(fx(rain(d.rain_year_mm), rainDp()), prefs.rain,
+                     raining ? "cold" : null, null));
+
+  // Say what the total is measured against, and — more important — say when
+  // the record actually starts. A week-old install must not let seven days of
+  // rain pose as a year of it.
+  if (!covered)
+    b.appendChild(caption(d.rain_from ? "Only since " + d.rain_from
+                                      : "No rain recorded yet", "yellow"));
+  else if (s.rain_normal_in && yearIn != null) {
+    // The fill answers "how much of a year have we had"; this answers the
+    // question people mean by it, which is whether that is a lot or a little
+    // for mid-September.
+    const got = yearIn / s.rain_normal_in, gap = got - pace;
+    b.appendChild(caption(Math.round(got * 100) + "% of normal \u00b7 " +
+      (gap > .05 ? "ahead of pace" : gap < -.05 ? "behind pace" : "on pace"),
+      gap < -.05 ? "yellow" : null));
+  }
+  else
+    b.appendChild(caption(raining ? "Raining now" : "Currently dry",
+                          raining ? "cold" : null));
+
   b.appendChild(el("div","mid"));
   b.appendChild(cells([
+    {k:"Rate",  v:fx(rain(d.rain_rate_mm_h), rainDp()), u:prefs.rain+"/hr",
+     inline:true, small:true, tone:raining ? "cold" : ""},
     {k:"Today", v:fx(rain(d.rain_today_mm), rainDp()), u:prefs.rain, inline:true, small:true},
     {k:"Yday",  v:fx(rain(d.rain_yday_mm), rainDp()),  u:prefs.rain, inline:true, small:true},
   ]));
@@ -1326,6 +1383,27 @@ function buildRainfall(s){
     {k:"Year",  v:fx(rain(d.rain_year_mm), rainDp()),  u:prefs.rain, inline:true, small:true},
   ]));
   return c;
+}
+
+/* The year's rain filling the card like a rain gauge, against a normal year
+   where you are (TEMPEST_RAIN_NORMAL, in inches — NOAA publishes the figure).
+
+   The fill is the literal fraction, so early in the year it is honestly
+   nearly empty. That on its own would read as a drought every January, which
+   is what the dashed pace line is for: it sits where a normal year would be
+   by today, so above the line is a wet year and below it a dry one. Without
+   a normal configured there is nothing to fill against and the card just
+   shows its figures. */
+function rainFill(gotIn, normalIn, pace){
+  const n = el("div","rainfill");
+  if (!normalIn || gotIn == null) return n;
+  const level = el("div","level");
+  level.style.height = (Math.max(0, Math.min(1, gotIn / normalIn)) * 100).toFixed(1) + "%";
+  n.appendChild(level);
+  const mark = el("div","pace");
+  mark.style.bottom = (Math.max(0, Math.min(1, pace)) * 100).toFixed(1) + "%";
+  n.appendChild(mark);
+  return n;
 }
 
 function buildSky(s){

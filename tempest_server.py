@@ -1330,6 +1330,7 @@ class Dashboard:
         snap["source_alive"] = bool(self.source and self.source.is_alive())
         snap["uptime_s"] = time.time() - self.started
         snap["poll_ms"] = POLL_HINT_MS
+        snap["rain_normal_in"] = self.args.rain_normal or None
         snap["ui"] = UI_ID
         snap["units"] = {"temp": self.args.temp_unit, "wind": self.args.wind_unit,
                          "pres": self.args.pres_unit, "rain": self.args.rain_unit,
@@ -1599,6 +1600,11 @@ def parse_args(argv):
     p.add_argument("--plan-up", type=float,
                    default=env_default("TEMPEST_PLAN_UP", 0.0, float),
                    help="advertised upload rate in Mbps")
+    p.add_argument("--rain-normal", type=float,
+                   default=env_default("TEMPEST_RAIN_NORMAL", 0.0, float),
+                   help="a normal year's rainfall where you are, in inches, "
+                        "so the card can fill against it. NOAA publishes "
+                        "these; without one the card just shows the total")
     p.add_argument("--no-alerts", dest="alerts", action="store_false",
                    default=not env_default("TEMPEST_NO_ALERTS", ""),
                    help="do not fetch National Weather Service alerts")

@@ -190,6 +190,7 @@ settings page wins, because it is written to `tempest_config.json` at runtime.
 | `--plan-down` | `TEMPEST_PLAN_DOWN` | `0` | Advertised download rate in Mbps, so the card can show what fraction you are getting |
 | `--plan-up` | `TEMPEST_PLAN_UP` | `0` | Advertised upload rate in Mbps |
 | `--rain-normal` | `TEMPEST_RAIN_NORMAL` | `0` | A normal year's rainfall where you are, in inches, so the Rainfall card can fill against it. NOAA publishes these |
+| `--rain-monthly` | `TEMPEST_RAIN_MONTHLY` | unset | The same thing month by month — twelve figures in inches, January first, comma separated. Overrides `--rain-normal`, and makes the card's pace mark honest |
 | `--data-dir` | `TEMPEST_DATA_DIR` | beside the script | Where history is written |
 | `--demo` | `TEMPEST_DEMO` | off | Synthetic weather, no hub |
 | `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
@@ -333,16 +334,21 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
-- **Rainfall leads with the year.** The headline is the year's total against
-  a normal year for your latitude (`TEMPEST_RAIN_NORMAL`, in inches), drawn
-  as a gauge filling the card, with a dashed line at where a normal year
-  would be by today — so above the line is a wet year and below it a dry one.
-  The rate keeps its dial in the header and moves into the figures. Tapping
-  the figure no longer switches units: rain follows the server's setting, so
-  a stray tap on a wall display cannot leave it in millimetres. If the rain
-  record does not reach back to January the gauge is not drawn at all and
-  the card says how far back it goes, because a nearly empty gauge reads as
-  a drought from across a room and a small caption cannot argue with it.
+- **Rainfall leads with the year.** The headline is the year's total, drawn
+  as a gauge filling the card, where full is a normal year where you are.
+  The dashed mark is what a normal year would have delivered by today —
+  above it is wet, below it is dry. Give it twelve monthly figures
+  (`TEMPEST_RAIN_MONTHLY`) rather than one annual one: rain is not spread
+  evenly through a year, and the mark is only honest against the real
+  shape. It also counts from the day the record actually starts, so a
+  station installed in May is measured against a normal May-to-now rather
+  than against a whole year it was never there for. Under a fortnight of
+  record it draws no gauge at all and says how far back it goes, because a
+  ratio off a few days is noise and an almost empty gauge reads as a
+  drought from across a room. The rate keeps its dial in the header and
+  moves into the figures. Tapping the figure no longer switches units:
+  rain follows the server's setting, so a stray tap on a wall display
+  cannot leave it in millimetres.
 - **Temperature shows its last 24 hours too.** Same trace as the Pressure
   card, from the same history, now drawn by one shared function. Pressure
   needed the shape because its number means nothing on its own; temperature

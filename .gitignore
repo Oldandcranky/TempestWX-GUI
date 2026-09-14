@@ -5,6 +5,9 @@ __pycache__/
 *.py[cod]
 .DS_Store
 
+# Deploy transcripts, one per run of deploy.sh
+deploy-logs/
+
 # Web server working data
 tempest_server_state.json
 data/

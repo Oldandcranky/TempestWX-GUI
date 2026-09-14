@@ -336,6 +336,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The dot on each card means that card now.** It was one station-wide
+  light drawn nine times, so the Pollen card sat green because the *hub*
+  was broadcasting, whatever Google's API was doing. Cards fed by a fetcher
+  — Forecast, Air quality, Pollen, Internet — now show that fetcher:
+  amber when it is serving its last good reading because the newest attempt
+  failed, which is the state you would otherwise never catch, since a card
+  showing yesterday's pollen count looks exactly like one showing today's.
+  Cards fed by the hub keep the hub's light, which was always right for
+  them. Astronomy is worked out from the location and the clock and cannot
+  fail, so its dot is simply live.
 - **The Rainfall gauge shows the difference, not a hairline.** The mark for
   a normal year was one pixel of grey, which measured 1.6:1 against the blue
   it usually sits on — half the 3:1 a graphical object needs, and invisible

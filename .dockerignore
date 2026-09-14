@@ -5,3 +5,11 @@ data/
 *.json
 __pycache__/
 *.py[cod]
+
+# macOS metadata sidecars. deploy.sh already stops its tar from making them,
+# but ones shipped before it did are still sitting on the NAS, and COPY would
+# otherwise bake them into the image. Both forms: a .dockerignore pattern is
+# matched against the whole path from the context root, so a bare ._* would
+# catch the ones beside the Dockerfile and miss web/._index.html.
+._*
+**/._*

@@ -326,6 +326,11 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
               border-bottom:.42em solid var(--accent)}
 .mid{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
 .mid.trace{flex:0 1 auto;height:clamp(52px,28cqh,155px);min-height:0}
+/* Temperature has no slot of its own to swap into, so its trace takes the
+   room going spare and no more — the lesson from the Pollen face, where
+   reasoning about space rather than letting flex hand it over produced an
+   overlap. The cap stops it ballooning on a tall phone card. */
+.mid.temptrace{max-height:clamp(40px,20cqh,120px)}
 .mid.arc{flex:1 1 auto;min-height:0}
 
 footer{
@@ -1006,6 +1011,10 @@ function buildTemperature(s){
   const d = s.derived, o = s.obs;
   const {card:c, body:b} = card("temp","Temperature","thermometer","amber",s.health);
   b.appendChild(hero(fg(temp(o.temp_c)), prefs.temp, "amber", "temp"));
+  // Three degrees C, roughly five F: a still night reads flat instead of
+  // having the sensor's last decimal stretched across the card.
+  b.appendChild(trace24(s.series && s.series.temp_c,
+    {floor:3, tone:"amber", cls:"temptrace", empty:"Building a baseline"}));
   b.appendChild(cells([
     {k:"Min", v:fg(temp(d.temp_min && d.temp_min.v)), u:d.temp_min ? prefs.temp : "", tone:"cold",
      sub:d.temp_min ? clock(d.temp_min.t) : ""},
@@ -1189,7 +1198,10 @@ function buildPressure(s){
   const d = s.derived, o = s.obs;
   const {card:c, body:b} = card("pres","Pressure","barometer","accent",s.health);
   const lo = d.pres_min ? d.pres_min.v : null, hi = d.pres_max ? d.pres_max.v : null;
-  b.appendChild(presPlot(s.series && s.series.pres_mb));
+  // Four millibars is about an ordinary day's swing, so a settled one
+  // reads flat and a real front still has room to run off the top.
+  b.appendChild(trace24(s.series && s.series.pres_mb,
+    {floor:4, tone:"accent", cls:"trace", empty:"Building a baseline"}));
   b.appendChild(hero(o.pres_mb == null ? DASH : pres(o.pres_mb).toFixed(presDp()),
                      prefs.pres, null, "pres"));
   const rate = d.pres_1h_delta_mb == null ? null
@@ -1212,43 +1224,42 @@ function buildPressure(s){
   return c;
 }
 
-/* Twenty-four hours of pressure, in the slot the needle gauge used to hold.
-   The gauge showed where this reading sits in today's range; the figures row
-   below already says that in numbers. What it could not show is how the
-   reading got there, and for pressure that is the whole forecast — 1014 mb
-   means nothing to anyone, but six hours of falling means a front.
+/* Twenty-four hours of one reading, drawn small. The Pressure card shows
+   where its figure has come from because the figure itself means nothing to
+   anyone — 1014 mb is not a fact most people can hold — while six hours of
+   falling means a front. Temperature is the opposite: everybody can read the
+   number, and what the shape adds is the day around it, whether this 58°F is
+   on the way up or what is left of a warm afternoon.
 
-   Deliberately no fill under the line: the floor here is an arbitrary
-   minimum rather than zero, so shading down to it would give every wiggle a
-   mass it has not earned. */
-function presPlot(rows){
+   Deliberately no fill under the line: the floor is an arbitrary minimum
+   rather than zero, so shading down to it would give every wiggle a mass it
+   has not earned.
+
+   `floor` is the smallest range the scale will show, in whatever units the
+   rows are in. Without one, a settled day gets stretched to fill the card
+   and sensor noise reads as weather. */
+function trace24(rows, {floor, tone, cls, empty}){
   const W = 100, H = 46, pad = 4;
-  const wrap = el("div","mid trace");
+  const wrap = el("div", "mid " + cls);
   const pts = (rows || []).filter(r => r && r[1] != null);
   if (pts.length < 2) {
-    wrap.appendChild(caption("Building a baseline"));
+    wrap.appendChild(caption(empty));
     return wrap;
   }
-  const t0 = pts[0][0], t1 = pts[pts.length-1][0];
+  const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
   const span = Math.max(1, t1 - t0);
   const x = (t) => (t - t0) / span * W;
 
   let lo = Infinity, hi = -Infinity;
   for (const p of pts) { lo = Math.min(lo, p[1]); hi = Math.max(hi, p[1]); }
-  // A settled day moves less than a millibar. Without a floor on the range,
-  // the scale would stretch that to fill the card and sensor noise would
-  // read as weather. Four millibars is about an ordinary day's swing, so a
-  // quiet one looks flat — which is the honest picture — and a real front
-  // still has room to run off the top.
-  const FLOOR_MB = 4;
-  if (hi - lo < FLOOR_MB) {
+  if (hi - lo < floor) {
     const mid = (hi + lo) / 2;
-    lo = mid - FLOOR_MB / 2; hi = mid + FLOOR_MB / 2;
+    lo = mid - floor / 2; hi = mid + floor / 2;
   }
   const y = (v) => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
 
   // Break the line across a hole in the history rather than drawing a
-  // straight run that claims the pressure held steady through a restart.
+  // straight run that claims the reading held steady through a restart.
   const step = span / (pts.length - 1);
   let d = "", prev = null;
   for (const p of pts) {
@@ -1269,7 +1280,7 @@ function presPlot(rows){
   wrap.innerHTML =
     '<svg class="plot" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
       rules+
-      '<path d="'+d.trim()+'" fill="none" stroke="var(--accent)" stroke-width="2.4" '+
+      '<path d="'+d.trim()+'" fill="none" stroke="var(--'+tone+')" stroke-width="2.4" '+
         'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'+
     '</svg>';
   return wrap;

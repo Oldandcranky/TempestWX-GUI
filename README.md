@@ -332,6 +332,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Temperature shows its last 24 hours too.** Same trace as the Pressure
+  card, from the same history, now drawn by one shared function. Pressure
+  needed the shape because its number means nothing on its own; temperature
+  is the reverse — everyone can read 75°F, and what the shape adds is
+  whether it is on the way up or what is left of a warm afternoon. It takes
+  the room the card had going spare rather than any room the figures were
+  using.
 - **`deploy.sh` keeps a transcript.** One line per step on the terminal,
   everything in `deploy-logs/`, and a sweep of the NAS when a step fails.
   It now also hashes the page where it landed before building, so a stale

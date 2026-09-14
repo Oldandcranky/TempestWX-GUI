@@ -67,6 +67,23 @@ def ui_fingerprint():
 UI_ID = ui_fingerprint()
 
 
+def twelve(text, what):
+    """Twelve numbers, January first, or None. Complains rather than guessing."""
+    parts = [p.strip() for p in (text or "").split(",") if p.strip()]
+    if not parts:
+        return None
+    if len(parts) != 12:
+        print("Ignoring %s: got %d values, need 12" % (what, len(parts)),
+              file=sys.stderr)
+        return None
+    try:
+        return [float(p) for p in parts]
+    except ValueError:
+        print("Ignoring %s: twelve numbers expected, January first" % what,
+              file=sys.stderr)
+        return None
+
+
 def rain_monthly(monthly, annual):
     """Twelve normal monthly rainfalls in inches, January first, or None.
 
@@ -75,17 +92,26 @@ def rain_monthly(monthly, annual):
     A plain annual figure still works and is spread evenly, which is the
     same straight line as before and better than nothing.
     """
-    parts = [p.strip() for p in (monthly or "").split(",") if p.strip()]
-    if len(parts) == 12:
-        try:
-            return [float(p) for p in parts]
-        except ValueError:
-            print("Ignoring --rain-monthly: twelve numbers expected, in "
-                  "inches, January first", file=sys.stderr)
-    elif parts:
-        print("Ignoring --rain-monthly: got %d values, need 12"
-              % len(parts), file=sys.stderr)
+    got = twelve(monthly, "--rain-monthly")
+    if got:
+        return got
     return [annual / 12.0] * 12 if annual else None
+
+
+def temp_normal(highs, lows):
+    """Normal monthly highs and lows as {"hi": [...], "lo": [...]} in °C.
+
+    Given in Fahrenheit, like the rain normals are given in inches, because
+    that is how NOAA publishes them and this is who asks for them. Both are
+    needed: one line alone would be the daily mean, and a day's temperature
+    crosses its own mean twice before breakfast.
+    """
+    hi = twelve(highs, "--temp-normal-high")
+    lo = twelve(lows, "--temp-normal-low")
+    if not hi or not lo:
+        return None
+    f2c = lambda f: (f - 32.0) * 5.0 / 9.0
+    return {"hi": [f2c(v) for v in hi], "lo": [f2c(v) for v in lo]}
 
 # Icons the page links to. Listed one by one so the static route stays a
 # closed set rather than anything that happens to sit in web/.
@@ -1195,6 +1221,8 @@ class Dashboard:
         self.args = args
         self.rain_monthly = rain_monthly(args.rain_monthly,
                                          args.rain_normal)
+        self.temp_normal = temp_normal(args.temp_normal_high,
+                                       args.temp_normal_low)
         self.started = time.time()
         self.stop = threading.Event()
         history_path = os.path.join(args.data_dir, "tempest_history.json")
@@ -1354,6 +1382,7 @@ class Dashboard:
         snap["uptime_s"] = time.time() - self.started
         snap["poll_ms"] = POLL_HINT_MS
         snap["rain_monthly_in"] = self.rain_monthly
+        snap["temp_normal_c"] = self.temp_normal
         snap["ui"] = UI_ID
         snap["units"] = {"temp": self.args.temp_unit, "wind": self.args.wind_unit,
                          "pres": self.args.pres_unit, "rain": self.args.rain_unit,
@@ -1635,6 +1664,17 @@ def parse_args(argv):
                         "--rain-normal, which it overrides: rain is not "
                         "spread evenly through a year, and the card's pace "
                         "mark is only honest if it knows the shape")
+    p.add_argument("--temp-normal-high",
+                   default=env_default("TEMPEST_TEMP_NORMAL_HIGH", ""),
+                   help="twelve normal monthly high temperatures in "
+                        "Fahrenheit, January first, comma separated")
+    p.add_argument("--temp-normal-low",
+                   default=env_default("TEMPEST_TEMP_NORMAL_LOW", ""),
+                   help="twelve normal monthly low temperatures in "
+                        "Fahrenheit. Both are needed: the Temperature card "
+                        "draws them as a band behind its trace, and one line "
+                        "alone would be the daily mean, which every day "
+                        "crosses twice")
     p.add_argument("--no-alerts", dest="alerts", action="store_false",
                    default=not env_default("TEMPEST_NO_ALERTS", ""),
                    help="do not fetch National Weather Service alerts")

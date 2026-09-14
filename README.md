@@ -315,6 +315,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Pressure shows its last 24 hours.** The needle gauge said where the
+  reading sat in today's range, which the figures row underneath already
+  said in numbers. The trace that replaced it says how the reading got
+  there, and for pressure that is the whole forecast — 1014 mb means
+  nothing to anyone, but six hours of falling means a front. The history
+  was already in every poll; nothing reads it until now. Fixes a stray
+  pill border the gauge had picked up from the speed bars, which arrived
+  with them and share a class name no longer.
 - **`deploy.sh`.** The four SSH steps from the hosting section, in one
   command, ending with a check that the NAS is serving the page you just
   shipped rather than the one it already had.

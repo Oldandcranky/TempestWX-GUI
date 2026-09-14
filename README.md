@@ -139,6 +139,23 @@ It deliberately leaves `docker-compose.yml`, `.env` and `data/` alone. Those
 hold your location, your units, your tokens and your history, and they are
 meant to differ from what is in git.
 
+Every run writes a transcript to `deploy-logs/`, gitignored, last twenty kept.
+The terminal shows one line per step; the log holds every command, its whole
+output, its exit code and how long it took, plus the local tar and ssh
+versions and a listing of what was shipped. When a step fails the log also
+gets a diagnostic sweep of the NAS — container state, the last eighty lines
+of container log, free space, and any shipped file the container's uid cannot
+read. That last one is worth knowing about: it is the "Missing index.html"
+failure, and it looks like a much more interesting bug than it is.
+
+The step called **verify what landed** hashes `web/index.html` where it
+arrived, before the build starts. Without it a stale page has two causes that
+look identical from the outside — the files never arrived, or they arrived and
+the container did not restart. With it, the run says which.
+
+`NAS`, `APP`, `PORT`, `DOCKER` and `TRIES` can all be overridden from the
+environment.
+
 Three DSM quirks worth knowing:
 
 - `/tmp` and SFTP are locked down, hence `tar | ssh` rather than `scp`.
@@ -315,6 +332,11 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **`deploy.sh` keeps a transcript.** One line per step on the terminal,
+  everything in `deploy-logs/`, and a sweep of the NAS when a step fails.
+  It now also hashes the page where it landed before building, so a stale
+  dashboard says whether the files never arrived or the container never
+  restarted — which used to look the same from outside.
 - **Pressure shows its last 24 hours.** The needle gauge said where the
   reading sat in today's range, which the figures row underneath already
   said in numbers. The trace that replaced it says how the reading got

@@ -336,6 +336,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The Rainfall gauge shows the difference, not a hairline.** The mark for
+  a normal year was one pixel of grey, which measured 1.6:1 against the blue
+  it usually sits on — half the 3:1 a graphical object needs, and invisible
+  from a sofa. It is now a two-pixel dashed white line, and the gap between
+  it and the water is filled: brighter blue for a surplus, a warm haze
+  fading upward for a shortfall. How far off normal you are is an area now,
+  and area reads at a distance where a line does not.
 - **Normal for the time of year, behind the Temperature trace.** Give it
   twelve monthly highs and twelve lows (`TEMPEST_TEMP_NORMAL_HIGH` and
   `..._LOW`, in Fahrenheit) and the card shades the band between them, so

@@ -15,3 +15,6 @@ data/
 # Cached forecast, and the local secrets file
 tempest_forecast.json
 .env
+
+# Per-session browser-preview launcher (points at a scratch dir)
+.claude/launch.json

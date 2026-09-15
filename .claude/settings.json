@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git pull *)",
+      "Bash(git fetch *)",
+      "Bash(git rebase *)",
+      "Bash(git merge *)",
+      "Bash(./deploy.sh)",
+      "Bash(./deploy.sh *)",
+      "Bash(ssh synologyadmin@10.0.0.101 *)",
+      "Bash(ssh -o BatchMode=yes synologyadmin@10.0.0.101 *)",
+      "Bash(mkdir *)",
+      "Bash(python3 -m py_compile *)",
+      "Bash(python3 -c \"import ast*)",
+      "mcp__Claude_Browser__find",
+      "mcp__Claude_Browser__read_page",
+      "mcp__Claude_Browser__get_page_text",
+      "mcp__Claude_Browser__read_console_messages",
+      "mcp__Claude_Browser__read_network_requests",
+      "mcp__Claude_Browser__tabs_context",
+      "mcp__Claude_Browser__preview_list",
+      "mcp__Claude_Browser__preview_logs"
+    ]
+  }
+}

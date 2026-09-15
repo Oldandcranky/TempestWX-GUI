@@ -492,22 +492,37 @@ body.show-outlook #outlook{display:flex}
   color-mix(in srgb,var(--accent) 7%,var(--inset))}
 #outlook .fc-day.today .k{color:var(--text)}
 @media (max-width:720px){
-  /* A phone cannot show ten columns, and the card cannot grow to hold ten
-     tall cells either — container-type:size means its height only ever
-     comes from being stretched to the screen. So each day turns sideways
-     into one short row, and ten of those under a modest plot fit a phone
-     screen with the fit pass trimming any remainder, like every other card. */
-  #outlook .card-body{justify-content:flex-start}
-  #outlook .outplot{flex:0 0 auto;height:clamp(110px,22dvh,220px)}
-  #outlook .fc-strip{flex-direction:column;gap:calc(var(--gap)*.5)}
-  #outlook .fc-day{flex-direction:row;align-items:center;gap:.5em;
-                   padding:.2em .7em;text-align:left}
-  #outlook .fc-day .k{flex:0 0 3.6em}
-  #outlook .fc-day .date{flex:0 0 3.8em}
-  #outlook .fc-ico{flex:1;text-align:center}
-  #outlook .fc-ico .wi{font-size:calc(var(--fs-value)*1.05)}
-  #outlook .fc-hl{font-size:var(--fs-value-sm);flex:0 0 auto}
-  #outlook .fc-pop{flex:0 0 3em;text-align:right}
+  /* A phone cannot show ten columns, so each day turns sideways into a
+     row — and the rows are made readable rather than made to fit, with
+     the card scrolling inside its screen. That needs the card to grow with
+     its content, which container-type:size forbids (height only ever comes
+     from being stretched), so this one card contains inline-size only. Its
+     cqh-based type then resolves against the viewport instead, and the
+     cqw cap in every phone size keeps that from mattering. */
+  /* flex:none, or flex-basis 0 in the auto-height phone #app lets the box
+     size to its content and the whole page scrolls instead of the card. */
+  #outlook{display:block;flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
+  body.show-outlook #outlook{display:block}
+  #outlook .card{container-type:inline-size;min-height:100%;overflow:visible}
+  #outlook .card-body{justify-content:flex-start;gap:clamp(6px,1.4dvh,14px)}
+  #outlook .outplot{flex:0 0 auto;height:clamp(130px,26dvh,240px)}
+  #outlook .fc-strip{flex-direction:column;gap:calc(var(--gap)*.75)}
+  /* Day over date in one column: side by side, the two plus a full-size
+     high/low overran a 375px row and the fit pass shrank everything to
+     make it fit — the opposite of what the rows are for. */
+  #outlook .fc-day{
+    display:grid;grid-template-columns:4.2em auto 1fr auto;
+    grid-template-rows:auto auto;column-gap:.6em;row-gap:0;
+    align-items:center;padding:.5em .7em;text-align:left;
+  }
+  #outlook .fc-day .k{grid-area:1/1;font-size:var(--fs-label);align-self:end}
+  #outlook .fc-day .date{grid-area:2/1;font-size:var(--fs-label);align-self:start}
+  #outlook .fc-ico{grid-area:1/2/3/3}
+  #outlook .fc-ico .wi{font-size:calc(var(--fs-value)*1.2)}
+  #outlook .fc-hl{grid-area:1/3/3/4;font-size:calc(var(--fs-value)*.9);text-align:center}
+  #outlook .fc-pop{grid-area:1/4/3/5;font-size:var(--fs-label);text-align:right;
+                   min-width:2.6em}
+  #outlook .caption{padding-bottom:.4em}
 }
 /* Records card: the whole span the station has ever seen, with this month
    and today marked on it. */

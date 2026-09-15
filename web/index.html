@@ -461,25 +461,54 @@ body.tv #app{filter:brightness(.92)}
 body.no-drift #app{animation:none}
 
 #settings{display:none;flex:1;min-height:0;overflow:auto;padding:4px 2px}
-#outlook{display:none;flex:1;min-height:0;overflow:auto;padding:4px 2px}
+/* ── Ten-day outlook ─────────────────────────────────────────────────────
+   One card the size of the whole grid, built from the same pieces as the
+   six small ones: the Forecast card's day strip, stretched to all ten days,
+   under a range plot drawn the way the Temperature trace is. It fills the
+   page because it IS a card — the type sizes against it like any other. */
+#outlook{display:none;flex:1;min-height:0}
 body.show-outlook #grid{display:none}
-body.show-outlook #outlook{display:block}
-.outlook{max-width:820px;margin:0 auto}
-.day{
-  display:grid;
-  grid-template-columns:4.2em 1.9em 3.2em 1fr 3.4em 3.4em;
-  align-items:center;gap:.5em;
-  padding:.55em .7em;border-bottom:1px solid var(--rule);
-  font-size:clamp(12px,1.15vw,17px);
+body.show-outlook #outlook{display:flex}
+#outlook .card{flex:1;min-width:0}
+/* The plot takes whatever the strip leaves. */
+#outlook .outplot{position:relative;flex:1 1 auto;min-height:0}
+#outlook .outplot .ax{
+  position:absolute;left:.4em;font-size:var(--fs-label);color:var(--faint);
+  line-height:1;white-space:nowrap;letter-spacing:.06em;
 }
-.day:last-child{border-bottom:0}
-.day.today{background:var(--inset);border-radius:var(--inset-radius)}
-.day .dow{font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-          color:var(--muted)}
-.day .ico .wi{font-size:1.35em;color:var(--muted)}
-.day .pop{font-size:.85em;color:var(--cold);text-align:right}
-.day .lo{color:var(--cold);text-align:right;font-weight:600}
-.day .hi{color:var(--red);text-align:right;font-weight:600}
+#outlook .outplot .ax.hi{top:.3em} #outlook .outplot .ax.lo{bottom:.3em}
+#outlook .outplot .ax b{color:var(--label);font-weight:600}
+/* Ten across is a lot of columns. The high/low pair is the widest thing in
+   each one, so it is capped by the card's width as well as the usual size —
+   a 1280-wide screen gives each day 128px, and two three-digit figures
+   at full size do not fit that. */
+#outlook .fc-strip{flex:0 0 auto}
+#outlook .fc-day{gap:.18em;padding-block:clamp(.3rem,1.6cqh,.9rem)}
+#outlook .fc-day .date{font-size:calc(var(--fs-label)*.9);color:var(--faint);
+                       white-space:nowrap}
+#outlook .fc-ico .wi{font-size:min(calc(var(--fs-value)*1.35),4.2cqw)}
+#outlook .fc-hl{font-size:min(var(--fs-value-sm),1.65cqw)}
+#outlook .fc-day.today{border-color:var(--accent);background:
+  color-mix(in srgb,var(--accent) 7%,var(--inset))}
+#outlook .fc-day.today .k{color:var(--text)}
+@media (max-width:720px){
+  /* A phone cannot show ten columns, and the card cannot grow to hold ten
+     tall cells either — container-type:size means its height only ever
+     comes from being stretched to the screen. So each day turns sideways
+     into one short row, and ten of those under a modest plot fit a phone
+     screen with the fit pass trimming any remainder, like every other card. */
+  #outlook .card-body{justify-content:flex-start}
+  #outlook .outplot{flex:0 0 auto;height:clamp(110px,22dvh,220px)}
+  #outlook .fc-strip{flex-direction:column;gap:calc(var(--gap)*.5)}
+  #outlook .fc-day{flex-direction:row;align-items:center;gap:.5em;
+                   padding:.2em .7em;text-align:left}
+  #outlook .fc-day .k{flex:0 0 3.6em}
+  #outlook .fc-day .date{flex:0 0 3.8em}
+  #outlook .fc-ico{flex:1;text-align:center}
+  #outlook .fc-ico .wi{font-size:calc(var(--fs-value)*1.05)}
+  #outlook .fc-hl{font-size:var(--fs-value-sm);flex:0 0 auto}
+  #outlook .fc-pop{flex:0 0 3em;text-align:right}
+}
 /* Records card: the whole span the station has ever seen, with this month
    and today marked on it. */
 .gauge-span{position:relative;width:100%;padding:.2em 0 1.5em}
@@ -507,14 +536,6 @@ body.show-outlook #outlook{display:block}
 }
 .gauge-span .end.lo{left:0} .gauge-span .end.hi{right:0}
 
-.bar{position:relative;height:.5em;border-radius:.25em;background:var(--rule)}
-.bar span{position:absolute;top:0;bottom:0;border-radius:.25em;
-          background:linear-gradient(90deg,var(--cold),var(--yellow),var(--red))}
-body.tv .day{font-size:clamp(15px,1.6vw,26px);padding:.7em}
-@media (max-width:720px){
-  .day{grid-template-columns:3.4em 1.6em 1fr 2.9em 2.9em;font-size:14px}
-  .day .pop{display:none}
-}
 body.show-settings #grid{display:none}
 body.show-settings #settings{display:block}
 .sheet{
@@ -2725,52 +2746,131 @@ function wireCardDrag(){
 }
 
 /* The full ten days the forecast feed already returns — the Forecast card
-   only has room for three. Each row carries a bar showing that day's range
-   against the whole ten-day span, so a warm spell or a cold snap is visible
-   at a glance rather than needing the numbers read. */
+   only has room for three. Built as one card the size of the grid, from the
+   Forecast card's own parts: the range of every day drawn as a plot across
+   the top, so a warm spell or a cold snap is visible before any number is
+   read, and the ten days underneath in the same strip the small card uses
+   for its three. */
 function renderOutlook(){
   const host = document.getElementById("outlook");
-  const fc = (last && last.forecast) || {};
+  const s = last || {};
+  const fc = s.forecast || {};
   const days = fc.days || [];
+  const {card:c, body:b} = card("outlook","Ten-day outlook","day-sunny","yellow",
+                                srcHealth(fc));
   if (!fc.available || !days.length) {
-    host.replaceChildren(el("div","sheet",
-      esc(fc.error || "Forecast unavailable")));
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption(fc.error || "Forecast unavailable"));
+    b.appendChild(el("div","mid"));
+    host.replaceChildren(c);
     return;
   }
-  const lows = days.map(d => d.tmin_c).filter(v => v != null);
-  const highs = days.map(d => d.tmax_c).filter(v => v != null);
-  const lo = Math.min(...lows), hi = Math.max(...highs);
-  const span = (hi - lo) || 1;
 
-  const wrap = el("div","outlook");
-  const head = el("div","sheet");
-  head.style.cssText = "padding:0;background:none;border:0;margin-bottom:.6em";
-  head.innerHTML = '<h2 style="margin:0">' +
-    esc("Ten-day outlook" + (last.station_name ? " · " + last.station_name : "")) +
-    '</h2>';
-  wrap.appendChild(head);
-
-  const sheet = el("div","sheet");
   const todayIso = new Date().toISOString().slice(0, 10);
+  const dateOf = (iso) => { const p = iso.split("-").map(Number);
+                            return new Date(p[0], p[1] - 1, p[2]); };
+  b.appendChild(outlookPlot(days, s.temp_normal_c, dateOf));
+
+  const strip = el("div","fc-strip");
   for (const d of days) {
     const w = wmo(d.code, true);
-    const row = el("div", "day" + (d.date === todayIso ? " today" : ""));
-    const l = d.tmin_c, h = d.tmax_c;
-    const left = l == null ? 0 : ((l - lo) / span) * 100;
-    const width = (l == null || h == null) ? 0 : Math.max(2, ((h - l) / span) * 100);
-    row.innerHTML =
-      '<span class="dow">' + esc(d.date === todayIso ? "Today" : weekday(d.date)) + '</span>' +
-      '<span class="ico">' + wi(w.glyph) + '</span>' +
-      '<span class="pop">' + (d.pop == null ? "" : esc(d.pop + "%")) + '</span>' +
-      '<span class="bar"><span style="left:' + left.toFixed(1) +
-        '%;width:' + width.toFixed(1) + '%"></span></span>' +
-      '<span class="lo">' + esc(fg(temp(l))) + '</span>' +
-      '<span class="hi">' + esc(fg(temp(h))) + '</span>';
-    row.title = w.label;
-    sheet.appendChild(row);
+    const cell = el("div","fc-day" + (d.date === todayIso ? " today" : ""));
+    cell.innerHTML =
+      '<div class="k">' + esc(d.date === todayIso ? "Today" : weekday(d.date)) + '</div>' +
+      '<div class="date">' + esc(dateOf(d.date).toLocaleDateString([],
+                              {month:"short", day:"numeric"})) + '</div>' +
+      '<div class="fc-ico">' + wi(w.glyph) + '</div>' +
+      '<div class="fc-hl"><span class="red">' + esc(fg(temp(d.tmax_c))) +
+        '</span><span class="sep">/</span><span class="cold">' +
+        esc(fg(temp(d.tmin_c))) + '</span></div>' +
+      '<div class="fc-pop">' + (d.pop == null ? "" : esc(d.pop + "%")) + '</div>';
+    cell.title = w.label;
+    strip.appendChild(cell);
   }
-  wrap.appendChild(sheet);
-  host.replaceChildren(wrap);
+  b.appendChild(strip);
+
+  // The one-line reading the other cards end on: where the extremes fall.
+  // Ten days hold two of most weekdays, so the day carries its date.
+  const name = (d) => d.date === todayIso ? "today"
+    : weekday(d.date) + " " + dateOf(d.date).getDate();
+  const pick = (key, best) => days.filter(d => d[key] != null)
+    .reduce((a, d) => a == null || best(d[key], a[key]) ? d : a, null);
+  const warm = pick("tmax_c", (v, a) => v > a);
+  const cold = pick("tmin_c", (v, a) => v < a);
+  const wet  = pick("pop",    (v, a) => v > a);
+  const bits = [];
+  if (warm) bits.push("Warmest " + fg(temp(warm.tmax_c)) + "° " + name(warm));
+  if (cold) bits.push("Coolest " + fg(temp(cold.tmin_c)) + "° " + name(cold));
+  if (wet && wet.pop > 0) bits.push("Wettest " + wet.pop + "% " + name(wet));
+  b.appendChild(caption(bits.join(" · ") || (fc.source || "")));
+  host.replaceChildren(c);
+  fitCards();                // render() skips its own pass while this is up
+}
+
+/* Highs and lows across the ten days, the band between them filled, with
+   the normal range for the time of year behind — the same encoding as the
+   Temperature trace, so a run of days above the grey band reads the same
+   way there as it does here. Points sit at the centre of each column so
+   they line up with the day cells underneath. */
+function outlookPlot(days, normal, dateOf){
+  const W = 100, H = 46, pad = 5, n = days.length;
+  const wrap = el("div","outplot");
+  const x = (i) => (i + 0.5) / n * W;
+
+  let lo = Infinity, hi = -Infinity;
+  for (const d of days) {
+    if (d.tmax_c != null) hi = Math.max(hi, d.tmax_c);
+    if (d.tmin_c != null) lo = Math.min(lo, d.tmin_c);
+  }
+  if (!isFinite(lo) || !isFinite(hi)) { wrap.appendChild(caption("No range")); return wrap; }
+  let bHi = null, bLo = null;
+  if (normal) {
+    bHi = days.map(d => monthlyAt(normal.hi, dateOf(d.date)));
+    bLo = days.map(d => monthlyAt(normal.lo, dateOf(d.date)));
+    for (const v of bHi) hi = Math.max(hi, v);
+    for (const v of bLo) lo = Math.min(lo, v);
+  }
+  if (hi - lo < 3) { const m = (hi + lo) / 2; lo = m - 1.5; hi = m + 1.5; }
+  const y = (v) => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
+  const at = (v, i) => x(i).toFixed(2) + " " + y(v).toFixed(2);
+
+  let rules = "";
+  for (let i = 1; i < n; i++) {
+    const rx = (i / n * W).toFixed(2);
+    rules += '<line x1="'+rx+'" y1="0" x2="'+rx+'" y2="'+H+'" '+
+      'stroke="var(--rule)" stroke-dasharray="1 3" vector-effect="non-scaling-stroke"/>';
+  }
+  let bandArt = "";
+  if (bHi) {
+    const top = bHi.map(at), bot = bLo.map(at);
+    const edge = (pt) => '<path d="M'+pt.join("L")+'" fill="none" '+
+      'stroke="var(--label)" stroke-width="1" stroke-dasharray="3 3" '+
+      'opacity=".55" vector-effect="non-scaling-stroke"/>';
+    bandArt = '<path d="M'+top.join("L")+'L'+bot.slice().reverse().join("L")+'Z" '+
+                'fill="var(--label)" fill-opacity=".10" stroke="none"/>'+
+              edge(top) + edge(bot);
+  }
+  const his = days.map((d, i) => d.tmax_c == null ? null : at(d.tmax_c, i));
+  const los = days.map((d, i) => d.tmin_c == null ? null : at(d.tmin_c, i));
+  const line = (pts, tone) => '<path d="' +
+    pts.map((p, i) => p == null ? "" : (i && pts[i-1] != null ? "L" : "M") + p).join("") +
+    '" fill="none" stroke="var(--'+tone+')" stroke-width="2.4" ' +
+    'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+  const both = days.map((d, i) => d.tmax_c != null && d.tmin_c != null ? i : -1)
+                   .filter(i => i >= 0);
+  const fill = both.length > 1
+    ? '<path d="M' + both.map(i => his[i]).join("L") + "L" +
+      both.slice().reverse().map(i => los[i]).join("L") + 'Z" ' +
+      'fill="var(--amber)" fill-opacity=".14" stroke="none"/>'
+    : "";
+
+  wrap.innerHTML =
+    '<svg class="plot" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+      bandArt + rules + fill + line(his, "red") + line(los, "cold") +
+    '</svg>' +
+    '<span class="ax hi"><b>' + esc(fg(temp(hi))) + '</b> ' + esc(prefs.temp) + '</span>' +
+    '<span class="ax lo"><b>' + esc(fg(temp(lo))) + '</b> ' + esc(prefs.temp) + '</span>';
+  return wrap;
 }
 
 /* ── render loop ─────────────────────────────────────────────────────── */

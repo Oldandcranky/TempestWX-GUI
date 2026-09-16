@@ -336,6 +336,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Tests.** `tests/run.sh` runs both halves: unit tests for the logic that
+  turns numbers into a word on a card, and a headless browser that renders
+  every card at six viewports and asserts none of them overflows, overlaps
+  itself, or paints outside its own box. The geometry half is measured
+  against a fixed captured state rather than live demo data, because demo
+  numbers drift with the clock and a suite that answers differently on the
+  same code is worse than none. It found a real overflow on its first run.
 - **The dot on each card means that card now.** It was one station-wide
   light drawn nine times, so the Pollen card sat green because the *hub*
   was broadcasting, whatever Google's API was doing. Cards fed by a fetcher

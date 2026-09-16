@@ -85,7 +85,19 @@ in `web/fonts/`. Edit it directly.
 - **`.dockerignore` patterns match the whole path from the context root**, so
   `._*` catches the top level only and `**/._*` is needed for nested files.
 
-## Testing the page from a cloud session
+## Tests
+
+`tests/run.sh` — unit tests plus a headless-browser geometry pass. Run it
+before pushing anything that touches the page or the card logic; it takes
+about twenty seconds and it has already caught a real overflow.
+
+`tests/state.json` is a captured dashboard state, deliberately hostile: the
+longest ISP name, the widest pollen word, every card switched on. The
+geometry pass renders against it rather than against live demo data, whose
+numbers drift with the clock and made the suite answer differently on
+identical code. If you add a card or a field, recapture it.
+
+## Testing the page by hand
 
 There is a headless Chromium here, and using it is the difference between
 shipping a bug and catching one. Two of the three UI bugs that reached the

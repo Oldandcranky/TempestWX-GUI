@@ -224,6 +224,139 @@ class RainTotals(unittest.TestCase):
         self.assertAlmostEqual(h.rain_days["2026-09-14"], 4.0)
 
 
+class Poller(server.PollingFetcher):
+    """A PollingFetcher that fetches from a script instead of the internet."""
+
+    REFRESH = 0.001
+    RETRY = 0.001
+    LABEL = "Recorder"
+
+    def __init__(self, stop, script):
+        server.PollingFetcher.__init__(self, stop)
+        self.script = list(script)
+        self.saved = []
+
+    def fetch_once(self):
+        step = self.script.pop(0)
+        if not self.script:
+            self.stop_event.set()          # last step: end the loop
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+    def after_success(self, fresh):
+        self.saved.append(fresh)
+
+
+class FetcherContract(unittest.TestCase):
+    """The loop every fetcher now shares. What the card dots read is
+    `available` and `error` together, so these two must stay exactly true:
+    a success clears the error, and a failure keeps the data."""
+
+    def drive(self, *script):
+        import threading
+        p = Poller(threading.Event(), script)
+        p.run()                             # synchronous; REFRESH is 1ms
+        return p
+
+    def test_a_success_stores_the_data(self):
+        p = self.drive({"n": 1})
+        self.assertEqual(p.data, {"n": 1})
+        self.assertEqual(p.error, "")
+
+    def test_a_failure_keeps_the_last_good_data(self):
+        # This is the whole contract. A card showing yesterday's reading must
+        # still have the reading; only the dot changes.
+        p = self.drive({"n": 1}, RuntimeError("boom"))
+        self.assertEqual(p.data, {"n": 1})
+        self.assertIn("Recorder unavailable", p.error)
+
+    def test_a_later_success_clears_the_error(self):
+        p = self.drive({"n": 1}, RuntimeError("boom"), {"n": 2})
+        self.assertEqual(p.data, {"n": 2})
+        self.assertEqual(p.error, "")
+
+    def test_after_success_runs_only_on_success(self):
+        p = self.drive({"n": 1}, RuntimeError("boom"), {"n": 2})
+        self.assertEqual(p.saved, [{"n": 1}, {"n": 2}])
+
+    def test_nothing_fetched_yet_is_unavailable(self):
+        p = self.drive(RuntimeError("boom"))
+        snap = p.snapshot()
+        self.assertFalse(snap["available"])
+        self.assertIn("Recorder unavailable", snap["error"])
+
+    def test_data_with_an_error_is_available_and_says_so(self):
+        p = self.drive({"n": 1}, RuntimeError("boom"))
+        snap = p.snapshot()
+        self.assertTrue(snap["available"])
+        self.assertTrue(snap["error"])
+        self.assertEqual(snap["n"], 1)
+
+    def test_the_thread_survives_anything_thrown_at_it(self):
+        # A fetcher that dies takes its card's freshness with it, silently.
+        p = self.drive(KeyboardInterrupt(), {"n": 1})
+        self.assertEqual(p.data, {"n": 1})
+
+    def test_backoff_doubles_then_holds(self):
+        import threading
+        p = Poller(threading.Event(), [{"n": 1}])
+        p.REFRESH, p.RETRY = 900, 60
+        self.assertEqual([p.backoff(n) for n in range(1, 7)],
+                         [60, 120, 240, 480, 480, 480])
+
+    def test_backoff_never_waits_longer_than_a_refresh(self):
+        import threading
+        p = Poller(threading.Event(), [{"n": 1}])
+        p.REFRESH, p.RETRY = 300, 120
+        self.assertEqual(max(p.backoff(n) for n in range(1, 9)), 300)
+
+
+class FetcherWording(unittest.TestCase):
+    """Each fetcher words its own failures. These are the messages that end
+    up on a card, so they are worth pinning."""
+
+    @staticmethod
+    def http(code):
+        import urllib.error
+        return urllib.error.HTTPError("http://x", code, "nope", None, None)
+
+    def test_pollen_names_a_rejected_key(self):
+        f = server.PollenFetcher(0, 0, "k", None)
+        self.assertIn("key rejected", f.describe(self.http(403)))
+
+    def test_pollen_names_an_exhausted_quota(self):
+        f = server.PollenFetcher(0, 0, "k", None)
+        self.assertIn("quota", f.describe(self.http(429)))
+
+    def test_pollen_falls_back_to_the_shared_wording(self):
+        f = server.PollenFetcher(0, 0, "k", None)
+        self.assertEqual(f.describe(RuntimeError()),
+                         "Pollen unavailable (RuntimeError)")
+
+    def test_speedtest_names_a_token_without_the_right_ability(self):
+        f = server.SpeedtestFetcher("http://x", "t", None)
+        self.assertIn("results:read", f.describe(self.http(401)))
+
+    def test_forecast_prefers_the_reason_a_network_error_carries(self):
+        import urllib.error
+        f = server.ForecastFetcher(0, 0, None)
+        self.assertEqual(f.describe(urllib.error.URLError("timed out")),
+                         "Forecast unavailable (timed out)")
+
+    def test_forecast_tells_a_bug_apart_from_an_outage(self):
+        f = server.ForecastFetcher(0, 0, None)
+        self.assertEqual(f.describe(KeyError()), "Forecast error (KeyError)")
+
+    def test_the_forecast_retries_sooner_than_the_others(self):
+        # Deliberately a different policy: a slow first attempt should not
+        # leave the card blank for two minutes.
+        fc = server.ForecastFetcher(0, 0, None)
+        air = server.AirQualityFetcher(0, 0, None)
+        self.assertLess(fc.backoff(1), air.backoff(1))
+        self.assertEqual(fc.backoff(1), 15)
+
+
 class StationHealth(unittest.TestCase):
     """The dot on every hub-fed card is this one function."""
 

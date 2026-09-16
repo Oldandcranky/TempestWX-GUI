@@ -133,7 +133,87 @@ STATIC_TYPES = {
 POLL_HINT_MS = 2000
 
 
-class ForecastFetcher(threading.Thread):
+class PollingFetcher(threading.Thread):
+    """One external service, fetched on a schedule, in a daemon thread.
+
+    Five of these existed with the same loop written out five times. What
+    they share is not boilerplate — it is the contract the dashboard reads:
+
+      on success   replace the data and clear the error
+      on failure   keep the data and set the error
+
+    so "available, with an error set" always means *what you are looking at
+    is old*, which is the amber dot on a card. A sixth copy of that, written
+    slightly differently, would be a card that lies about its own freshness.
+
+    A subclass must supply `fetch_once`. It may override:
+
+      store          keep the result somewhere other than self.data
+      after_success  work to do outside the lock, such as writing a cache
+      describe       the card's wording for a particular failure
+      backoff        a different retry policy
+      snapshot       a different shape for the card
+    """
+
+    REFRESH = 900             # seconds between successful fetches
+    RETRY = 60                # first delay after a failure
+    LABEL = "Data"            # how a card names this source when it fails
+
+    def __init__(self, stop_event):
+        threading.Thread.__init__(self, daemon=True)
+        self.stop_event = stop_event
+        self.lock = threading.Lock()
+        self.data = None
+        self.error = ""
+
+    def fetch_once(self):
+        raise NotImplementedError
+
+    def store(self, fresh):
+        """Called holding the lock. Keep it short."""
+        self.data = fresh
+
+    def after_success(self, fresh):
+        """Called without the lock, so this is where slow work belongs."""
+
+    def describe(self, exc):
+        return "%s unavailable (%s)" % (self.LABEL, exc.__class__.__name__)
+
+    def backoff(self, fails):
+        """Double the retry each time, four times, then hold. Capped at the
+        refresh interval: there is no sense retrying more slowly than the
+        thing would have refreshed anyway."""
+        return min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
+
+    def run(self):
+        fails = 0
+        while not self.stop_event.is_set():
+            try:
+                fresh = self.fetch_once()
+                with self.lock:
+                    self.store(fresh)
+                    self.error = ""
+                self.after_success(fresh)
+                fails = 0
+                wait = self.REFRESH
+            except Exception as e:          # never let the thread die
+                with self.lock:
+                    self.error = self.describe(e)
+                fails += 1
+                wait = self.backoff(fails)
+            self.stop_event.wait(wait)
+
+    def snapshot(self):
+        with self.lock:
+            if self.data is None:
+                return {"available": False, "error": self.error}
+            out = dict(self.data)
+            out["available"] = True
+            out["error"] = self.error
+            return out
+
+
+class ForecastFetcher(PollingFetcher):
     """Ten-day forecast from Open-Meteo.
 
     This is the one thing the hub cannot provide — a barometer cannot predict
@@ -149,15 +229,34 @@ class ForecastFetcher(threading.Thread):
     REFRESH = 1800          # half an hour; the feed updates far slower
     RETRY = 120             # after a failure
 
+    LABEL = "Forecast"
+
     def __init__(self, lat, lon, stop_event, days=10, cache_path=None):
-        threading.Thread.__init__(self, daemon=True)
+        PollingFetcher.__init__(self, stop_event)
         self.lat, self.lon, self.days = lat, lon, days
-        self.stop_event = stop_event
         self.cache_path = cache_path
-        self.lock = threading.Lock()
-        self.data = None
-        self.error = ""
         self._load_cache()
+
+    def after_success(self, fresh):
+        self._save_cache(fresh)
+
+    def describe(self, exc):
+        # A network failure names its reason where it has one — "timed out"
+        # reads better on a card than "URLError". Anything else is a bug
+        # rather than the weather service being unreachable, and is worded
+        # so the two can be told apart.
+        if isinstance(exc, (urllib.error.URLError, OSError, ValueError,
+                            TimeoutError)):
+            return "Forecast unavailable (%s)" % (
+                getattr(exc, "reason", None) or exc.__class__.__name__)
+        return "Forecast error (%s)" % exc.__class__.__name__
+
+    def backoff(self, fails):
+        """Deliberately not the shared policy. A forecast that is merely slow
+        the first time should not leave the card blank for two minutes, so
+        this starts at fifteen seconds and climbs to RETRY, where the others
+        start at RETRY and climb to REFRESH."""
+        return min(self.RETRY, 15 * (2 ** (fails - 1)))
 
     # A restart should not cost Open-Meteo a request. The feed changes far
     # more slowly than this container restarts, so a recent cache is reused
@@ -239,41 +338,15 @@ class ForecastFetcher(threading.Thread):
         }
 
     def run(self):
-        # If the cache is still warm, wait out its remaining life first.
+        # A cache restored at startup is already the answer; wait out what is
+        # left of its life before asking again. Then the shared loop.
         with self.lock:
             warm = self.data
         if warm:
             left = self.REFRESH - (time.time() - warm["fetched_at"])
             if left > 0 and self.stop_event.wait(left):
                 return
-
-        fails = 0
-        while not self.stop_event.is_set():
-            try:
-                fresh = self.fetch_once()
-                with self.lock:
-                    self.data, self.error = fresh, ""
-                self._save_cache(fresh)
-                fails = 0
-                wait = self.REFRESH
-            except (urllib.error.URLError, OSError, ValueError,
-                    TimeoutError) as e:
-                with self.lock:
-                    self.error = "Forecast unavailable (%s)" % (
-                        getattr(e, "reason", None) or e.__class__.__name__)
-                fails += 1
-                wait = self._backoff(fails)
-            except Exception as e:                      # never kill the thread
-                with self.lock:
-                    self.error = "Forecast error (%s)" % e.__class__.__name__
-                fails += 1
-                wait = self._backoff(fails)
-            self.stop_event.wait(wait)
-
-    def _backoff(self, fails):
-        """Come back quickly after the first failure, then back off — a slow
-        first attempt should not blank the card for two minutes."""
-        return min(self.RETRY, 15 * (2 ** (fails - 1)))
+        PollingFetcher.run(self)
 
     def snapshot(self):
         with self.lock:
@@ -286,7 +359,7 @@ class ForecastFetcher(threading.Thread):
             return out
 
 
-class AirQualityFetcher(threading.Thread):
+class AirQualityFetcher(PollingFetcher):
     """Air quality from Open-Meteo. Free, no account, no key, and it does
     cover North America — unlike their pollen, which is a European model."""
 
@@ -296,13 +369,11 @@ class AirQualityFetcher(threading.Thread):
     FIELDS = ["us_aqi", "pm2_5", "pm10", "ozone", "nitrogen_dioxide",
               "sulphur_dioxide", "carbon_monoxide", "dust"]
 
+    LABEL = "Air quality"
+
     def __init__(self, lat, lon, stop_event):
-        threading.Thread.__init__(self, daemon=True)
+        PollingFetcher.__init__(self, stop_event)
         self.lat, self.lon = lat, lon
-        self.stop_event = stop_event
-        self.lock = threading.Lock()
-        self.data = None
-        self.error = ""
 
     def fetch_once(self):
         url = self.ENDPOINT + "?" + urllib.parse.urlencode({
@@ -319,33 +390,9 @@ class AirQualityFetcher(threading.Thread):
             out[f] = cur.get(f)
         return out
 
-    def run(self):
-        fails = 0
-        while not self.stop_event.is_set():
-            try:
-                fresh = self.fetch_once()
-                with self.lock:
-                    self.data, self.error = fresh, ""
-                fails = 0
-                wait = self.REFRESH
-            except Exception as e:
-                with self.lock:
-                    self.error = "Air quality unavailable (%s)" % e.__class__.__name__
-                fails += 1
-                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
-            self.stop_event.wait(wait)
-
-    def snapshot(self):
-        with self.lock:
-            if self.data is None:
-                return {"available": False, "error": self.error}
-            out = dict(self.data)
-            out["available"] = True
-            out["error"] = self.error
-            return out
 
 
-class PollenFetcher(threading.Thread):
+class PollenFetcher(PollingFetcher):
     """Tree, grass and weed pollen from the Google Pollen API.
 
     No free keyless source covers North America — Open-Meteo's pollen model
@@ -360,13 +407,23 @@ class PollenFetcher(threading.Thread):
     RETRY = 900
     TYPES = {"TREE": "tree", "GRASS": "grass", "WEED": "weed"}
 
+    LABEL = "Pollen"
+
     def __init__(self, lat, lon, key, stop_event):
-        threading.Thread.__init__(self, daemon=True)
+        PollingFetcher.__init__(self, stop_event)
         self.lat, self.lon, self.key = lat, lon, key
-        self.stop_event = stop_event
-        self.lock = threading.Lock()
-        self.data = None
-        self.error = ""
+
+    def describe(self, exc):
+        # A rejected key and an exhausted quota are worth saying plainly:
+        # both are things the owner can act on, and neither is transient.
+        if isinstance(exc, urllib.error.HTTPError):
+            if exc.code in (400, 401, 403):
+                return ("Pollen key rejected — check it is valid "
+                        "and the Pollen API is enabled")
+            if exc.code == 429:
+                return "Pollen quota exceeded"
+            return "Pollen unavailable (HTTP %s)" % exc.code
+        return PollingFetcher.describe(self, exc)
 
     @staticmethod
     def _index(info):
@@ -431,33 +488,6 @@ class PollenFetcher(threading.Thread):
         out["plants"] = plants[:3]
         return out
 
-    def run(self):
-        fails = 0
-        while not self.stop_event.is_set():
-            try:
-                fresh = self.fetch_once()
-                with self.lock:
-                    self.data, self.error = fresh, ""
-                fails = 0
-                wait = self.REFRESH
-            except urllib.error.HTTPError as e:
-                with self.lock:
-                    if e.code in (400, 401, 403):
-                        self.error = ("Pollen key rejected — check it is valid "
-                                      "and the Pollen API is enabled")
-                    elif e.code == 429:
-                        self.error = "Pollen quota exceeded"
-                    else:
-                        self.error = "Pollen unavailable (HTTP %s)" % e.code
-                fails += 1
-                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
-            except Exception as e:
-                with self.lock:
-                    self.error = "Pollen unavailable (%s)" % e.__class__.__name__
-                fails += 1
-                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
-            self.stop_event.wait(wait)
-
     def snapshot(self):
         with self.lock:
             if self.data is None:
@@ -468,7 +498,7 @@ class PollenFetcher(threading.Thread):
             return out
 
 
-class SpeedtestFetcher(threading.Thread):
+class SpeedtestFetcher(PollingFetcher):
     """Internet health, from a self-hosted Speedtest Tracker on the LAN.
 
     Speedtest Tracker already stores the history, so this pulls the last
@@ -498,15 +528,23 @@ class SpeedtestFetcher(threading.Thread):
 
     def __init__(self, base_url, token, stop_event,
                  plan_down=0.0, plan_up=0.0):
-        threading.Thread.__init__(self, daemon=True)
+        PollingFetcher.__init__(self, stop_event)
         self.base = (base_url or "").rstrip("/")
         self.token = token
         self.plan_down = plan_down or 0.0
         self.plan_up = plan_up or 0.0
-        self.stop_event = stop_event
-        self.lock = threading.Lock()
-        self.data = None
-        self.error = ""
+
+    def describe(self, exc):
+        # A token without the right ability is a setup mistake, not an
+        # outage, and saying so saves a round of guessing.
+        if isinstance(exc, urllib.error.HTTPError):
+            if exc.code in (401, 403):
+                return ("Speedtest token rejected — it needs "
+                        "the results:read ability")
+            if exc.code == 406:
+                return "Speedtest Tracker refused the request"
+            return "Speedtest unavailable (HTTP %s)" % exc.code
+        return PollingFetcher.describe(self, exc)
 
     # -- helpers ----------------------------------------------------------
     @staticmethod
@@ -703,34 +741,6 @@ class SpeedtestFetcher(threading.Thread):
             out["status"] = "degraded" if issues else "good"
         return out
 
-    def run(self):
-        fails = 0
-        while not self.stop_event.is_set():
-            try:
-                fresh = self.fetch_once()
-                with self.lock:
-                    self.data, self.error = fresh, ""
-                fails = 0
-                wait = self.REFRESH
-            except urllib.error.HTTPError as e:
-                with self.lock:
-                    if e.code in (401, 403):
-                        self.error = ("Speedtest token rejected — it needs "
-                                      "the results:read ability")
-                    elif e.code == 406:
-                        self.error = "Speedtest Tracker refused the request"
-                    else:
-                        self.error = "Speedtest unavailable (HTTP %s)" % e.code
-                fails += 1
-                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
-            except Exception as e:
-                with self.lock:
-                    self.error = ("Speedtest unavailable (%s)"
-                                  % e.__class__.__name__)
-                fails += 1
-                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
-            self.stop_event.wait(wait)
-
     def snapshot(self):
         with self.lock:
             if self.data is None:
@@ -741,7 +751,7 @@ class SpeedtestFetcher(threading.Thread):
             return out
 
 
-class AlertsFetcher(threading.Thread):
+class AlertsFetcher(PollingFetcher):
     """Active weather alerts for the station's location, from the US National
     Weather Service. No key and no account — the NWS only asks that clients
     identify themselves in the User-Agent, which we do.
@@ -756,14 +766,19 @@ class AlertsFetcher(threading.Thread):
     # Most to least serious; the dashboard shows the worst one active.
     RANK = {"Extreme": 4, "Severe": 3, "Moderate": 2, "Minor": 1, "Unknown": 0}
 
+    LABEL = "Alerts"
+
     def __init__(self, lat, lon, stop_event):
-        threading.Thread.__init__(self, daemon=True)
+        PollingFetcher.__init__(self, stop_event)
         self.lat, self.lon = lat, lon
-        self.stop_event = stop_event
-        self.lock = threading.Lock()
         self.alerts = []
-        self.error = ""
         self.fetched_at = None
+
+    def store(self, fresh):
+        # No alerts is a perfectly good answer, so an empty list must still
+        # count as having been asked — hence fetched_at rather than truthiness.
+        self.alerts = fresh
+        self.fetched_at = time.time()
 
     def fetch_once(self):
         url = "%s?point=%.4f,%.4f" % (self.ENDPOINT, self.lat, self.lon)
@@ -800,23 +815,6 @@ class AlertsFetcher(threading.Thread):
             })
         out.sort(key=lambda a: a["rank"], reverse=True)
         return out
-
-    def run(self):
-        fails = 0
-        while not self.stop_event.is_set():
-            try:
-                fresh = self.fetch_once()
-                with self.lock:
-                    self.alerts, self.error = fresh, ""
-                    self.fetched_at = time.time()
-                fails = 0
-                wait = self.REFRESH
-            except Exception as e:
-                with self.lock:
-                    self.error = "Alerts unavailable (%s)" % e.__class__.__name__
-                fails += 1
-                wait = min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
-            self.stop_event.wait(wait)
 
     def snapshot(self):
         with self.lock:

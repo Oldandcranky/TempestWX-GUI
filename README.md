@@ -336,6 +336,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **One polling loop instead of five.** Forecast, air quality, pollen,
+  Speedtest and alerts each had their own copy of the same retry-with-backoff
+  thread, differing only in the wording of an error. They share a
+  `PollingFetcher` base now, so the contract the card dots read — a success
+  replaces the data and clears the error, a failure keeps the data and sets
+  one — is written down once rather than five times slightly differently.
+  The forecast's deliberately faster retry survives as an override, with a
+  test to stop anyone flattening it.
 - **Tests.** `tests/run.sh` runs both halves: unit tests for the logic that
   turns numbers into a word on a card, and a headless browser that renders
   every card at six viewports and asserts none of them overflows, overlaps

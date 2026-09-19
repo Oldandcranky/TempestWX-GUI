@@ -339,13 +339,12 @@ checked against the Host.
 - A tap anywhere on the Forecast card opens the ten-day outlook, not just a
   tap on its header — the same big target on the way in as on the way out.
   It started as TV-only, since that is where the header is hard to hit with
-  a remote's pointer, and was widened to every screen by choice. Leaving the
-  outlook by tapping its body stays TV-only; elsewhere the header, Escape and
-  Back do it.
+  a remote's pointer, and was widened to every screen by choice. So was the
+  way out: a tap anywhere on the outlook closes it on every screen.
 - **Three ways back from the outlook, none needing aim.** The remote's Back
   button closes it — opening it adds a history entry, so Back works the way
-  it does on any page, and a phone's back swipe with it. In TV mode a tap
-  anywhere on the outlook closes it too; nothing there is clickable, and the
+  it does on any page, and a phone's back swipe with it. A tap anywhere on
+  the outlook closes it too (TV-only at first, since widened to every screen); nothing there is clickable, and the
   header was a thin strip to hit with an LG pointer. And a TV left on the
   outlook returns to the cards by itself after three minutes without input.
   Every exit goes back through the same history entry, guarded so two at

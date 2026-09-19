@@ -302,8 +302,7 @@ const measureOutlook = () => {
       await page.goBack();
       await page.waitForTimeout(800);
 
-      // Off the TV the whole Forecast card still opens it, but a tap on the
-      // outlook's body must not close it — there, only deliberate exits do.
+      // Off the TV, both whole-card taps work the same way.
       await page.evaluate(() => setTv(false));
       await page.waitForTimeout(SETTLE_MS);
       await page.$eval('#card-fc .card-body', el => el.click());
@@ -311,7 +310,8 @@ const measureOutlook = () => {
       if (!await isOpen()) bad.push('a tap on the Forecast card body did not open it outside TV mode');
       await page.$eval('#outlook .card-body', el => el.click());
       await page.waitForTimeout(800);
-      if (!await isOpen()) bad.push('a tap on the body closed it outside TV mode');
+      if (await isOpen()) bad.push('a tap on the body did not close it outside TV mode');
+      if (!await onDashboard()) bad.push('closing outside TV mode left the dashboard');
     } catch (e) {
       bad.push(e.message.split('\n')[0]);
     }

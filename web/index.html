@@ -202,6 +202,8 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
    (not on the TV, which hides the cursor). */
 body:not(.tv) #card-fc{cursor:pointer}
 body:not(.tv) #card-fc:hover .flipbtn{color:var(--accent)}
+body:not(.tv) #outlook .card{cursor:pointer}
+body:not(.tv) #outlook .card:hover .flipbtn{color:var(--accent)}
 
 /* Speed against the plan rate. Colour carries the reading, so the bar itself
    stays thin — it sits under a figure that is already the headline, and is
@@ -3282,12 +3284,11 @@ window.addEventListener("popstate", () => {
     toggleOutlook(want, true);
 });
 
-/* On the TV, the whole outlook is the way back: nothing on it is clickable,
-   and the header is a thin strip to hit with a remote's pointer. Elsewhere it
-   stays header-only, so a stray tap on a laptop or phone does not close it.
+/* The whole outlook is the way back: nothing on it is clickable, and the
+   header is a thin strip to hit with a remote's pointer. It began TV-only and
+   was widened to every screen by the owner's choice, to match the way in.
    The header handles its own clicks. */
 document.getElementById("outlook").addEventListener("click", (e) => {
-  if (!document.body.classList.contains("tv")) return;
   if (e.target.closest(".card-head")) return;
   toggleOutlook(false);
 });

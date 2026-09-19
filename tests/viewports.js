@@ -82,6 +82,14 @@ const SETTLE_MS = 3000;     // two render ticks plus the fit pass
 const freshen = () => {
   const s = JSON.parse(JSON.stringify(STATE));
   s.now = Date.now() / 1000;
+  // Every "when" moves with the clock, so a reading captured five minutes
+  // before the state still reads "5m ago" however old the file is.
+  const shift = s.now - STATE.now;
+  for (const block of Object.values(s)) {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+    for (const k of ['at', 'fetched_at', 'observed_at'])
+      if (typeof block[k] === 'number') block[k] += shift;
+  }
   if (s.forecast && s.forecast.days) {
     s.forecast.fetched_at = s.now;
     const day0 = Date.UTC(...new Date().toISOString().slice(0, 10).split('-')

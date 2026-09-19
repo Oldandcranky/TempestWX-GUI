@@ -338,6 +338,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- The captured test state had drifted from what the server sends. Its pollen
+  block was an old format, so the Pollen card was measured drawing nothing;
+  its air-quality block was an error, so that card had only ever been
+  measured saying "unavailable". Both now carry the live shape at deliberately
+  hostile values — "Very High" everywhere and eight plants in season; an AQI
+  of 187 with three-digit readings — along with the Internet fields and the
+  station report added since. The tests shift every timestamp with the clock,
+  so "tested 5m ago" stays five minutes however old the file gets.
 - What is falling now comes from the **two** nearest NWS stations by actual
   distance — here DuPage (21 mi, south-east) and DeKalb (22 mi, west), with
   Huntley between them, so snow arriving from the west shows at DeKalb first.

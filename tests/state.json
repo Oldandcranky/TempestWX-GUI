@@ -1,8 +1,18 @@
 {
  "age_s": 1.934584617614746,
  "air": {
-  "available": false,
-  "error": "Set --lat and --lon"
+  "available": true,
+  "carbon_monoxide": 1234.5,
+  "dust": 77.7,
+  "error": "",
+  "fetched_at": 1789567629.1540258,
+  "nitrogen_dioxide": 88.8,
+  "ozone": 187.6,
+  "pm10": 234.5,
+  "pm2_5": 123.4,
+  "source": "Open-Meteo",
+  "sulphur_dioxide": 44.4,
+  "us_aqi": 187
  },
  "alerts": {
   "alerts": [],
@@ -18,7 +28,7 @@
  "derived": {
   "beaufort": 1,
   "beaufort_name": "Light air",
-  "comfort": "Hot \u00b7 Comfortable",
+  "comfort": "Hot · Comfortable",
   "dew_c": 13.60838684344022,
   "feels_c": 28.125517526949515,
   "feels_model": "Heat index",
@@ -37,7 +47,7 @@
    "t": 1789517161.2146175,
    "v": 1019.64
   },
-  "pres_outlook": "Slow decline \u2014 watch for cloud",
+  "pres_outlook": "Slow decline — watch for cloud",
   "pres_trend": "Falling slowly",
   "rain_from": "2026-09-04",
   "rain_month_mm": 4.3,
@@ -171,12 +181,16 @@
  "health": "live",
  "hub_serial": "",
  "internet": {
+  "at": 1789568229.1540258,
   "available": true,
   "avg_down": 697.0,
+  "avg_up": 256.1898667826087,
   "bloat": 14.0,
   "down": 703.4,
   "error": "",
   "failures": 1,
+  "fetched_at": 1789568229.1540258,
+  "healthy": null,
   "history": [],
   "isp": "Comcast Cable Communications LLC",
   "issues": [
@@ -187,7 +201,7 @@
   "ping": 9.2,
   "plan_down": 1000,
   "plan_up": 330,
-  "server": "Chicago, IL \u2014 a long server name",
+  "server": "Chicago, IL — a long server name",
   "status": "degraded",
   "tests": 25,
   "up": 209.1,
@@ -230,33 +244,91 @@
  "poll_ms": 2000,
  "pollen": {
   "available": true,
-  "error": "",
-  "in_season": [
-   "Ragweed",
-   "Mugwort"
-  ],
-  "source": "Google Pollen",
-  "types": {
-   "grass": {
-    "category": "Very Low",
-    "value": 1
-   },
-   "tree": {
-    "category": "Out of season",
-    "value": null
-   },
-   "weed": {
-    "category": "Very High",
-    "value": 5
-   }
+  "categories": {
+   "grass": "High",
+   "tree": "Very High",
+   "weed": "Very High"
   },
-  "worst": {
-   "category": "Very High",
-   "type": "weed",
-   "value": 5
-  }
+  "error": "",
+  "fetched_at": 1789566729.1540258,
+  "grass": 4,
+  "plants": [
+   {
+    "category": "Very High",
+    "name": "Ragweed",
+    "value": 5
+   },
+   {
+    "category": "High",
+    "name": "Mugwort",
+    "value": 4
+   },
+   {
+    "category": "High",
+    "name": "Chenopod",
+    "value": 4
+   },
+   {
+    "category": "Moderate",
+    "name": "Nettle",
+    "value": 3
+   },
+   {
+    "category": "High",
+    "name": "Graminales",
+    "value": 4
+   },
+   {
+    "category": "Very High",
+    "name": "Birch",
+    "value": 5
+   },
+   {
+    "category": "Moderate",
+    "name": "Cottonwood",
+    "value": 3
+   },
+   {
+    "category": "Low",
+    "name": "Juniper",
+    "value": 2
+   }
+  ],
+  "region": "US",
+  "source": "Google Pollen",
+  "tree": 5,
+  "weed": 5
  },
  "port": 0,
+ "precip_obs": {
+  "available": true,
+  "blowing": false,
+  "error": "",
+  "intensity": null,
+  "kind": "none",
+  "observed_at": 1789567929.1540258,
+  "station": "KDPA",
+  "station_name": "Dupage Airport",
+  "stations": [
+   {
+    "intensity": null,
+    "kind": "none",
+    "miles": 20.9,
+    "observed_at": 1789567929.1540258,
+    "station": "KDPA",
+    "station_name": "Dupage Airport"
+   },
+   {
+    "intensity": null,
+    "kind": "none",
+    "miles": 21.6,
+    "observed_at": 1789567829.1540258,
+    "station": "KDKB",
+    "station_name": "De Kalb Taylor Airport"
+   }
+  ],
+  "text": "Mostly Cloudy"
+ },
  "rain_monthly_in": [
   1.9,
   2.0,
@@ -1462,7 +1534,7 @@
   "dist": "mi",
   "pres": "inHg",
   "rain": "in",
-  "temp": "\u00b0F",
+  "temp": "°F",
   "wind": "mph"
  },
  "uptime_s": 7.941199541091919,

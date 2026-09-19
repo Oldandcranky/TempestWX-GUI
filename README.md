@@ -336,6 +336,12 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- On a phone, alerts sit just above the footer instead of at the top. iOS 26
+  Safari draws its address bar over the top of the page, see-through, and
+  with the page resting on the first card the banner sat blurred behind it.
+  The footer's spot is proven visible, and the alert now stays in view on
+  every card rather than only the first; each card shrinks by the banner's
+  height so it still fills exactly one screen.
 - A web app manifest with 192 and 512 pixel icons, for anything that pins the
   page as a tile or an app rather than a tab — an LG TV's browser showed a
   plain globe for it. The tab icons were all too small for that.

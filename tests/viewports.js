@@ -331,6 +331,29 @@ const measureOutlook = () => {
                  overflow: a.scrollWidth - a.clientWidth, offCentre, cut };
       }));
       const where = w + 'px' + (tv ? ' TV' : '');
+      if (w <= 720) {
+        // On a phone the banner rides just above the footer on every card:
+        // iOS draws its address bar over the top of the page, so the top is
+        // where it was being missed.
+        for (const i of [0, 2]) {
+          await page.evaluate(i => {
+            const c = document.querySelectorAll('#grid .card')[i];
+            window.scrollTo(0, c.offsetTop);
+          }, i);
+          await page.waitForTimeout(600);
+          const g = await page.evaluate(i => {
+            const a = document.getElementById('alerts').getBoundingClientRect();
+            const f = document.querySelector('footer').getBoundingClientRect();
+            const c = document.querySelectorAll('#grid .card')[i].getBoundingClientRect();
+            return { aTop: a.top, aBottom: a.bottom, fTop: f.top, cBottom: c.bottom, vh: innerHeight };
+          }, i);
+          const at = where + ' on card ' + (i + 1);
+          if (Math.abs(g.aBottom - g.fTop) > 1) bad.push(at + ': banner is not sitting on the footer');
+          if (g.aTop < 0 || g.aBottom > g.vh + 1) bad.push(at + ': banner is not fully on screen');
+          if (g.cBottom > g.aTop + 1) bad.push(at + ': the card runs ' + Math.round(g.cBottom - g.aTop) + 'px under the banner');
+        }
+        await page.evaluate(() => window.scrollTo(0, 0));
+      }
       if (found.length !== 3) bad.push(where + ': expected 3 alerts, found ' + found.length);
       for (const f of found) {
         if (f.overflow > 1) bad.push(where + ': "' + f.ev + '" overflows by ' + f.overflow + 'px');

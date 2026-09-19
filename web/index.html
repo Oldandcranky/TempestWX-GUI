@@ -723,7 +723,16 @@ body.show-settings #settings{display:block}
   #map,#settings,#outlook{height:calc(100vh - var(--chrome) - var(--gap));
                           height:calc(100dvh - var(--chrome) - var(--gap));
                           min-height:320px}
-  #alerts{scroll-snap-align:start}
+  /* iOS 26 Safari draws its address bar over the top of the page, see-through,
+     and snapping to the first card left the banner just above it: blurred
+     behind the glass, where no one reads it. The bottom of the screen is
+     proven visible — the footer lives there — so on a phone the alerts sit
+     directly above the footer, sticky, on every card rather than only the
+     first. order moves them without touching the markup; measureChrome()
+     counts them into --chrome, so a card still fills exactly one screen. */
+  #alerts{order:1;position:sticky;bottom:var(--foot,0px);z-index:5;
+          background:var(--bg);padding-bottom:6px}
+  footer{order:2}
 
   /* No room for everything on a 360px footer. Keep the clock, the health
      dot, the station and the buttons; drop the long status string, which is
@@ -2538,7 +2547,7 @@ function alertUntil(a){
 function renderAlerts(s){
   const host = document.getElementById("alerts");
   const list = TEST_ALERTS || (s.alerts && s.alerts.alerts) || [];
-  if (!list.length) { host.className = ""; host.replaceChildren(); return; }
+  if (!list.length) { host.className = ""; host.replaceChildren(); measureChrome(); return; }
   host.className = "show";
   host.replaceChildren(...list.slice(0, 3).map(a => {
     const n = el("div", "alert sev-" + (a.severity || "unknown").toLowerCase());
@@ -2551,6 +2560,7 @@ function renderAlerts(s){
       (a.sender ? '<span class="src">' + esc(a.sender) + '</span>' : '');
     return n;
   }));
+  measureChrome();
 }
 
 /* ── settings: card order, which cards, and the token ────────────────── */
@@ -3194,10 +3204,17 @@ function measureChrome(){
   if (!window.matchMedia("(max-width:720px)").matches) return;
   const f = document.querySelector("footer");
   if (!f) return;
-  // Just the footer: it is sticky, so it is the only thing overlaying the
-  // scroll viewport. The grid gap is accounted for in the CSS.
-  const chrome = Math.ceil(f.getBoundingClientRect().height);
-  document.documentElement.style.setProperty("--chrome", chrome + "px");
+  // The footer and, while there are any, the alerts sitting on it: both are
+  // sticky, so together they are what overlays the scroll viewport. The grid
+  // gap is accounted for in the CSS.
+  const foot = Math.ceil(f.getBoundingClientRect().height);
+  const al = document.getElementById("alerts");
+  const alerts = al && al.classList.contains("show")
+    ? Math.ceil(al.getBoundingClientRect().height) : 0;
+  const root = document.documentElement.style;
+  if (root.getPropertyValue("--foot") !== foot + "px") root.setProperty("--foot", foot + "px");
+  if (root.getPropertyValue("--chrome") !== (foot + alerts) + "px")
+    root.setProperty("--chrome", (foot + alerts) + "px");
 }
 
 /* ── chrome ──────────────────────────────────────────────────────────── */

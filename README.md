@@ -336,6 +336,9 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- A web app manifest with 192 and 512 pixel icons, for anything that pins the
+  page as a tile or an app rather than a tab — an LG TV's browser showed a
+  plain globe for it. The tab icons were all too small for that.
 - **Alerts say when they end, centred.** The banner printed NWS's headline —
   the event name a second time, the issue time, and the end time last — and
   clipped it with an ellipsis, so on the TV the part that mattered was the

@@ -253,6 +253,46 @@ const measureOutlook = () => {
     await page.close();
   }
 
+  // ── the manifest, and that every icon it names is served at its size ──
+  {
+    const page = await browser.newPage();
+    const bad = [];
+    try {
+      await page.goto(BASE, { waitUntil: 'domcontentloaded' });
+      const r = await page.evaluate(async () => {
+        const link = document.querySelector('link[rel="manifest"]');
+        if (!link) return { error: 'no <link rel="manifest">' };
+        const res = await fetch(link.href);
+        const type = res.headers.get('content-type') || '';
+        let m; try { m = await res.json(); } catch (e) { return { error: 'manifest is not JSON' }; }
+        const icons = [];
+        for (const ic of m.icons || []) {
+          const url = new URL(ic.src, link.href).href;
+          const img = new Image(); img.src = url;
+          const ok = await img.decode().then(() => true, () => false);
+          icons.push({ src: ic.src, sizes: ic.sizes, ok, w: img.naturalWidth, h: img.naturalHeight });
+        }
+        return { status: res.status, type, name: m.name, icons };
+      });
+      if (r.error) bad.push(r.error);
+      else {
+        if (r.status !== 200) bad.push('manifest answered ' + r.status);
+        if (!/manifest\+json/.test(r.type)) bad.push('manifest served as ' + r.type);
+        if (!r.icons.some(i => i.sizes === '512x512')) bad.push('no 512px icon');
+        for (const i of r.icons) {
+          if (!i.ok) bad.push(i.src + ' does not load');
+          const m = /^(\d+)x(\d+)$/.exec(i.sizes);
+          if (i.ok && m && (i.w !== +m[1] || i.h !== +m[2]))
+            bad.push(i.src + ' says ' + i.sizes + ' but is ' + i.w + 'x' + i.h);
+        }
+      }
+    } catch (e) { bad.push(e.message.split('\n')[0]); }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL manifest and icons' : '  ok   manifest and icons');
+    for (const why of bad) console.log('         ' + why);
+    await page.close();
+  }
+
   // ── the alert banner: centred, and the end time never cut off ─────────
   {
     const soon = (h) => new Date(Date.now() + h * 36e5).toISOString();

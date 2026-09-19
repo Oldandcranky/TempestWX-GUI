@@ -115,7 +115,8 @@ def temp_normal(highs, lows):
 
 # Icons the page links to. Listed one by one so the static route stays a
 # closed set rather than anything that happens to sit in web/.
-ICON_PATHS = ("/favicon.svg", "/favicon.ico", "/apple-touch-icon.png")
+ICON_PATHS = ("/favicon.svg", "/favicon.ico", "/apple-touch-icon.png",
+              "/icon-192.png", "/icon-512.png", "/manifest.webmanifest")
 
 # The only file types the static route will hand out.
 STATIC_TYPES = {
@@ -125,6 +126,7 @@ STATIC_TYPES = {
     ".js":    "application/javascript; charset=utf-8",
     ".svg":   "image/svg+xml",
     ".png":   "image/png",
+    ".webmanifest": "application/manifest+json",
     ".ico":   "image/x-icon",
     ".txt":   "text/plain; charset=utf-8",
 }

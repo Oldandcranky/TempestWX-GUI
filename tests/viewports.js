@@ -293,6 +293,79 @@ const measureOutlook = () => {
     await page.close();
   }
 
+  // ── rain behind the Rainfall card, the duck and the ark ─────────────────
+  {
+    const bad = [];
+    const cases = [
+      ['heavy', 414, 896], ['heavy', 1920, 720], ['heavy', 1024, 768],
+      ['violent', 414, 896], ['violent', 1920, 720], ['violent', 1024, 768],
+      ['light', 1920, 1080], ['hail', 1920, 1080], [null, 1920, 1080],
+    ];
+    const want = { heavy: ['duck', 'Duck weather'], violent: ['ark', 'Consider building an ark'] };
+    for (const [tier, w, h] of cases) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      const errs = [];
+      page.on('pageerror', e => errs.push(e.message));
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+      }));
+      await page.goto(BASE + (tier ? '/?testrain=' + tier : '/'), { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const where = (tier || 'dry') + ' at ' + w + 'x' + h;
+      for (const [id, why] of await page.evaluate(measure, '#grid'))
+        if (id === 'rain') bad.push(where + ': ' + why);
+      const r = await page.evaluate(() => {
+        const card = document.getElementById('card-rain');
+        const sky = card.querySelector('.rainsky');
+        const cr = card.getBoundingClientRect();
+        const img = sky && sky.querySelector('img.floater');
+        const ir = img && img.getBoundingClientRect();
+        return {
+          tier: sky ? sky.dataset.tier : null,
+          drops: sky ? sky.querySelectorAll('.drop').length : 0,
+          hail: sky ? sky.querySelectorAll('.drop.hail').length : 0,
+          img: img ? img.className.replace('floater ', '') : null,
+          loaded: img ? img.complete && img.naturalWidth > 0 : null,
+          above: ir ? cr.top - ir.top : 0, below: ir ? ir.bottom - cr.bottom : 0,
+          caption: [...card.querySelectorAll('.caption')].map(c => c.textContent).join(' | '),
+        };
+      });
+      if (!tier) { if (r.tier) bad.push(where + ': rain is showing on a dry day'); }
+      else {
+        if (!r.drops) bad.push(where + ': no drops');
+        if (tier === 'hail' && !r.hail) bad.push(where + ': no hail');
+        if (want[tier]) {
+          const [img, words] = want[tier];
+          if (r.img !== img) bad.push(where + ': expected the ' + img + ', found ' + r.img);
+          else if (!r.loaded) bad.push(where + ': the ' + img + ' image did not load');
+          if (r.above > 1 || r.below > 1) bad.push(where + ': the ' + img + ' sits outside the card');
+          if (!r.caption.includes(words)) bad.push(where + ': caption says "' + r.caption + '"');
+        } else if (r.img) bad.push(where + ': a ' + r.img + ' in ' + tier + ' rain');
+      }
+      for (const m of errs) bad.push(where + ': pageerror: ' + m);
+      await page.close();
+    }
+    // Reduced motion: no falling drops, and the scene holds still.
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce' });
+    await page.route('**/api/state', route => route.fulfill({
+      status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+    }));
+    await page.goto(BASE + '/?testrain=violent', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(SETTLE_MS);
+    const still = await page.evaluate(() => ({
+      drops: [...document.querySelectorAll('#card-rain .drop')].some(d => d.getBoundingClientRect().height > 0),
+      moving: [...document.querySelectorAll('#card-rain .rainscene *')]
+        .some(e => getComputedStyle(e).animationName !== 'none'),
+    }));
+    if (still.drops) bad.push('reduced motion: drops are still falling');
+    if (still.moving) bad.push('reduced motion: the scene still moves');
+    await page.close();
+
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL rain' : '  ok   rain');
+    for (const why of bad) console.log('         ' + why);
+  }
+
   // ── the alert banner: centred, and the end time never cut off ─────────
   {
     const soon = (h) => new Date(Date.now() + h * 36e5).toISOString();

@@ -336,6 +336,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Rain you can see.** While it is raining, drops fall behind the Rainfall
+  card — more and faster as it gets heavier, leaning with the station's own
+  wind, and bouncing pellets when the Tempest reports hail. At the weather
+  service's "heavy" (7.6 mm/h, about 0.3 in/h) a puddle rises along the
+  bottom and a duck in a rain hat bobs on it: *Duck weather*. At "violent"
+  (50 mm/h, about 2 in/h) the ark sails across — Noah on the bow with his
+  staff, giraffes, an elephant and a lion at the windows, and the dove with
+  its olive branch: *Consider building an ark*. `?testrain=light`,
+  `moderate`, `heavy`, `violent` or `hail` previews each without waiting for
+  weather. Reduced motion stills it all.
 - The headers' own click wiring is gone — the whole-card listeners cover
   them now. (The flip icons were hidden on the TV for an afternoon; the owner
   preferred them, so they are back everywhere.)

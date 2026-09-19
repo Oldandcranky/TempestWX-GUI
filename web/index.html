@@ -302,6 +302,21 @@ body:not(.tv) #outlook .card:hover .flipbtn{color:var(--accent)}
   .rainscene .sail{left:30%}
 }
 
+/* /testall says what it is showing, so no one takes a preview for weather. */
+#testtag{display:none}
+/* In the middle of the footer, which is empty on a wide screen, so it covers
+   no card; a phone's footer is full, so there it sits at the top instead. */
+body.testall #testtag{
+  display:block;position:fixed;bottom:max(10px,env(safe-area-inset-bottom));left:50%;
+  transform:translateX(-50%);z-index:50;pointer-events:none;white-space:nowrap;
+  padding:.35em .9em;border-radius:999px;font-size:clamp(12px,1.1vw,20px);
+  font-weight:600;letter-spacing:.06em;color:var(--bg);background:var(--accent);
+  box-shadow:0 2px 12px rgba(0,0,0,.4);
+}
+@media (max-width:720px){
+  body.testall #testtag{bottom:auto;top:max(8px,env(safe-area-inset-top))}
+}
+
 /* The rain gauge behind the Rainfall card. Cold blue, kept faint: it is a
    backdrop to read the figures against, not a thing to look at. */
 .rainfill{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden}
@@ -807,6 +822,7 @@ body.show-settings #settings{display:block}
 <body>
 <div id="app">
   <div id="banner"></div>
+  <div id="testtag" aria-live="polite"></div>
   <div id="alerts"></div>
   <div id="grid"></div>
   <div id="map" aria-hidden="true"></div>
@@ -1117,12 +1133,15 @@ const WAVE_IMG = svgURI(
 
 // ?testrain=light|moderate|heavy|violent|hail — shows the graphic without
 // waiting for the weather, like ?testalert. The figures stay real.
-const TEST_RAIN = (() => {
-  const q = new URLSearchParams(location.search);
-  if (!q.has("testrain")) return null;
-  const p = {light: [1.2, 1], moderate: [5, 1], heavy: [20, 1], violent: [60, 1],
-             hail: [6, 2]}[(q.get("testrain") || "heavy").toLowerCase()] || [20, 1];
+const RAIN_PRESETS = {light: [1.2, 1], moderate: [5, 1], heavy: [20, 1],
+                      violent: [60, 1], hail: [6, 2]};
+const rainPreset = (name) => {
+  const p = RAIN_PRESETS[(name || "heavy").toLowerCase()] || RAIN_PRESETS.heavy;
   return {rate: p[0], type: p[1]};
+};
+let TEST_RAIN = (() => {           // let: /testall changes it as it loops
+  const q = new URLSearchParams(location.search);
+  return q.has("testrain") ? rainPreset(q.get("testrain")) : null;
 })();
 
 function rainSky(rate, ptype, windMs, windDir){
@@ -2694,20 +2713,26 @@ const CARD_BUILDERS = {
 /* ?testalert renders sample alerts so the banner can be checked without
    waiting for real weather. ?testalert alone shows one of every severity
    (worst three fit); ?testalert=minor,unknown picks specific ones. */
-const TEST_ALERTS = (() => {
+const SAMPLE_ALERTS = {
+  extreme:  ["Tornado Warning",      "Tornado warning for northern McHenry County until 9:15 PM"],
+  severe:   ["Severe Thunderstorm Warning", "Sixty mph gusts and quarter-size hail moving east at 40 mph"],
+  moderate: ["Winter Weather Advisory", "Three to five inches of snow expected through Tuesday morning"],
+  minor:    ["Flood Advisory",       "Minor flooding of low-lying roads along the Kishwaukee River"],
+  unknown:  ["Special Weather Statement", "Patchy dense fog reducing visibility below a quarter mile"],
+};
+let TEST_ALERTS = (() => {          // let: /testall changes it as it loops
   const q = new URLSearchParams(location.search);
   if (!q.has("testalert")) return null;
-  const sample = {
-    extreme:  ["Tornado Warning",      "Tornado warning for northern McHenry County until 9:15 PM"],
-    severe:   ["Severe Thunderstorm Warning", "Sixty mph gusts and quarter-size hail moving east at 40 mph"],
-    moderate: ["Winter Weather Advisory", "Three to five inches of snow expected through Tuesday morning"],
-    minor:    ["Flood Advisory",       "Minor flooding of low-lying roads along the Kishwaukee River"],
-    unknown:  ["Special Weather Statement", "Patchy dense fog reducing visibility below a quarter mile"],
-  };
-  const rank = {extreme:4, severe:3, moderate:2, minor:1, unknown:0};
+  const sample = SAMPLE_ALERTS;
   const want = (q.get("testalert") || "").split(",").map(x => x.trim().toLowerCase())
                  .filter(x => x in sample);
   const keys = want.length ? want : ["extreme","severe","moderate","minor","unknown"];
+  return sampleAlerts(keys);
+})();
+
+function sampleAlerts(keys){
+  const sample = SAMPLE_ALERTS;
+  const rank = {extreme:4, severe:3, moderate:2, minor:1, unknown:0};
   const hours = {extreme:1, severe:2, moderate:20, minor:50, unknown:0};
   return keys.map(k => ({
     event: sample[k][0], headline: sample[k][1], preview: true,
@@ -2715,7 +2740,7 @@ const TEST_ALERTS = (() => {
     sender: "NWS Chicago IL",
     severity: k.charAt(0).toUpperCase() + k.slice(1), rank: rank[k],
   })).sort((a, b) => b.rank - a.rank);
-})();
+}
 
 /* When an alert stops, in words — "until 7:00 AM", "until tomorrow 7:00 AM",
    "until Sat 7:00 AM". NWS's own headline says this too, but last, after the
@@ -3029,7 +3054,7 @@ function wireCardDrag(){
               : n === "pres" ? "pressure" : n === "temp" ? "temperature"
               : n === "rain" ? "rainfall" : n === "fc" ? "forecast" : n)
       .filter(n => (cfg && cfg.cards || []).includes(n));
-    if (order.length) saveConfig({slots: order});
+    if (order.length && !TESTALL) saveConfig({slots: order});
   });
 }
 
@@ -3193,6 +3218,67 @@ function normLabel(band, days, y, H, n){
 
 /* ── render loop ─────────────────────────────────────────────────────── */
 let last = null;
+
+/* /testall — a loop through every picture the dashboard can show, for a TV
+   or a visitor: the rain from light to the ark, the alert banner, the pollen
+   faces, the tree in rising wind, the Internet card turned over and the
+   ten-day outlook. It works on a copy of the live state and changes nothing
+   stored — the card order it shows is its own, dragging is off, and nothing
+   is saved. ?dwell=N sets the seconds per step (8 by default). */
+const TESTALL = /\/testall$/.test(location.pathname);
+const TESTALL_DWELL = Math.max(1, Number(new URLSearchParams(location.search).get("dwell")) || 8) * 1000;
+const TESTALL_SLOTS = ["rainfall", "pollen", "wind", "internet", "forecast", "temperature"];
+const TESTALL_STEPS = [
+  {label: "Light rain", rain: "light"},
+  {label: "Moderate rain", rain: "moderate"},
+  {label: "Heavy rain — duck weather", rain: "heavy"},
+  {label: "Violent rain — the ark", rain: "violent", dwell: 2},
+  {label: "Hail", rain: "hail"},
+  {label: "Alerts — the three worst", alerts: ["extreme", "severe", "moderate"]},
+  {label: "Alerts — minor and unknown", alerts: ["minor", "unknown"]},
+  ...[0, 1, 2, 3, 4, 5].map(i => ({label: "Pollen — " + POLLEN_WORDS[i], pollen: i})),
+  // The tree stops leaning further at about 7 m/s, so the loop stays below it;
+  // past that, only its sway quickens.
+  {label: "Wind — calm", wind: 0.3},
+  {label: "Wind — a breeze", wind: 3.5},
+  {label: "Wind — strong", wind: 7},
+  {label: "Internet card, turned over",
+   enter: () => netFlip(true), leave: () => netFlip(false)},
+  {label: "Ten-day outlook",
+   enter: () => toggleOutlook(true), leave: () => toggleOutlook(false)},
+];
+let testStep = -1, rawLast = null;
+
+function testallApply(s){
+  const st = TESTALL_STEPS[testStep];
+  if (!st) return s;
+  s = JSON.parse(JSON.stringify(s));
+  s.slots = TESTALL_SLOTS;
+  if (st.pollen != null) {
+    const v = st.pollen;
+    s.pollen = Object.assign({}, s.pollen, {available: true, error: "",
+      tree: v, grass: Math.max(0, v - 2), weed: Math.max(0, v - 1), categories: {}});
+  }
+  if (st.wind != null) {
+    s.obs = Object.assign({}, s.obs, {wind_avg_ms: st.wind, wind_gust_ms: st.wind * 1.4});
+  }
+  return s;
+}
+
+function testallNext(){
+  const prev = TESTALL_STEPS[testStep];
+  if (prev && prev.leave) prev.leave();
+  testStep = (testStep + 1) % TESTALL_STEPS.length;
+  const st = TESTALL_STEPS[testStep];
+  TEST_RAIN = st.rain ? rainPreset(st.rain) : null;
+  TEST_ALERTS = st.alerts ? sampleAlerts(st.alerts) : null;
+  document.getElementById("testtag").textContent =
+    "TEST " + (testStep + 1) + "/" + TESTALL_STEPS.length + " · " + st.label;
+  if (st.enter) st.enter();
+  if (rawLast) render(testallApply(rawLast));
+  clearTimeout(testallNext.timer);
+  testallNext.timer = setTimeout(testallNext, TESTALL_DWELL * (st.dwell || 1));
+}
 const grid = document.getElementById("grid");
 
 function render(s){
@@ -3215,7 +3301,7 @@ function render(s){
     : ["temperature","wind","pressure","rainfall","astronomy","forecast"];
   const cards = slots.map(name => {
     const c = (CARD_BUILDERS[name] || buildBlank)(s);
-    c.draggable = true;
+    c.draggable = !TESTALL;
     c.title = "Drag to rearrange";
     return c;
   });
@@ -3371,7 +3457,8 @@ async function poll(){
     failures = 0;
     WATCH.failingSince = null;
     checkUi(s);
-    render(s);
+    rawLast = s;
+    render(TESTALL ? testallApply(s) : s);
   } catch (e) {
     failures++;
     if (WATCH.failingSince == null) WATCH.failingSince = Date.now();
@@ -3606,6 +3693,10 @@ document.addEventListener("keydown", (e) => {
   try { saved = localStorage.getItem("theme"); } catch (e) {}
   applyTheme(saved === "light" ? "light" : "dark");
   if (new URLSearchParams(location.search).has("tv")) setTv(true);
+  if (TESTALL) {
+    document.body.classList.add("testall");
+    testallNext();
+  }
   // The page reloads itself after a deploy. If it was on the outlook, the
   // history entry survived the reload; put the outlook back to match it.
   if (history.state && history.state.outlook) toggleOutlook(true, true);

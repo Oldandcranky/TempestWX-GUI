@@ -293,6 +293,81 @@ const measureOutlook = () => {
     await page.close();
   }
 
+  // ── /testall: every step shows what it says, and nothing is saved ──────
+  {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const bad = [], errs = [];
+    let posted = 0;
+    page.on('pageerror', e => errs.push(e.message));
+    await page.route('**/api/state', route => route.fulfill({
+      status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+    }));
+    await page.route('**/api/config', route => {
+      if (route.request().method() === 'POST') posted++;
+      return route.continue();
+    });
+    try {
+      // The trailing-slash form must land on /testall, or its fetches break.
+      await page.goto(BASE + '/testall/?dwell=600&tv', { waitUntil: 'networkidle' });
+      if (!/\/testall\?/.test(page.url())) bad.push('/testall/ did not redirect to /testall: ' + page.url());
+      await page.waitForTimeout(SETTLE_MS);
+      // The tag must not sit over any card.
+      const covers = await page.evaluate(() => {
+        const t = document.getElementById('testtag').getBoundingClientRect();
+        return [...document.querySelectorAll('#grid .card[id]')].filter(c => {
+          const r = c.getBoundingClientRect();
+          return t.left < r.right && r.left < t.right && t.top < r.bottom && r.top < t.bottom;
+        }).map(c => c.id);
+      });
+      if (covers.length) bad.push('the TEST tag covers ' + covers.join(', '));
+      const total = await page.evaluate(() => TESTALL_STEPS.length);
+      const leans = [];
+      for (let i = 0; i < total; i++) {
+        if (i) { await page.evaluate(() => testallNext()); await page.waitForTimeout(1300); }
+        const r = await page.evaluate(() => {
+          const st = TESTALL_STEPS[testStep];
+          const sky = document.querySelector('#card-rain .rainsky');
+          return {
+            label: st.label, tag: document.getElementById('testtag').textContent,
+            want: { rain: st.rain || null, alerts: st.alerts ? Math.min(3, st.alerts.length) : 0,
+                    pollen: st.pollen, wind: st.wind, flip: /Internet/.test(st.label),
+                    outlook: /outlook/.test(st.label) },
+            rain: sky ? sky.dataset.tier : null,
+            hail: !!document.querySelector('#card-rain .drop.hail'),
+            alerts: document.querySelectorAll('#alerts .alert').length,
+            pollenCalm: document.querySelector('#card-pollen .pollenface.calm') ? true
+                      : document.querySelector('#card-pollen .pollenface') ? false : null,
+            lean: (document.querySelector('#card-wind .tree') || {style: {getPropertyValue: () => ''}})
+                    .style.getPropertyValue('--lean'),
+            flipped: !!document.querySelector('#card-internet.flipped'),
+            outlook: document.body.classList.contains('show-outlook'),
+            cards: [...document.querySelectorAll('#grid .card[id]')].map(c => c.draggable),
+          };
+        });
+        const at = 'step ' + (i + 1) + ' (' + r.label + ')';
+        if (!r.tag.includes(r.label)) bad.push(at + ': tag says "' + r.tag + '"');
+        const w = r.want;
+        if (w.rain === 'hail' ? !r.hail : w.rain && r.rain !== w.rain) bad.push(at + ': rain is ' + r.rain);
+        if (!w.rain && r.rain) bad.push(at + ': rain showing outside a rain step');
+        if (r.alerts !== w.alerts) bad.push(at + ': ' + r.alerts + ' alerts, expected ' + w.alerts);
+        if (w.pollen != null && r.pollenCalm !== (w.pollen === 0)) bad.push(at + ': pollen face is wrong');
+        if (w.wind != null) { if (!r.lean) bad.push(at + ': no tree'); else leans.push(parseFloat(r.lean)); }
+        if (w.flip !== r.flipped) bad.push(at + ': Internet card ' + (r.flipped ? 'turned' : 'not turned'));
+        if (w.outlook !== r.outlook) bad.push(at + ': outlook ' + (r.outlook ? 'open' : 'closed'));
+        if (r.cards.some(Boolean)) bad.push(at + ': cards are draggable on the test page');
+      }
+      // The wind steps rise, so the tree should lean further at each.
+      if (leans.length !== 3 || !(leans[0] < leans[1] && leans[1] < leans[2]))
+        bad.push('the tree does not lean further in stronger wind: ' + leans.join(', '));
+    } catch (e) { bad.push(e.message.split('\n')[0]); }
+    if (posted) bad.push('the test page saved settings ' + posted + ' time(s)');
+    for (const m of errs) bad.push('pageerror: ' + m);
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL /testall' : '  ok   /testall');
+    for (const why of bad) console.log('         ' + why);
+    await page.close();
+  }
+
   // ── rain behind the Rainfall card, the duck and the ark ─────────────────
   {
     const bad = [];

@@ -1501,9 +1501,18 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, json.dumps(body), "application/json; charset=utf-8")
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        raw, _, query = self.path.partition("?")
+        path = raw.rstrip("/") or "/"
         try:
-            if path in ("/", "/index.html"):
+            if raw.startswith("/testall/"):
+                # The page fetches api/state relative to itself, so from
+                # /testall/ it would ask for /testall/api/state.
+                self.send_response(301)
+                self.send_header("Location", "/testall" + ("?" + query if query else ""))
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            elif path in ("/", "/index.html", "/testall"):
+                # /testall is the same page; it loops through every preview.
                 self._serve_file("index.html", "text/html; charset=utf-8")
             elif path == "/api/state":
                 body = json.dumps(self.server.dashboard.snapshot(),

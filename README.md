@@ -198,6 +198,7 @@ settings page wins, because it is written to `tempest_config.json` at runtime.
 | `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
 | `--no-alerts` | `TEMPEST_NO_ALERTS` | on | Disable weather alerts |
 | `--no-observations` | `TEMPEST_NO_OBSERVATIONS` | on | Stop asking the nearest NWS station what is falling (the snow, sleet and freezing rain the Tempest cannot see) |
+| `--obs-stations` | `TEMPEST_OBS_STATIONS` | two nearest | NWS stations to ask what is falling, e.g. `KDPA,KDKB` |
 
 > Prefer the settings page for the token. `docker-compose.yml` is committed to
 > git; `tempest_config.json` is gitignored and written `0600`.
@@ -337,6 +338,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- What is falling now comes from the **two** nearest NWS stations by actual
+  distance — here DuPage (21 mi, south-east) and DeKalb (22 mi, west), with
+  Huntley between them, so snow arriving from the west shows at DeKalb first.
+  If either reports snow it is snowing; the heavier report wins, the nearer on
+  a tie; one station down leaves the other working. Nothing closer reports
+  precipitation type — Schaumburg's station has no such sensor, and Lake in
+  the Hills feeds no network. `--obs-stations KDPA,KDKB` pins them.
 - **Snow, which the Tempest cannot see.** Its rain sensor feels drops strike
   the unit; snowflakes land too softly to register, and its own report knows
   only rain and hail. So the nearest National Weather Service station — found

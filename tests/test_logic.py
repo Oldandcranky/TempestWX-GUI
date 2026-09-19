@@ -432,7 +432,88 @@ class WhatIsFalling(unittest.TestCase):
     def test_short_station_name(self):
         f = server.ObservationFetcher.short_name
         self.assertEqual(f("Chicago / West Chicago, Dupage Airport"), "Dupage Airport")
+        self.assertEqual(f("De Kalb Taylor Municipal Airport"), "De Kalb Taylor Airport")
         self.assertEqual(f("KDPA"), "KDPA")
+
+
+class TwoStations(unittest.TestCase):
+    """DuPage and DeKalb, merged into one answer for the card."""
+
+    NOW = 1_800_000_000
+
+    def rep(self, sid, kind, intensity=None, age=600, miles=20.0, blowing=False):
+        return {"station": sid, "station_name": sid, "miles": miles, "kind": kind,
+                "intensity": intensity, "blowing": blowing,
+                "observed_at": None if age is None else self.NOW - age}
+
+    def merge(self, *reps):
+        return server.ObservationFetcher.merge(list(reps), self.NOW)
+
+    def test_either_seeing_snow_means_snow(self):
+        m = self.merge(self.rep("KDPA", "none"), self.rep("KDKB", "snow", "light", miles=21.6))
+        self.assertEqual((m["kind"], m["station"]), ("snow", "KDKB"))
+
+    def test_heavier_wins_between_two_of_the_same(self):
+        m = self.merge(self.rep("KDPA", "snow", "light"), self.rep("KDKB", "snow", "heavy", miles=21.6))
+        self.assertEqual(m["intensity"], "heavy")
+
+    def test_nearer_wins_a_tie(self):
+        m = self.merge(self.rep("KDKB", "rain", "light", miles=21.6), self.rep("KDPA", "rain", "light", miles=20.9))
+        self.assertEqual(m["station"], "KDPA")
+
+    def test_old_snow_is_not_snow_now(self):
+        m = self.merge(self.rep("KDPA", "none"), self.rep("KDKB", "snow", "heavy", age=3 * 3600))
+        self.assertEqual(m["kind"], "none")
+
+    def test_nothing_recent_hands_back_the_newest(self):
+        m = self.merge(self.rep("KDPA", "snow", age=5 * 3600), self.rep("KDKB", "rain", age=3 * 3600))
+        self.assertEqual(m["station"], "KDKB")        # the page sees its age and uses the forecast
+
+    def test_blowing_from_either(self):
+        m = self.merge(self.rep("KDPA", "none", blowing=True), self.rep("KDKB", "snow", "light"))
+        self.assertTrue(m["blowing"])
+
+    def test_both_listed_for_the_record(self):
+        m = self.merge(self.rep("KDPA", "none"), self.rep("KDKB", "rain"))
+        self.assertEqual([s["station"] for s in m["stations"]], ["KDPA", "KDKB"])
+
+    def test_one_station_down_is_not_an_outage(self):
+        f = server.ObservationFetcher(42.1681, -88.4281, None)
+        f.stations = [("KDPA", "Dupage Airport", 20.9), ("KDKB", "De Kalb Taylor Municipal Airport", 21.6)]
+        def fake(url):
+            if "KDPA" in url:
+                raise OSError("down")
+            return {"properties": {"timestamp": "2026-12-19T19:05:00+00:00",
+                                   "presentWeather": [{"rawString": "-SN"}]}}
+        f._get = fake
+        m = f.fetch_once()
+        self.assertEqual((m["station"], m["kind"]), ("KDKB", "snow"))
+        self.assertEqual(m["station_name"], "De Kalb Taylor Airport")
+
+    def test_both_down_is_an_error(self):
+        f = server.ObservationFetcher(42.1681, -88.4281, None)
+        f.stations = [("KDPA", "x", 1.0), ("KDKB", "y", 2.0)]
+        def down(url):
+            raise OSError("down")
+        f._get = down
+        with self.assertRaises(OSError):
+            f.fetch_once()
+
+    def test_nearest_two_by_real_distance(self):
+        f = server.ObservationFetcher(42.1681, -88.4281, None)
+        # the API's own order, which is not distance: O'Hare first
+        listing = {"features": [
+            {"properties": {"stationIdentifier": "KORD", "name": "O'Hare"},
+             "geometry": {"coordinates": [-87.9335, 41.9602]}},
+            {"properties": {"stationIdentifier": "KDKB", "name": "DeKalb"},
+             "geometry": {"coordinates": [-88.7295, 41.9335]}},
+            {"properties": {"stationIdentifier": "KDPA", "name": "DuPage"},
+             "geometry": {"coordinates": [-88.2481, 41.9078]}}]}
+        f._get = lambda url: ({"properties": {"observationStations": "list"}}
+                              if "points" in url else listing)
+        self.assertEqual([s[0] for s in f.find_stations()], ["KDPA", "KDKB"])
+        f.pinned = ["KDKB"]
+        self.assertEqual([s[0] for s in f.find_stations()], ["KDKB"])
 
 
 class StationHealth(unittest.TestCase):

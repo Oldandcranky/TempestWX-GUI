@@ -26,6 +26,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 import signal
 import socket
@@ -765,7 +766,12 @@ class ObservationFetcher(PollingFetcher):
     page only believes it when the Tempest's own thermometer agrees it is cold
     enough.
 
-    The station is looked up once from the station's coordinates and kept.
+    Two stations, not one: the nearest two by real distance (the API lists
+    them in an order of its own). Here that is DuPage to the south-east and
+    DeKalb to the west, with Huntley between them, so snow arriving from the
+    west shows at DeKalb first. If either reports snow, it is snowing; if one
+    station is down, the other carries on. They are looked up once and kept,
+    unless --obs-stations names them.
     """
 
     POINTS = "https://api.weather.gov/points/%.4f,%.4f"
@@ -780,11 +786,18 @@ class ObservationFetcher(PollingFetcher):
              ("SN", "snow"), ("SG", "snow"), ("PL", "sleet"),
              ("GR", "hail"), ("GS", "hail"), ("RA", "rain"), ("DZ", "rain"))
 
-    def __init__(self, lat, lon, stop_event):
+    COUNT = 2                 # stations watched
+    STALE = 2 * 3600          # a report older than this says nothing about now
+    # What each kind is worth drawing, and how hard, for choosing between
+    # two stations' reports.
+    NOTABLE = {"freezing_rain": 5, "snow": 4, "sleet": 3, "hail": 2, "rain": 1, "none": 0}
+    HARD = {"heavy": 2, "moderate": 1, "light": 0, None: 0}
+
+    def __init__(self, lat, lon, stop_event, pinned=()):
         PollingFetcher.__init__(self, stop_event)
         self.lat, self.lon = lat, lon
-        self.station = None
-        self.station_name = ""
+        self.pinned = [p.strip().upper() for p in pinned if p and p.strip()]
+        self.stations = None      # [(id, name, miles)], nearest first
 
     def _get(self, url):
         req = urllib.request.Request(url, headers={
@@ -795,24 +808,79 @@ class ObservationFetcher(PollingFetcher):
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.loads(r.read().decode("utf-8"))
 
+    def miles(self, lat, lon):
+        r = 3958.8
+        p1, p2 = math.radians(self.lat), math.radians(lat)
+        a = (math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2)
+             * math.sin(math.radians(lon - self.lon) / 2) ** 2)
+        return 2 * r * math.asin(math.sqrt(a))
+
+    def find_stations(self):
+        point = self._get(self.POINTS % (self.lat, self.lon))
+        listing = self._get(point["properties"]["observationStations"])
+        found = []
+        for f in listing.get("features") or []:
+            p = f.get("properties") or {}
+            lon, lat = (f.get("geometry") or {}).get("coordinates") or (None, None)
+            if p.get("stationIdentifier") and lat is not None:
+                found.append((p["stationIdentifier"], p.get("name") or "",
+                              self.miles(lat, lon)))
+        found.sort(key=lambda s: s[2])
+        if self.pinned:
+            named = {s[0]: s for s in found}
+            return [named.get(sid, (sid, sid, None)) for sid in self.pinned]
+        return found[:self.COUNT]
+
     def fetch_once(self):
-        if not self.station:
-            point = self._get(self.POINTS % (self.lat, self.lon))
-            listing = self._get(point["properties"]["observationStations"])
-            first = listing["features"][0]["properties"]
-            self.station = first["stationIdentifier"]
-            self.station_name = first.get("name") or self.station
-        out = self.parse(self._get(self.LATEST % self.station))
-        out["station"] = self.station
-        out["station_name"] = self.short_name(self.station_name)
+        if not self.stations:
+            self.stations = self.find_stations()
+        reports, failures = [], []
+        for sid, name, miles in self.stations:
+            try:
+                r = self.parse(self._get(self.LATEST % sid))
+            except Exception as e:          # one station down is not an outage
+                failures.append(e)
+                continue
+            r.update(station=sid, station_name=self.short_name(name),
+                     miles=None if miles is None else round(miles, 1))
+            reports.append(r)
+        if not reports:
+            raise failures[0] if failures else ValueError("no stations")
+        return self.merge(reports, time.time())
+
+    @classmethod
+    def merge(cls, reports, now):
+        """One answer from several stations. Among reports from the last two
+        hours, the most notable thing falling wins — snow over rain, heavy over
+        light, and the nearer station on a tie — because if either station
+        sees snow, it is snowing somewhere between them. With nothing recent,
+        the newest report is returned as it is, and the page, seeing its age,
+        turns to the forecast instead."""
+        fresh = [r for r in reports
+                 if r.get("observed_at") and now - r["observed_at"] < cls.STALE]
+        if fresh:
+            best = max(fresh, key=lambda r: (cls.NOTABLE.get(r["kind"], 0),
+                                             cls.HARD.get(r.get("intensity"), 0),
+                                             -(r.get("miles") or 0)))
+        else:
+            best = max(reports, key=lambda r: r.get("observed_at") or 0)
+        out = dict(best)
+        out["blowing"] = any(r.get("blowing") for r in fresh)
+        out["stations"] = [{k: r.get(k) for k in ("station", "station_name", "miles",
+                                                  "kind", "intensity", "observed_at")}
+                           for r in reports]
         return out
 
     @staticmethod
     def short_name(name):
-        """'Chicago / West Chicago, Dupage Airport' -> 'Dupage Airport'. The
-        part after the last comma is the place itself; the rest is the city
-        it is filed under, which is too long for a caption."""
-        return (name or "").rsplit(",", 1)[-1].strip() or name or ""
+        """'Chicago / West Chicago, Dupage Airport' -> 'Dupage Airport', and
+        'De Kalb Taylor Municipal Airport' -> 'De Kalb Taylor Airport'. The
+        part after the last comma is the place; the rest is the city it is
+        filed under. The civic words go too: a caption has little room."""
+        short = (name or "").rsplit(",", 1)[-1].strip() or name or ""
+        for word in (" Municipal", " Regional", " International", " County"):
+            short = short.replace(word, "")
+        return short
 
     @classmethod
     def parse(cls, raw):
@@ -1374,7 +1442,9 @@ class Dashboard:
         # What is falling at the nearest airport, for snow the Tempest cannot see.
         self.observations = None
         if args.observations and args.lat is not None and args.lon is not None:
-            self.observations = ObservationFetcher(args.lat, args.lon, self.stop)
+            self.observations = ObservationFetcher(
+                args.lat, args.lon, self.stop,
+                pinned=(args.obs_stations or "").split(","))
             self.observations.start()
         threading.Thread(target=self._housekeeping, daemon=True).start()
 
@@ -1796,6 +1866,9 @@ def parse_args(argv):
                    default=not env_default("TEMPEST_NO_OBSERVATIONS", ""),
                    help="do not ask the nearest NWS station what is falling "
                         "(snow and freezing rain, which the Tempest cannot see)")
+    p.add_argument("--obs-stations", default=env_default("TEMPEST_OBS_STATIONS", ""),
+                   help="NWS stations to ask what is falling, comma-separated "
+                        "(e.g. KDPA,KDKB); unset picks the two nearest")
     p.add_argument("--no-alerts", dest="alerts", action="store_false",
                    default=not env_default("TEMPEST_NO_ALERTS", ""),
                    help="do not fetch National Weather Service alerts")

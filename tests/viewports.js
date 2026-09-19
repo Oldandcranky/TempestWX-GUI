@@ -301,6 +301,38 @@ const measureOutlook = () => {
     await page.close();
   }
 
+  // ── the pollen card's in-season list, which used to be cut off ────────
+  {
+    const bad = [];
+    for (const [w, h] of [[1920, 720], [1920, 1080], [1024, 768], [414, 896], [2560, 1080]]) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+      }));
+      await page.goto(BASE, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const r = await page.evaluate(() => {
+        const line = [...document.querySelectorAll('#card-pollen .caption')]
+          .find(c => /In season/i.test(c.textContent));
+        if (!line) return {missing: true};
+        return {text: line.textContent, cutSide: line.scrollWidth - line.clientWidth,
+                cutBelow: line.scrollHeight - line.clientHeight};
+      });
+      const at = w + 'x' + h;
+      if (r.missing) bad.push(at + ': no in-season line');
+      else {
+        // The captured state has eight plants; the last must still be there.
+        if (!/Juniper/.test(r.text)) bad.push(at + ': the list stops early — "' + r.text + '"');
+        if (r.cutSide > 1) bad.push(at + ': cut off sideways by ' + r.cutSide + 'px');
+        if (r.cutBelow > 1) bad.push(at + ': cut off below by ' + r.cutBelow + 'px');
+      }
+      await page.close();
+    }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL pollen in season' : '  ok   pollen in season');
+    for (const why of bad) console.log('         ' + why);
+  }
+
   // ── /testall: every step shows what it says, and nothing is saved ──────
   {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });

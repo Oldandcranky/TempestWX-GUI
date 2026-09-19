@@ -338,6 +338,10 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- The Pollen card's in-season list may take up to three lines instead of being
+  cut off after one — eight plants in season fitted on no card size. (The AQI
+  scale's "300+" label, suspected of the same, measured fine: it only looks
+  clipped where it tucks under the end of the colour bar.)
 - The captured test state had drifted from what the server sends. Its pollen
   block was an old format, so the Pollen card was measured drawing nothing;
   its air-quality block was an error, so that card had only ever been

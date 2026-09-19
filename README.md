@@ -336,6 +336,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The outlook's dashed band says what it is.** The ten-day plot printed
+  its scale in the corners — the highest and lowest value drawn — and left
+  the dashed band, the normal range for the time of year, unlabelled. People
+  read the corner figures as the normals. The corners are gone; each dashed
+  line is labelled `normal 73°` at whichever end, and on whichever side,
+  keeps it clear of the forecast lines.
+- **Tap the Forecast card's header for the ten-day outlook**, and the
+  outlook's header to come back — the same affordance as the Internet card's
+  flip. TV mode hides the footer, so this is the only way in there, and
+  without the way back a tap would strand the display.
 - **One polling loop instead of five.** Forecast, air quality, pollen,
   Speedtest and alerts each had their own copy of the same retry-with-backoff
   thread, differing only in the wording of an error. They share a

@@ -480,8 +480,9 @@ body.show-outlook #outlook{display:flex}
   position:absolute;left:.4em;font-size:var(--fs-label);color:var(--faint);
   line-height:1;white-space:nowrap;letter-spacing:.06em;
 }
-#outlook .outplot .ax.hi{top:.3em} #outlook .outplot .ax.lo{bottom:.3em}
-#outlook .outplot .ax b{color:var(--label);font-weight:600}
+#outlook .outplot .ax.norm{color:var(--label);transform:translateY(.2em)}
+#outlook .outplot .ax.norm.above{transform:translateY(calc(-100% - .2em))}
+#outlook .outplot .ax.norm.end{left:auto;right:.4em}
 /* Ten across is a lot of columns. The high/low pair is the widest thing in
    each one, so it is capped by the card's width as well as the usual size —
    a 1280-wide screen gives each day 128px, and two three-digit figures
@@ -1686,6 +1687,7 @@ function skyArc(sun, moon){
 function buildForecast(s){
   const fc = s.forecast || {};
   const {card:c, body:b} = card("fc","Forecast","day-sunny","yellow",srcHealth(s.forecast));
+  headAction(c, "Show the ten-day outlook", () => toggleOutlook(true));
 
   if (!fc.available) {
     b.appendChild(el("div","mid"));
@@ -2166,14 +2168,26 @@ const FLIP_ICON =
 
 /* The label belongs to the face, not to the flip state: a face always means
    the same thing, and a state-derived label would go stale between renders. */
-function flipBtn(label, to){
+function flipBtn(label, action){
   const b = el("button", "flipbtn", FLIP_ICON);
   b.type = "button";
   b.draggable = false;              // do not start a card drag from the button
   b.title = label;
   b.setAttribute("aria-label", label);
-  b.addEventListener("click", (e) => { e.stopPropagation(); netFlip(to); });
+  b.addEventListener("click", (e) => { e.stopPropagation(); action(); });
   return b;
+}
+
+/* A card header that does something when tapped: the same affordance the
+   Internet card's flip uses. The header, not the body, is the target, for the
+   reasons given there. TV mode hides the footer, so for the ten-day outlook
+   this is the only way in — and back out. */
+function headAction(c, label, action){
+  const head = c.querySelector(".card-head");
+  head.classList.add("fliphead");
+  head.title = label;
+  head.addEventListener("click", action);
+  head.appendChild(flipBtn(label, action));
 }
 
 /* Speed against the plan rate, as a bar under the figure.
@@ -2387,7 +2401,7 @@ function buildInternet(s){
     head.classList.add("fliphead");
     head.title = label;
     head.addEventListener("click", () => netFlip(to));
-    head.appendChild(flipBtn(label, to));
+    head.appendChild(flipBtn(label, () => netFlip(to)));
     flipper.appendChild(f);
     return body;
   };
@@ -2789,6 +2803,7 @@ function renderOutlook(){
   const days = fc.days || [];
   const {card:c, body:b} = card("outlook","Ten-day outlook","day-sunny","yellow",
                                 srcHealth(fc));
+  headAction(c, "Back to the cards", () => toggleOutlook(false));
   if (!fc.available || !days.length) {
     b.appendChild(el("div","mid"));
     b.appendChild(caption(fc.error || "Forecast unavailable"));
@@ -2898,10 +2913,39 @@ function outlookPlot(days, normal, dateOf){
   wrap.innerHTML =
     '<svg class="plot" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
       bandArt + rules + fill + line(his, "red") + line(los, "cold") +
-    '</svg>' +
-    '<span class="ax hi"><b>' + esc(fg(temp(hi))) + '</b> ' + esc(prefs.temp) + '</span>' +
-    '<span class="ax lo"><b>' + esc(fg(temp(lo))) + '</b> ' + esc(prefs.temp) + '</span>';
+    '</svg>';
+  if (bHi) {
+    wrap.insertAdjacentHTML("beforeend",
+      normLabel(bHi, days, y, H, n) + normLabel(bLo, days, y, H, n));
+  }
   return wrap;
+}
+
+/* The dashed band is the normal range for the time of year, and it used to
+   carry no label while the plot's corners carried its scale — so people read
+   the scale figures as the normals. Each dashed line now says what it is, at
+   whichever end of the plot, and on whichever side of the line, keeps it
+   furthest from the forecast lines. */
+function normLabel(band, days, y, H, n){
+  const gap = (i) => {
+    const d = days[i], v = band[i];
+    const near = [d.tmax_c, d.tmin_c].filter(t => t != null)
+      .map(t => ({t, off: Math.abs(t - v)}))
+      .sort((a, b) => a.off - b.off)[0];
+    return {i, v, near};
+  };
+  const ends = [gap(0), gap(n - 1)];
+  const room = (e) => e.near ? e.near.off : Infinity;
+  const e = room(ends[1]) > room(ends[0]) ? ends[1] : ends[0];
+  const top = y(e.v) / H * 100;
+  // Sit on the side of the line away from the nearest forecast line, unless
+  // that would push the label out of the plot.
+  let above = !e.near || e.near.t < e.v;
+  if (above && top < 12) above = false;
+  if (!above && top > 88) above = true;
+  return '<span class="ax norm' + (e.i ? " end" : "") + (above ? " above" : "") + '" ' +
+         'style="top:' + top.toFixed(2) + '%">normal ' +
+         esc(String(Math.round(temp(e.v)))) + '°</span>';
 }
 
 /* ── render loop ─────────────────────────────────────────────────────── */

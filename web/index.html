@@ -308,11 +308,16 @@ body:not(.tv) #outlook .card:hover .flipbtn{color:var(--accent)}
    no card; a phone's footer is full, so there it sits at the top instead. */
 body.testall #testtag{
   display:block;position:fixed;bottom:max(10px,env(safe-area-inset-bottom));left:50%;
-  transform:translateX(-50%);z-index:50;pointer-events:none;white-space:nowrap;
+  transform:translateX(-50%);z-index:50;white-space:nowrap;border:0;
+  cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;
   padding:.35em .9em;border-radius:999px;font-size:clamp(12px,1.1vw,20px);
   font-weight:600;letter-spacing:.06em;color:var(--bg);background:var(--accent);
   box-shadow:0 2px 12px rgba(0,0,0,.4);
 }
+body.testall #testtag:hover{filter:brightness(1.12)}
+/* Wider on the TV for a remote's pointer, but no taller: any taller and it
+   rises out of the footer onto the cards. */
+body.tv.testall #testtag{padding-inline:1.6em}
 @media (max-width:720px){
   body.testall #testtag{bottom:auto;top:max(8px,env(safe-area-inset-top))}
 }
@@ -822,7 +827,7 @@ body.show-settings #settings{display:block}
 <body>
 <div id="app">
   <div id="banner"></div>
-  <div id="testtag" aria-live="polite"></div>
+  <button id="testtag" type="button" aria-live="polite" title="Next (→), back (←)"></button>
   <div id="alerts"></div>
   <div id="grid"></div>
   <div id="map" aria-hidden="true"></div>
@@ -3224,9 +3229,10 @@ let last = null;
    faces, the tree in rising wind, the Internet card turned over and the
    ten-day outlook. It works on a copy of the live state and changes nothing
    stored — the card order it shows is its own, dragging is off, and nothing
-   is saved. ?dwell=N sets the seconds per step (8 by default). */
+   is saved. Clicking the tag moves on; the arrow keys go either way. ?dwell=N
+   makes it advance by itself every N seconds instead. */
 const TESTALL = /\/testall$/.test(location.pathname);
-const TESTALL_DWELL = Math.max(1, Number(new URLSearchParams(location.search).get("dwell")) || 8) * 1000;
+const TESTALL_DWELL = Math.max(0, Number(new URLSearchParams(location.search).get("dwell")) || 0) * 1000;
 const TESTALL_SLOTS = ["rainfall", "pollen", "wind", "internet", "forecast", "temperature"];
 const TESTALL_STEPS = [
   {label: "Light rain", rain: "light"},
@@ -3242,8 +3248,10 @@ const TESTALL_STEPS = [
   {label: "Wind — calm", wind: 0.3},
   {label: "Wind — a breeze", wind: 3.5},
   {label: "Wind — strong", wind: 7},
+  // Turned over without the half-minute timer that turns it back, since a
+  // step now lasts until the next click.
   {label: "Internet card, turned over",
-   enter: () => netFlip(true), leave: () => netFlip(false)},
+   enter: () => { netFlip(true); clearTimeout(netFlipTimer); }, leave: () => netFlip(false)},
   {label: "Ten-day outlook",
    enter: () => toggleOutlook(true), leave: () => toggleOutlook(false)},
 ];
@@ -3265,19 +3273,21 @@ function testallApply(s){
   return s;
 }
 
-function testallNext(){
+function testallNext(dir = 1){
   const prev = TESTALL_STEPS[testStep];
   if (prev && prev.leave) prev.leave();
-  testStep = (testStep + 1) % TESTALL_STEPS.length;
+  const n = TESTALL_STEPS.length;
+  testStep = ((testStep + dir) % n + n) % n;
   const st = TESTALL_STEPS[testStep];
   TEST_RAIN = st.rain ? rainPreset(st.rain) : null;
   TEST_ALERTS = st.alerts ? sampleAlerts(st.alerts) : null;
   document.getElementById("testtag").textContent =
-    "TEST " + (testStep + 1) + "/" + TESTALL_STEPS.length + " · " + st.label;
+    "TEST " + (testStep + 1) + "/" + n + " · " + st.label + "  \u203a";
   if (st.enter) st.enter();
   if (rawLast) render(testallApply(rawLast));
   clearTimeout(testallNext.timer);
-  testallNext.timer = setTimeout(testallNext, TESTALL_DWELL * (st.dwell || 1));
+  if (TESTALL_DWELL)
+    testallNext.timer = setTimeout(testallNext, TESTALL_DWELL * (st.dwell || 1));
 }
 const grid = document.getElementById("grid");
 
@@ -3290,7 +3300,7 @@ function render(s){
     if (document.body.classList.contains("show-outlook")) {
       // A wall display left on the outlook goes back to the cards by itself.
       if (document.body.classList.contains("tv") &&
-          Date.now() - outlookSince > OUTLOOK_IDLE_MS) toggleOutlook(false);
+          Date.now() - outlookSince > OUTLOOK_IDLE_MS && !TESTALL) toggleOutlook(false);
       else renderOutlook();
     }
     updateFooter(s);
@@ -3695,6 +3705,11 @@ document.addEventListener("keydown", (e) => {
   if (new URLSearchParams(location.search).has("tv")) setTv(true);
   if (TESTALL) {
     document.body.classList.add("testall");
+    document.getElementById("testtag").addEventListener("click", () => testallNext(1));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") testallNext(1);
+      if (e.key === "ArrowLeft") testallNext(-1);
+    });
     testallNext();
   }
   // The page reloads itself after a deploy. If it was on the outlook, the

@@ -338,9 +338,10 @@ checked against the Host.
 ### v3.5.0
 - **`/testall`** loops through everything the dashboard can show — rain from
   light to the ark, hail, the alert banner, the six pollen faces, the tree in
-  rising wind, the Internet card turned over and the ten-day outlook — eight
-  seconds a step (`?dwell=N` to change it, `&tv` for the TV layout), with a
-  tag saying which step is up. It works on a copy of the live state and saves
+  rising wind, the Internet card turned over and the ten-day outlook. Click
+  the orange tag at the bottom to move on (the arrow keys go either way);
+  `?dwell=N` makes it advance by itself instead, and `?tv` gives the TV
+  layout. It works on a copy of the live state and saves
   nothing: dragging is off, so it can never overwrite your card order.
 - **Rain you can see.** While it is raining, drops fall behind the Rainfall
   card — more and faster as it gets heavier, leaning with the station's own

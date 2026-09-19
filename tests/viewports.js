@@ -308,7 +308,7 @@ const measureOutlook = () => {
     });
     try {
       // The trailing-slash form must land on /testall, or its fetches break.
-      await page.goto(BASE + '/testall/?dwell=600&tv', { waitUntil: 'networkidle' });
+      await page.goto(BASE + '/testall/?tv', { waitUntil: 'networkidle' });
       if (!/\/testall\?/.test(page.url())) bad.push('/testall/ did not redirect to /testall: ' + page.url());
       await page.waitForTimeout(SETTLE_MS);
       // The tag must not sit over any card.
@@ -321,9 +321,12 @@ const measureOutlook = () => {
       });
       if (covers.length) bad.push('the TEST tag covers ' + covers.join(', '));
       const total = await page.evaluate(() => TESTALL_STEPS.length);
+      // No timer: left alone, it stays on step 1.
+      await page.waitForTimeout(2500);
+      if (await page.evaluate(() => testStep) !== 0) bad.push('it moved on by itself');
       const leans = [];
       for (let i = 0; i < total; i++) {
-        if (i) { await page.evaluate(() => testallNext()); await page.waitForTimeout(1300); }
+        if (i) { await page.$eval('#testtag', el => el.click()); await page.waitForTimeout(1300); }
         const r = await page.evaluate(() => {
           const st = TESTALL_STEPS[testStep];
           const sky = document.querySelector('#card-rain .rainsky');
@@ -356,6 +359,11 @@ const measureOutlook = () => {
         if (w.outlook !== r.outlook) bad.push(at + ': outlook ' + (r.outlook ? 'open' : 'closed'));
         if (r.cards.some(Boolean)) bad.push(at + ': cards are draggable on the test page');
       }
+      // One more click wraps to the start; the left arrow goes back to the end.
+      await page.$eval('#testtag', el => el.click()); await page.waitForTimeout(1300);
+      if (await page.evaluate(() => testStep) !== 0) bad.push('the click after the last step did not wrap to 1');
+      await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(800);
+      if (await page.evaluate(() => testStep) !== total - 1) bad.push('the left arrow did not go back');
       // The wind steps rise, so the tree should lean further at each.
       if (leans.length !== 3 || !(leans[0] < leans[1] && leans[1] < leans[2]))
         bad.push('the tree does not lean further in stronger wind: ' + leans.join(', '));

@@ -23,6 +23,13 @@
  *     and the box measuring clean says nothing about that.
  *   - the page logged no errors while doing it.
  *
+ * And then the ten-day outlook, opened the way a TV opens it — a tap on the
+ * Forecast card's header — measured the same way, plus: the page does not
+ * scroll sideways, the dashed normal band is labelled and its labels sit
+ * inside the plot, clear of each other and of the forecast lines, and the
+ * outlook's own header takes you back. The corner scale figures that people
+ * misread as normals must stay gone.
+ *
  * What it cannot check: whether any of it looks right. A card can pass every
  * assertion here and still be ugly, or say something untrue. Look at a
  * screenshot as well.
@@ -59,9 +66,26 @@ const VIEWPORTS = [
 
 const SETTLE_MS = 3000;     // two render ticks plus the fit pass
 
-const measure = () => {
+/* The captured forecast has placeholder dates. Lay them out from today, in
+   UTC as the page does, so the first cell is always "Today" — the widest
+   day label, and the highlighted one. */
+const freshen = () => {
+  const s = JSON.parse(JSON.stringify(STATE));
+  s.now = Date.now() / 1000;
+  if (s.forecast && s.forecast.days) {
+    s.forecast.fetched_at = s.now;
+    const day0 = Date.UTC(...new Date().toISOString().slice(0, 10).split('-')
+                           .map((v, i) => i === 1 ? v - 1 : +v));
+    s.forecast.days.forEach((d, i) => {
+      d.date = new Date(day0 + i * 864e5).toISOString().slice(0, 10);
+    });
+  }
+  return s;
+};
+
+const measure = (root) => {
   const bad = [];
-  for (const card of document.querySelectorAll('.card[id]')) {
+  for (const card of document.querySelector(root).querySelectorAll('.card[id]')) {
     const id = card.id.replace('card-', '');
     const body = card.querySelector('.card-body');
     if (!body) continue;
@@ -101,6 +125,66 @@ const measure = () => {
   return bad;
 };
 
+/* The outlook page: what measure() cannot see. */
+const measureOutlook = () => {
+  const bad = [];
+  const say = (why) => bad.push(['outlook', why]);
+  if (!document.body.classList.contains('show-outlook'))
+    return [['outlook', 'the Forecast header did not open it']];
+
+  const doc = document.documentElement.scrollWidth - innerWidth;
+  const host = document.getElementById('outlook');
+  if (doc > 1) say('the page scrolls sideways by ' + doc + 'px');
+  if (host.scrollWidth - host.clientWidth > 1)
+    say('scrolls sideways by ' + (host.scrollWidth - host.clientWidth) + 'px');
+  // A phone scrolls the outlook on purpose; anything wider must not.
+  if (innerWidth > 720 && host.scrollHeight - host.clientHeight > 1)
+    say('scrolls down by ' + (host.scrollHeight - host.clientHeight) + 'px');
+
+  if (host.querySelector('.ax.hi, .ax.lo'))
+    say('the corner scale figures are back — they read as normals');
+
+  const plotEl = host.querySelector('.outplot');
+  if (!plotEl) { say('no plot'); return bad; }
+  const plot = plotEl.getBoundingClientRect();
+  const labels = [...host.querySelectorAll('.ax.norm')];
+  if (labels.length !== 2) { say('expected 2 normal labels, found ' + labels.length); return bad; }
+  const rects = labels.map(l => l.getBoundingClientRect());
+
+  rects.forEach((r, i) => {
+    const out = Math.max(plot.top - r.top, r.bottom - plot.bottom,
+                         plot.left - r.left, r.right - plot.right);
+    if (out > 1) say('"' + labels[i].textContent + '" sits ' + out.toFixed(0) + 'px outside the plot');
+  });
+  const [a, b] = rects;
+  if (a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom)
+    say('the two normal labels overlap');
+
+  // Walk the drawn high and low lines in screen space and see whether either
+  // passes through a label. The SVG is stretched without keeping its aspect,
+  // so each axis scales on its own.
+  const svg = plotEl.querySelector('svg.plot');
+  const box = svg.getBoundingClientRect();
+  const [, , W, H] = svg.getAttribute('viewBox').split(' ').map(Number);
+  for (const path of svg.querySelectorAll('path[stroke="var(--red)"], path[stroke="var(--cold)"]')) {
+    const pts = (path.getAttribute('d').match(/-?[\d.]+/g) || []).map(Number);
+    const xy = [];
+    for (let i = 0; i + 1 < pts.length; i += 2)
+      xy.push([box.left + pts[i] / W * box.width, box.top + pts[i + 1] / H * box.height]);
+    for (let i = 1; i < xy.length; i++) {
+      const [x0, y0] = xy[i - 1], [x1, y1] = xy[i];
+      for (let t = 0; t <= 1; t += 0.02) {
+        const x = x0 + (x1 - x0) * t, y = y0 + (y1 - y0) * t;
+        rects.forEach((r, j) => {
+          if (x > r.left + 1 && x < r.right - 1 && y > r.top + 1 && y < r.bottom - 1)
+            bad.push(['outlook', 'a forecast line runs through "' + labels[j].textContent + '"']);
+        });
+      }
+    }
+  }
+  return [...new Map(bad.map(x => [x.join('|'), x])).values()];
+};
+
 (async () => {
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
   let failures = 0, checked = 0;
@@ -116,7 +200,7 @@ const measure = () => {
     await page.route('**/api/state', route => route.fulfill({
       status: 200,
       contentType: 'application/json; charset=utf-8',
-      body: JSON.stringify(Object.assign({}, STATE, { now: Date.now() / 1000 })),
+      body: JSON.stringify(freshen()),
     }));
 
     try {
@@ -124,17 +208,32 @@ const measure = () => {
       await page.waitForSelector('.card[id]', { state: 'attached' });
       await page.waitForTimeout(SETTLE_MS);
 
-      const bad = await page.evaluate(measure);
-      const cards = await page.evaluate(() => document.querySelectorAll('.card[id]').length);
+      const bad = await page.evaluate(measure, '#grid');
+      const cards = await page.evaluate(() => document.querySelectorAll('#grid .card[id]').length);
       checked += cards;
+
+      // In by the Forecast header, as on the TV; out by the outlook's own.
+      await page.$eval('#card-fc .card-head', el => el.click());
+      await page.waitForTimeout(SETTLE_MS);
+      bad.push(...await page.evaluate(measure, '#outlook'));
+      bad.push(...await page.evaluate(measureOutlook));
+      checked += 1;
+      // Only try the way out if the way in worked, or the failure to open
+      // is reported as a missing element instead of as itself.
+      if (await page.evaluate(() => document.body.classList.contains('show-outlook'))) {
+        await page.$eval('#outlook .card-head', el => el.click());
+        await page.waitForTimeout(1200);
+        if (await page.evaluate(() => document.body.classList.contains('show-outlook')))
+          bad.push(['outlook', 'its header did not close it']);
+      }
 
       for (const line of noise) bad.push(['(page)', line]);
 
       if (bad.length === 0) {
-        console.log('  ok   ' + label + '  ' + cards + ' cards');
+        console.log('  ok   ' + label + '  ' + cards + ' cards + outlook');
       } else {
         failures += bad.length;
-        console.log('  FAIL ' + label + '  ' + cards + ' cards');
+        console.log('  FAIL ' + label + '  ' + cards + ' cards + outlook');
         for (const [id, why] of bad) console.log('         ' + id.padEnd(10) + why);
       }
     } catch (e) {
@@ -146,7 +245,7 @@ const measure = () => {
 
   await browser.close();
   console.log(failures
-    ? '\n  ' + failures + ' problem(s) across ' + checked + ' card renders'
-    : '\n  ' + checked + ' card renders, all clean');
+    ? '\n  ' + failures + ' problem(s) across ' + checked + ' renders'
+    : '\n  ' + checked + ' renders, all clean');
   process.exit(failures ? 1 : 0);
 })();

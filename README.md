@@ -336,6 +336,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- The geometry tests now cover the ten-day outlook: opened from the Forecast
+  header as a TV would, measured like the cards, with the band labels
+  checked against the plot, each other and the drawn forecast lines, and
+  closed again from its own header. The captured test state had no forecast
+  at all, so the Forecast card had only ever been measured saying
+  "unavailable"; it now carries a deliberately hostile ten days —
+  three-digit highs, double-negative lows — that crosses the normal band at
+  both ends.
 - `tests/run.sh` finds Playwright on the Mac as well as in the cloud image —
   a global `npm i -g playwright` now runs the geometry half instead of
   skipping it. It had the cloud's path written into it twice.

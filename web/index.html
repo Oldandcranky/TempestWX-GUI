@@ -198,6 +198,10 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
 /* The header turns the card over, so it has to look like it does. */
 .fliphead{cursor:pointer;-webkit-tap-highlight-color:transparent}
 .fliphead:hover .flipbtn{color:var(--accent)}
+/* The whole Forecast card opens the outlook, so it should look clickable
+   (not on the TV, which hides the cursor). */
+body:not(.tv) #card-fc{cursor:pointer}
+body:not(.tv) #card-fc:hover .flipbtn{color:var(--accent)}
 
 /* Speed against the plan rate. Colour carries the reading, so the bar itself
    stays thin — it sits under a figure that is already the headline, and is
@@ -3288,11 +3292,12 @@ document.getElementById("outlook").addEventListener("click", (e) => {
   toggleOutlook(false);
 });
 
-/* And the way in, the same way round: on the TV the whole Forecast card opens
-   the outlook, not just its header. One listener on the grid, since the card
-   itself is rebuilt every two seconds. The header handles its own clicks. */
+/* And the way in: the whole Forecast card opens the outlook, not just its
+   header — on the TV, where the header is a hard target for a remote's
+   pointer, and everywhere else too, by the owner's choice. One listener on
+   the grid, since the card itself is rebuilt every two seconds. The header
+   handles its own clicks. */
 document.getElementById("grid").addEventListener("click", (e) => {
-  if (!document.body.classList.contains("tv")) return;
   if (!e.target.closest("#card-fc") || e.target.closest(".card-head")) return;
   toggleOutlook(true);
 });

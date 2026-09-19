@@ -33,7 +33,7 @@
  * Last, once, in TV mode: every way back from the outlook — the Back button,
  * a tap anywhere on it, the idle return — and that two exits at once go back
  * one step, not two. Two would take the wall display off the dashboard. And
- * the way in: a tap anywhere on the Forecast card, on the TV and only there.
+ * the way in: a tap anywhere on the Forecast card, on the TV and off it.
  *
  * What it cannot check: whether any of it looks right. A card can pass every
  * assertion here and still be ugly, or say something untrue. Look at a
@@ -302,13 +302,13 @@ const measureOutlook = () => {
       await page.goBack();
       await page.waitForTimeout(800);
 
-      // Off the TV, taps on either body must leave things alone.
+      // Off the TV the whole Forecast card still opens it, but a tap on the
+      // outlook's body must not close it — there, only deliberate exits do.
       await page.evaluate(() => setTv(false));
       await page.waitForTimeout(SETTLE_MS);
       await page.$eval('#card-fc .card-body', el => el.click());
       await page.waitForTimeout(800);
-      if (await isOpen()) bad.push('a tap on the Forecast card body opened it outside TV mode');
-      await open();
+      if (!await isOpen()) bad.push('a tap on the Forecast card body did not open it outside TV mode');
       await page.$eval('#outlook .card-body', el => el.click());
       await page.waitForTimeout(800);
       if (!await isOpen()) bad.push('a tap on the body closed it outside TV mode');

@@ -336,6 +336,9 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- `tests/run.sh` finds Playwright on the Mac as well as in the cloud image —
+  a global `npm i -g playwright` now runs the geometry half instead of
+  skipping it. It had the cloud's path written into it twice.
 - **The outlook's dashed band says what it is.** The ten-day plot printed
   its scale in the corners — the highest and lowest value drawn — and left
   the dashed band, the normal range for the time of year, unlabelled. People

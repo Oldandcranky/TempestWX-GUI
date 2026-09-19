@@ -17,7 +17,15 @@ cd "$(dirname "$0")/.."
 # the stale version — which looks exactly like a test lying to you.
 export PYTHONDONTWRITEBYTECODE=1
 
-PLAYWRIGHT="${PLAYWRIGHT:-/opt/node22/lib/node_modules/playwright}"
+# Where Playwright lives: the cloud image keeps it under /opt/node22; on the
+# owner's Mac it is a global npm install. An explicit PLAYWRIGHT wins.
+if [ -z "${PLAYWRIGHT:-}" ]; then
+  PLAYWRIGHT=/opt/node22/lib/node_modules/playwright
+  if [ ! -d "$PLAYWRIGHT" ] && command -v npm >/dev/null; then
+    PLAYWRIGHT="$(npm root -g)/playwright"
+  fi
+fi
+export PLAYWRIGHT
 PORT="${PORT:-8451}"          # not 8444: do not fight a dashboard already up
 quiet=false; [ "${1:-}" = "-q" ] && quiet=true
 

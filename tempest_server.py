@@ -753,6 +753,103 @@ class SpeedtestFetcher(PollingFetcher):
             return out
 
 
+class ObservationFetcher(PollingFetcher):
+    """What is actually falling right now, from the nearest National Weather
+    Service station.
+
+    The Tempest cannot see snow. Its rain sensor feels drops strike the top of
+    the unit, and snowflakes land too softly to register; its own report knows
+    only rain and hail. So snow — and freezing rain, and sleet — has to come
+    from somewhere that watches for it, and the nearest airport's automated
+    station does, keylessly. It can be twenty miles away, which is why the
+    page only believes it when the Tempest's own thermometer agrees it is cold
+    enough.
+
+    The station is looked up once from the station's coordinates and kept.
+    """
+
+    POINTS = "https://api.weather.gov/points/%.4f,%.4f"
+    LATEST = "https://api.weather.gov/stations/%s/observations/latest"
+    REFRESH = 600
+    RETRY = 60
+    LABEL = "Observations"
+
+    # METAR present-weather codes, most worth drawing first: when an airport
+    # reports rain and snow together, the card shows the snow.
+    KINDS = (("FZRA", "freezing_rain"), ("FZDZ", "freezing_rain"),
+             ("SN", "snow"), ("SG", "snow"), ("PL", "sleet"),
+             ("GR", "hail"), ("GS", "hail"), ("RA", "rain"), ("DZ", "rain"))
+
+    def __init__(self, lat, lon, stop_event):
+        PollingFetcher.__init__(self, stop_event)
+        self.lat, self.lon = lat, lon
+        self.station = None
+        self.station_name = ""
+
+    def _get(self, url):
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "tempest-dashboard/%s (self-hosted station display)"
+                          % core.VERSION,
+            "Accept": "application/geo+json",
+        })
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    def fetch_once(self):
+        if not self.station:
+            point = self._get(self.POINTS % (self.lat, self.lon))
+            listing = self._get(point["properties"]["observationStations"])
+            first = listing["features"][0]["properties"]
+            self.station = first["stationIdentifier"]
+            self.station_name = first.get("name") or self.station
+        out = self.parse(self._get(self.LATEST % self.station))
+        out["station"] = self.station
+        out["station_name"] = self.short_name(self.station_name)
+        return out
+
+    @staticmethod
+    def short_name(name):
+        """'Chicago / West Chicago, Dupage Airport' -> 'Dupage Airport'. The
+        part after the last comma is the place itself; the rest is the city
+        it is filed under, which is too long for a caption."""
+        return (name or "").rsplit(",", 1)[-1].strip() or name or ""
+
+    @classmethod
+    def parse(cls, raw):
+        """Reduce one observation to what the Rainfall card draws: the most
+        notable thing falling, how hard, whether snow is blowing, and when."""
+        p = (raw or {}).get("properties") or {}
+        best, blowing = None, False
+        for item in p.get("presentWeather") or []:
+            code = str((item or {}).get("rawString") or "").upper().strip()
+            if not code or code.startswith("VC"):
+                continue            # "in the vicinity" is not at the station
+            if "BLSN" in code:
+                blowing = True      # lifted off the ground, not falling
+                code = code.replace("BLSN", "")
+            for rank, (token, kind) in enumerate(cls.KINDS):
+                if token in code:
+                    intensity = ("heavy" if code.startswith("+") else
+                                 "light" if code.startswith("-") else "moderate")
+                    if best is None or rank < best[0]:
+                        best = (rank, kind, intensity)
+                    break
+        observed = None
+        ts = p.get("timestamp")
+        if isinstance(ts, str) and ts:
+            try:
+                observed = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                observed = None
+        return {
+            "kind": best[1] if best else "none",
+            "intensity": best[2] if best else None,
+            "blowing": blowing,
+            "text": p.get("textDescription") or "",
+            "observed_at": observed,
+        }
+
+
 class AlertsFetcher(PollingFetcher):
     """Active weather alerts for the station's location, from the US National
     Weather Service. No key and no account — the NWS only asks that clients
@@ -1273,6 +1370,12 @@ class Dashboard:
         if args.alerts and args.lat is not None and args.lon is not None:
             self.alerts = AlertsFetcher(args.lat, args.lon, self.stop)
             self.alerts.start()
+
+        # What is falling at the nearest airport, for snow the Tempest cannot see.
+        self.observations = None
+        if args.observations and args.lat is not None and args.lon is not None:
+            self.observations = ObservationFetcher(args.lat, args.lon, self.stop)
+            self.observations.start()
         threading.Thread(target=self._housekeeping, daemon=True).start()
 
     def start_pollen(self):
@@ -1400,6 +1503,8 @@ class Dashboard:
         snap["internet"] = (self.speedtest.snapshot() if self.speedtest
                             else {"available": False,
                                   "error": "Add a Speedtest token in settings"})
+        snap["precip_obs"] = (self.observations.snapshot() if self.observations
+                              else {"available": False, "error": ""})
         snap["alerts"] = (self.alerts.snapshot() if self.alerts
                           else {"alerts": [], "error": "", "checked": False})
         snap["slots"] = self.config.slots
@@ -1687,6 +1792,10 @@ def parse_args(argv):
                         "draws them as a band behind its trace, and one line "
                         "alone would be the daily mean, which every day "
                         "crosses twice")
+    p.add_argument("--no-observations", dest="observations", action="store_false",
+                   default=not env_default("TEMPEST_NO_OBSERVATIONS", ""),
+                   help="do not ask the nearest NWS station what is falling "
+                        "(snow and freezing rain, which the Tempest cannot see)")
     p.add_argument("--no-alerts", dest="alerts", action="store_false",
                    default=not env_default("TEMPEST_NO_ALERTS", ""),
                    help="do not fetch National Weather Service alerts")

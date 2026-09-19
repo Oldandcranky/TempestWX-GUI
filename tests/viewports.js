@@ -376,76 +376,149 @@ const measureOutlook = () => {
     await page.close();
   }
 
-  // ── rain behind the Rainfall card, the duck and the ark ─────────────────
+  // ── rain and snow behind the Rainfall card ────────────────────────────
   {
     const bad = [];
+    // What each preview must draw. img: a moving picture (an <img>, so it can
+    // leave the card and be clipped); svg: a fixed one inside the card.
+    const SPEC = {
+      light: {}, moderate: {}, hail: {hail: true},
+      heavy: {img: 'duck', words: 'Duck weather'},
+      violent: {img: 'ark', words: 'Consider building an ark'},
+      snow: {flakes: true, words: 'Snowing', caveat: true},
+      heavysnow: {flakes: true, svg: 'snowman', words: 'Snowman weather', caveat: true},
+      blizzard: {flakes: true, img: 'yeti', words: 'Stay inside', caveat: true},
+      freezing: {icy: true, svg: 'icicles', words: 'Freezing rain'},
+      sleet: {hail: true, words: 'Sleet'},
+    };
     const cases = [
       ['heavy', 414, 896], ['heavy', 1920, 720], ['heavy', 1024, 768],
       ['violent', 414, 896], ['violent', 1920, 720], ['violent', 1024, 768],
-      ['light', 1920, 1080], ['hail', 1920, 1080], [null, 1920, 1080],
+      ['heavysnow', 414, 896], ['heavysnow', 1920, 720], ['heavysnow', 1024, 768],
+      ['blizzard', 414, 896], ['blizzard', 1920, 720], ['blizzard', 1024, 768],
+      ['light', 1920, 1080], ['hail', 1920, 1080], ['snow', 1920, 720],
+      ['freezing', 1920, 720], ['sleet', 1920, 1080], [null, 1920, 1080],
     ];
-    const want = { heavy: ['duck', 'Duck weather'], violent: ['ark', 'Consider building an ark'] };
-    for (const [tier, w, h] of cases) {
+    const look = async (page) => page.evaluate(() => {
+      const card = document.getElementById('card-rain');
+      const sky = card.querySelector('.rainsky');
+      const cr = card.getBoundingClientRect();
+      const img = sky && sky.querySelector('img');
+      const ir = img && img.getBoundingClientRect();
+      return {
+        tier: sky ? sky.dataset.tier : null,
+        drops: sky ? sky.querySelectorAll('.drop').length : 0,
+        flakes: sky ? sky.querySelectorAll('.flake').length : 0,
+        hail: sky ? sky.querySelectorAll('.drop.hail').length : 0,
+        icy: sky ? sky.querySelectorAll('.drop.icy').length : 0,
+        img: img ? [...img.classList].find(c => c !== 'floater') : null,
+        loaded: img ? img.complete && img.naturalWidth > 0 : null,
+        above: ir ? cr.top - ir.top : 0, below: ir ? ir.bottom - cr.bottom : 0,
+        svgs: sky ? [...sky.querySelectorAll('svg')].map(v => v.getAttribute('class')) : [],
+        caption: [...card.querySelectorAll('.caption, .sub')].map(c => c.textContent).join(' | '),
+      };
+    });
+    const open = async (w, h, url, state) => {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
       const errs = [];
       page.on('pageerror', e => errs.push(e.message));
       await page.route('**/api/state', route => route.fulfill({
-        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify(state || freshen()),
       }));
-      await page.goto(BASE + (tier ? '/?testrain=' + tier : '/'), { waitUntil: 'networkidle' });
+      await page.goto(BASE + url, { waitUntil: 'networkidle' });
       await page.waitForTimeout(SETTLE_MS);
+      return { page, errs };
+    };
+
+    for (const [tier, w, h] of cases) {
+      const { page, errs } = await open(w, h, tier ? '/?testrain=' + tier : '/');
       const where = (tier || 'dry') + ' at ' + w + 'x' + h;
       for (const [id, why] of await page.evaluate(measure, '#grid'))
         if (id === 'rain') bad.push(where + ': ' + why);
-      const r = await page.evaluate(() => {
-        const card = document.getElementById('card-rain');
-        const sky = card.querySelector('.rainsky');
-        const cr = card.getBoundingClientRect();
-        const img = sky && sky.querySelector('img.floater');
-        const ir = img && img.getBoundingClientRect();
-        return {
-          tier: sky ? sky.dataset.tier : null,
-          drops: sky ? sky.querySelectorAll('.drop').length : 0,
-          hail: sky ? sky.querySelectorAll('.drop.hail').length : 0,
-          img: img ? img.className.replace('floater ', '') : null,
-          loaded: img ? img.complete && img.naturalWidth > 0 : null,
-          above: ir ? cr.top - ir.top : 0, below: ir ? ir.bottom - cr.bottom : 0,
-          caption: [...card.querySelectorAll('.caption')].map(c => c.textContent).join(' | '),
-        };
-      });
-      if (!tier) { if (r.tier) bad.push(where + ': rain is showing on a dry day'); }
+      const r = await look(page);
+      if (!tier) { if (r.tier) bad.push(where + ': something is falling on a dry day'); }
       else {
-        if (!r.drops) bad.push(where + ': no drops');
-        if (tier === 'hail' && !r.hail) bad.push(where + ': no hail');
-        if (want[tier]) {
-          const [img, words] = want[tier];
-          if (r.img !== img) bad.push(where + ': expected the ' + img + ', found ' + r.img);
-          else if (!r.loaded) bad.push(where + ': the ' + img + ' image did not load');
-          if (r.above > 1 || r.below > 1) bad.push(where + ': the ' + img + ' sits outside the card');
-          if (!r.caption.includes(words)) bad.push(where + ': caption says "' + r.caption + '"');
-        } else if (r.img) bad.push(where + ': a ' + r.img + ' in ' + tier + ' rain');
+        const sp = SPEC[tier];
+        if (tier !== 'hail' && r.tier !== tier) bad.push(where + ': drew ' + r.tier);
+        if (sp.flakes ? !r.flakes : !r.drops) bad.push(where + ': nothing falling');
+        if (sp.flakes && r.drops) bad.push(where + ': rain drops in snow');
+        if (sp.hail && !r.hail) bad.push(where + ': no pellets');
+        if (sp.icy && !r.icy) bad.push(where + ': drops are not icy');
+        if (sp.img) {
+          if (r.img !== sp.img) bad.push(where + ': expected the ' + sp.img + ', found ' + r.img);
+          else if (!r.loaded) bad.push(where + ': the ' + sp.img + ' image did not load');
+          if (r.above > 1 || r.below > 1) bad.push(where + ': the ' + sp.img + ' sits outside the card');
+        } else if (r.img) bad.push(where + ': a ' + r.img + ' where none belongs');
+        if (sp.svg && !r.svgs.includes(sp.svg)) bad.push(where + ': no ' + sp.svg);
+        if (sp.words && !r.caption.includes(sp.words)) bad.push(where + ': caption says "' + r.caption + '"');
+        if (!!sp.caveat !== r.caption.includes('under-counts snow'))
+          bad.push(where + ': the snow caveat is ' + (sp.caveat ? 'missing' : 'showing'));
       }
       for (const m of errs) bad.push(where + ': pageerror: ' + m);
       await page.close();
     }
+
+    // The rules, on real data rather than previews. The nearest NWS station
+    // says what is falling; it is only believed when it is cold here.
+    const winter = (tempC, obs, extra) => {
+      const s = freshen();
+      s.obs = Object.assign({}, s.obs, { temp_c: tempC, wind_gust_ms: 3 });
+      s.precip_obs = Object.assign({ available: true, error: '', blowing: false,
+        station: 'KDPA', station_name: 'Dupage Airport', observed_at: s.now - 600 }, obs);
+      return Object.assign(s, extra || {});
+    };
+    const stale = { observed_at: freshen().now - 4 * 3600 };
+    const rules = [
+      ['light snow reported, but 50°F here', winter(10, { kind: 'snow', intensity: 'light' }), null, null],
+      ['light snow reported, 28°F here', winter(-2, { kind: 'snow', intensity: 'light' }), 'snow', 'Dupage Airport'],
+      ['heavy snow reported, 25°F', winter(-4, { kind: 'snow', intensity: 'heavy' }), 'heavysnow', 'Snowman weather'],
+      ['snow under a Blizzard Warning', winter(-6, { kind: 'snow', intensity: 'light' },
+        { alerts: { checked: true, error: '', alerts: [{ event: 'Blizzard Warning', severity: 'Severe', rank: 3 }] } }),
+        'blizzard', 'Stay inside'],
+      ['rain reported at 33°F', winter(0.5, { kind: 'rain', intensity: 'light' }), null, null],
+      ['freezing rain reported, 30°F', winter(-1, { kind: 'freezing_rain', intensity: 'light' }), 'freezing', 'Dupage Airport'],
+      ['station quiet, forecast says heavy snow', winter(-3, Object.assign({ kind: 'none' }, stale),
+        { forecast: Object.assign(freshen().forecast, { current: Object.assign({}, freshen().forecast.current, { code: 75 }) }) }),
+        'heavysnow', 'Snowman weather'],
+      ['station reports nothing, forecast says snow', winter(-3, { kind: 'none' },
+        { forecast: Object.assign(freshen().forecast, { current: Object.assign({}, freshen().forecast.current, { code: 73 }) }) }),
+        null, null],
+    ];
+    for (const [what, state, tier, words] of rules) {
+      const { page, errs } = await open(1920, 1080, '/', state);
+      const r = await look(page);
+      if (r.tier !== tier) bad.push(what + ': drew ' + r.tier + ', expected ' + tier);
+      if (words && !r.caption.includes(words)) bad.push(what + ': caption says "' + r.caption + '"');
+      for (const m of errs) bad.push(what + ': pageerror: ' + m);
+      await page.close();
+    }
+
     // Reduced motion: no falling drops, and the scene holds still.
-    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce' });
-    await page.route('**/api/state', route => route.fulfill({
-      status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
-    }));
-    await page.goto(BASE + '/?testrain=violent', { waitUntil: 'networkidle' });
-    await page.waitForTimeout(SETTLE_MS);
-    const still = await page.evaluate(() => ({
-      drops: [...document.querySelectorAll('#card-rain .drop')].some(d => d.getBoundingClientRect().height > 0),
-      moving: [...document.querySelectorAll('#card-rain .rainscene *')]
-        .some(e => getComputedStyle(e).animationName !== 'none'),
-    }));
-    if (still.drops) bad.push('reduced motion: drops are still falling');
-    if (still.moving) bad.push('reduced motion: the scene still moves');
-    await page.close();
+    for (const tier of ['violent', 'heavysnow', 'blizzard', 'freezing']) {
+      const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce' });
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+      }));
+      await page.goto(BASE + '/?testrain=' + tier, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const still = await page.evaluate(() => ({
+        falling: [...document.querySelectorAll('#card-rain .drop, #card-rain .flake')]
+          .some(d => d.getBoundingClientRect().height > 0),
+        moving: [...document.querySelectorAll('#card-rain .rainscene *, #card-rain .snowscene *, #card-rain .snowman g, #card-rain .icicles *')]
+          .some(e => getComputedStyle(e).animationName !== 'none'),
+        // Held still, the snowman must be the finished one, not a heap.
+        dressed: (() => { const g = document.querySelector('#card-rain .snowman .sm-dress');
+                          return !g || getComputedStyle(g).opacity === '1'; })(),
+      }));
+      if (still.falling) bad.push('reduced motion (' + tier + '): still falling');
+      if (still.moving) bad.push('reduced motion (' + tier + '): the scene still moves');
+      if (!still.dressed) bad.push('reduced motion (' + tier + '): the snowman is undressed');
+      await page.close();
+    }
 
     failures += bad.length;
-    console.log(bad.length ? '  FAIL rain' : '  ok   rain');
+    console.log(bad.length ? '  FAIL rain and snow' : '  ok   rain and snow');
     for (const why of bad) console.log('         ' + why);
   }
 

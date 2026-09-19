@@ -296,10 +296,64 @@ body:not(.tv) #outlook .card:hover .flipbtn{color:var(--accent)}
                  animation:sail 48s linear infinite}
 @keyframes sail{from{left:-42%}to{left:104%}}
 .rainscene .ark{--fh:min(28cqh,22cqw);--sink:.24}
+/* Snow drifts rather than falls: slow, swaying, pushed a long way sideways
+   by wind that would barely bend rain. */
+.rainsky .flake{
+  position:absolute;top:-6cqh;display:block;width:var(--size);height:var(--size);
+  border-radius:50%;background:rgba(245,248,255,var(--op));
+  animation:snowfall var(--dur) linear infinite;animation-delay:var(--delay);
+}
+@keyframes snowfall{
+  0%{transform:translate(0,0)}
+  25%{transform:translate(calc(var(--dx)*.25 + var(--sway)),31cqh)}
+  50%{transform:translate(calc(var(--dx)*.5),62cqh)}
+  75%{transform:translate(calc(var(--dx)*.75 - var(--sway)),93cqh)}
+  100%{transform:translate(var(--dx),124cqh)}
+}
+/* Freezing rain: paler drops, and icicles along the top of the card that
+   catch the light now and then. */
+.rainsky .drop.icy{
+  background:linear-gradient(to bottom,rgba(225,242,255,0),rgba(225,242,255,var(--op)));
+}
+.rainsky .icicles{position:absolute;left:0;top:0;width:100%;height:4.5cqh;opacity:.6}
+.rainsky .icicles .glint{animation:glint 2.6s ease-in-out infinite}
+@keyframes glint{0%,100%{opacity:0}50%{opacity:1}}
+/* A snowbank along the bottom, for the snowman to stand in and the yeti to
+   wade through. */
+.snowscene{position:absolute;left:0;right:0;bottom:0;height:var(--drift)}
+.snowscene .bank{position:absolute;left:0;right:0;top:2cqh;bottom:0;
+                 background:rgba(236,242,250,.2)}
+.snowscene .crest{position:absolute;left:0;right:0;top:0;height:2.2cqh;
+                  background-repeat:repeat-x;background-size:16cqh 100%}
+/* Heavy snow: the snowman builds himself — base, middle, head, then the hat,
+   scarf, carrot and arms — stands a while, and melts back to start again. */
+.snowman{position:absolute;left:58%;bottom:calc(100% - 3cqh);
+         height:min(34cqh,28cqw);width:auto;opacity:.78}
+.snowman g{transform-box:fill-box;transform-origin:50% 100%;
+           animation-duration:24s;animation-timing-function:ease-out;
+           animation-iteration-count:infinite}
+.snowman .sm-base{animation-name:smBase}
+.snowman .sm-mid{animation-name:smMid}
+.snowman .sm-head{animation-name:smHead}
+.snowman .sm-dress{animation-name:smDress}
+@keyframes smBase{0%{transform:scale(0)}8%,92%{transform:scale(1)}100%{transform:scale(0)}}
+@keyframes smMid{0%,8%{transform:scale(0)}16%,92%{transform:scale(1)}100%{transform:scale(0)}}
+@keyframes smHead{0%,16%{transform:scale(0)}24%,92%{transform:scale(1)}100%{transform:scale(0)}}
+@keyframes smDress{0%,24%{opacity:0}32%,92%{opacity:1}100%{opacity:0}}
+/* A blizzard: a yeti in a scarf trudges across, the way the ark sails. */
+.snowscene .sail{position:absolute;left:0;top:0;bottom:0;width:0;
+                 animation:sail 36s linear infinite}
+.snowscene .yeti{position:absolute;left:0;height:var(--fh);opacity:.7;
+                 --fh:min(34cqh,26cqw);bottom:calc(100% - var(--fh) * .1);
+                 animation:trudge .9s ease-in-out infinite}
+@keyframes trudge{
+  0%,100%{transform:translateY(0) rotate(-4deg)}
+  50%{transform:translateY(-.8cqh) rotate(4deg)}
+}
 @media (prefers-reduced-motion:reduce){
-  .rainsky .drop{display:none}
-  .rainscene *{animation:none!important}
-  .rainscene .sail{left:30%}
+  .rainsky .drop,.rainsky .flake{display:none}
+  .rainscene *,.snowscene *,.snowman g,.rainsky .icicles *{animation:none!important}
+  .rainscene .sail,.snowscene .sail{left:30%}
 }
 
 /* /testall says what it is showing, so no one takes a preview for weather. */
@@ -1136,12 +1190,168 @@ const WAVE_IMG = svgURI(
   "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 12' preserveAspectRatio='none'>" +
   "<path d='M0 6 Q15 0 30 6 T60 6 V12 H0 Z' fill='rgba(0,188,212,.26)'/></svg>");
 
+const YETI_IMG = svgURI(
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 90'>" +
+  // feet, then a big shaggy body
+  "<ellipse cx='29' cy='84' rx='9' ry='4.5' fill='#8fa6bf'/><ellipse cx='52' cy='84' rx='9' ry='4.5' fill='#8fa6bf'/>" +
+  "<path d='M18 82 Q10 56 20 34 Q40 6 60 34 Q70 56 62 82 Z' fill='#eef1f5'/>" +
+  "<path d='M18 60 l-4 3 l5 1 M62 60 l4 3 l-5 1 M22 40 l-4 -1 l3 4 M58 40 l4 -1 l-3 4' " +
+    "stroke='#cfd6e0' stroke-width='1.6' fill='none' stroke-linecap='round'/>" +
+  // one arm waving, one down
+  "<path d='M22 50 Q9 42 9 26' stroke='#eef1f5' stroke-width='8' fill='none' stroke-linecap='round'/>" +
+  "<path d='M59 50 Q68 60 66 70' stroke='#eef1f5' stroke-width='8' fill='none' stroke-linecap='round'/>" +
+  // the face, grinning through the weather
+  "<ellipse cx='40' cy='32' rx='12' ry='10' fill='#8fa6bf'/>" +
+  "<circle cx='35.5' cy='29.5' r='1.6' fill='#1b2230'/><circle cx='44.5' cy='29.5' r='1.6' fill='#1b2230'/>" +
+  "<path d='M33 35.5 Q40 42 47 35.5 Z' fill='#1b2230'/>" +
+  "<path d='M36 36.2 h2.4 v1.6 h-2.4 Z M41.6 36.2 h2.4 v1.6 h-2.4 Z' fill='#fff'/>" +
+  // and a scarf, because it is cold even for him
+  "<path d='M27 45 Q40 51 53 45 L53 50 Q40 56 27 50 Z' fill='#d9483b'/>" +
+  "<path d='M47 50 L50 63 L55 62 L52 49 Z' fill='#b93b30'/>" +
+  "</svg>");
+
+const DRIFT_IMG = svgURI(
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 60 12' preserveAspectRatio='none'>" +
+  "<path d='M0 12 L0 7 Q8 1 18 6 Q27 10 36 5 Q47 0 60 7 L60 12 Z' fill='rgba(236,242,250,.2)'/></svg>");
+
+// Built inline rather than as an image: its parts animate one by one, and it
+// stays put, so it cannot paint outside the card.
+function snowmanSVG(delay){
+  const d = ' style="animation-delay:' + delay + 's"';
+  return '<svg class="snowman" viewBox="0 0 60 90" aria-hidden="true">' +
+    '<g class="sm-base"' + d + '><circle cx="30" cy="72" r="16" fill="#f4f6fa"/></g>' +
+    '<g class="sm-mid"' + d + '><circle cx="30" cy="44" r="12" fill="#f4f6fa"/>' +
+      '<circle cx="30" cy="40" r="1.4" fill="#2a2a2a"/><circle cx="30" cy="47" r="1.4" fill="#2a2a2a"/></g>' +
+    '<g class="sm-head"' + d + '><circle cx="30" cy="22" r="9" fill="#f4f6fa"/></g>' +
+    '<g class="sm-dress"' + d + '>' +
+      '<path d="M18 42 L5 33 M8 35 L4 38 M42 42 L55 33 M52 35 L56 38" stroke="#6b4a2b" ' +
+        'stroke-width="2" stroke-linecap="round" fill="none"/>' +
+      '<rect x="21" y="29" width="18" height="4" rx="1.5" fill="#d9483b"/>' +
+      '<rect x="33" y="31" width="4" height="9" rx="1.5" fill="#b93b30"/>' +
+      '<circle cx="26.8" cy="20" r="1.2" fill="#2a2a2a"/><circle cx="33.2" cy="20" r="1.2" fill="#2a2a2a"/>' +
+      '<path d="M30 23 L41 25 L30 26.4 Z" fill="#f28c28"/>' +
+      '<rect x="18" y="12.5" width="24" height="3" rx="1" fill="#222"/>' +
+      '<rect x="22" y="4" width="16" height="9.5" rx="1" fill="#222"/>' +
+      '<rect x="22" y="10" width="16" height="2" fill="#d9483b"/>' +
+    '</g></svg>';
+}
+
+function iciclesSVG(now){
+  let path = "", glints = "";
+  for (let i = 0; i < 20; i++) {
+    const x = i * 5, len = 4 + ((i * 7) % 5) * 1.2;
+    path += "M" + x + " 0 L" + (x + 2.5) + " " + len + " L" + (x + 5) + " 0 Z";
+    if (i % 4 === 1) glints += '<circle class="glint" cx="' + (x + 2.5) + '" cy="' +
+      (len - 0.6) + '" r=".7" fill="#fff" style="animation-delay:' +
+      (-((now + i * 0.7) % 2.6)).toFixed(2) + 's"/>';
+  }
+  return '<svg class="icicles" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">' +
+    '<path d="' + path + '" fill="rgba(210,235,255,.55)"/>' + glints + '</svg>';
+}
+
+const SNOW_LOOK = {
+  snow:      {n: 28,  size: [0.5, 1.4], dur: 8,   op: .8},
+  heavysnow: {n: 60,  size: [0.5, 1.4], dur: 5.5, op: .85},
+  blizzard:  {n: 110, size: [0.4, 1.0], dur: 1.8, op: .8},
+};
+
+function snowSky(tier, windMs, windDir){
+  const look = SNOW_LOOK[tier];
+  // Snow falls at about a metre a second, so the same wind that barely bends
+  // rain carries it a long way sideways. A blizzard is sideways by definition.
+  const east = windMs && windDir != null ? -Math.sin(windDir * Math.PI / 180) * windMs : 0;
+  let ang = Math.atan2(east, 1.2) * 180 / Math.PI;
+  if (tier === "blizzard") ang = Math.sign(ang || 1) * Math.max(38, Math.min(60, Math.abs(ang)));
+  else ang = Math.max(-35, Math.min(35, ang));
+  const dx = Math.tan(ang * Math.PI / 180) * 124;
+  const now = Date.now() / 1000;
+  let html = "";
+  for (let i = 0; i < look.n; i++) {
+    const f = (i * 0.6180339887) % 1, g = (i * 0.7548776662) % 1;
+    const dur = look.dur * (0.8 + g * 0.4);
+    const delay = -((now + f * dur * 5) % dur);
+    const size = look.size[0] + g * (look.size[1] - look.size[0]);
+    const x = ang > 5 ? -60 + f * 160 : ang < -5 ? f * 160 : f * 100;
+    html += '<i class="flake" style="left:' + x.toFixed(1) + '%;--size:' + size.toFixed(2) +
+      'cqh;--op:' + look.op + ';--dur:' + dur.toFixed(2) + 's;--delay:' + delay.toFixed(2) +
+      's;--dx:' + dx.toFixed(1) + 'cqh;--sway:' + (2 + g * 3).toFixed(1) + 'cqw"></i>';
+  }
+  if (tier === "heavysnow" || tier === "blizzard") {
+    html += '<div class="snowscene" style="--drift:' + (tier === "blizzard" ? 14 : 10) + 'cqh">' +
+      '<div class="bank"></div>' +
+      '<div class="crest" style="background-image:url(\'' + DRIFT_IMG + '\')"></div>' +
+      (tier === "heavysnow"
+        ? snowmanSVG((-(now % 24)).toFixed(2))
+        : '<div class="sail" style="animation-delay:' + (-(now % 36)).toFixed(2) + 's">' +
+            '<img class="yeti" alt="" src="' + YETI_IMG + '" style="animation-delay:' +
+            (-(now % 0.9)).toFixed(2) + 's"></div>') +
+      '</div>';
+  }
+  const w = el("div", "rainsky");
+  w.dataset.tier = tier;
+  w.innerHTML = html;
+  return w;
+}
+
+/* Snow, sleet and freezing rain, which the Tempest cannot tell from rain or
+   cannot see at all. The nearest NWS station says what is falling; the
+   forecast model's present weather stands in when that station has gone
+   quiet. Either is believed only when the Tempest's own thermometer says it
+   is cold enough here — the airport can be twenty miles away. */
+const SNOW_BELOW_C = 1.7;             // 35 °F
+const WMO_WINTER = {
+  71: ["snow", "light"], 73: ["snow", "moderate"], 75: ["snow", "heavy"],
+  77: ["snow", "light"], 85: ["snow", "light"], 86: ["snow", "heavy"],
+  56: ["freezing_rain", "light"], 57: ["freezing_rain", "heavy"],
+  66: ["freezing_rain", "light"], 67: ["freezing_rain", "heavy"],
+};
+
+function skyNow(s){
+  if (TEST_RAIN && TEST_RAIN.sky) return TEST_RAIN.sky;
+  const t = s.obs && s.obs.temp_c;
+  if (t == null || t > SNOW_BELOW_C) return null;
+  const po = s.precip_obs || {};
+  const now = s.now || Date.now() / 1000;
+  const fresh = po.available && po.observed_at && Math.abs(now - po.observed_at) < 7200;
+  let kind = null, intensity = null, source = null;
+  if (fresh) {
+    kind = po.kind; intensity = po.intensity;
+    source = po.station_name || po.station || "NWS";
+  } else {
+    const cur = s.forecast && s.forecast.available ? s.forecast.current : null;
+    const w = cur ? WMO_WINTER[cur.code] : null;
+    if (w) { kind = w[0]; intensity = w[1]; source = "forecast"; }
+  }
+  const blizzard = ((s.alerts && s.alerts.alerts) || []).some(a => /blizzard/i.test(a.event || ""));
+  const gale = (s.obs.wind_gust_ms || 0) >= 15.6;          // 35 mph, the blizzard line
+  if (kind === "snow")
+    return {tier: blizzard || (intensity === "heavy" && gale) ? "blizzard"
+                : intensity === "heavy" ? "heavysnow" : "snow", source};
+  if (blizzard && fresh && po.blowing) return {tier: "blizzard", source};
+  if (kind === "freezing_rain") return {tier: "freezing", source, heavy: intensity === "heavy"};
+  if (kind === "sleet") return {tier: "sleet", source};
+  return null;
+}
+
+const SKY_WORDS = {heavy: "Duck weather", violent: "Consider building an ark",
+                   heavysnow: "Snowman weather", blizzard: "Stay inside"};
+function skyCaption(tier, source){
+  if (SKY_WORDS[tier]) return SKY_WORDS[tier];
+  const say = {snow: "Snowing", freezing: "Freezing rain", sleet: "Sleet"}[tier];
+  return say ? say + (source ? " · " + source : "") : null;
+}
+
 // ?testrain=light|moderate|heavy|violent|hail — shows the graphic without
 // waiting for the weather, like ?testalert. The figures stay real.
 const RAIN_PRESETS = {light: [1.2, 1], moderate: [5, 1], heavy: [20, 1],
                       violent: [60, 1], hail: [6, 2]};
+const SKY_PRESETS = {snow: {tier: "snow"}, heavysnow: {tier: "heavysnow"},
+                     blizzard: {tier: "blizzard"}, freezing: {tier: "freezing"},
+                     sleet: {tier: "sleet"}};
 const rainPreset = (name) => {
-  const p = RAIN_PRESETS[(name || "heavy").toLowerCase()] || RAIN_PRESETS.heavy;
+  const n = (name || "heavy").toLowerCase();
+  if (SKY_PRESETS[n]) return {sky: Object.assign({source: "nearest airport"}, SKY_PRESETS[n])};
+  const p = RAIN_PRESETS[n] || RAIN_PRESETS.heavy;
   return {rate: p[0], type: p[1]};
 };
 let TEST_RAIN = (() => {           // let: /testall changes it as it loops
@@ -1149,8 +1359,9 @@ let TEST_RAIN = (() => {           // let: /testall changes it as it loops
   return q.has("testrain") ? rainPreset(q.get("testrain")) : null;
 })();
 
-function rainSky(rate, ptype, windMs, windDir){
+function rainSky(rate, ptype, windMs, windDir, as){
   const hail = ptype === 2 || ptype === 3;
+  const icy = as === "freezing";
   const tier = rainTier(rate) || (hail ? "moderate" : null);
   if (!tier) return null;
   const look = RAIN_LOOK[tier];
@@ -1169,12 +1380,13 @@ function rainSky(rate, ptype, windMs, windDir){
     const delay = -((now + f * dur * 7) % dur);
     // Start drops upwind of the card when they drift, or the far side stays dry.
     const x = ang > 5 ? -45 + f * 145 : ang < -5 ? f * 145 : f * 100;
-    html += '<i class="drop' + (isHail ? " hail" : "") + '" style="left:' + x.toFixed(1) +
+    html += '<i class="drop' + (isHail ? " hail" : icy ? " icy" : "") + '" style="left:' + x.toFixed(1) +
       '%;--len:' + look.len + 'cqh;--op:' + look.op + ';--dur:' + dur.toFixed(2) +
       's;--delay:' + delay.toFixed(2) + 's;--dx:' + dx.toFixed(1) + 'cqh;--rot:' +
       (-ang).toFixed(1) + 'deg"></i>';
   }
-  if (tier === "heavy" || tier === "violent") {
+  if (icy) html += iciclesSVG(now);
+  if (!as && (tier === "heavy" || tier === "violent")) {
     const depth = tier === "violent" ? 22 : 8 + Math.min(1, (rate - 7.6) / 42.4) * 12;
     const bob = (-(now % 2.6)).toFixed(2);
     html += '<div class="rainscene" style="--water:' + depth.toFixed(1) + 'cqh">' +
@@ -1189,7 +1401,7 @@ function rainSky(rate, ptype, windMs, windDir){
       '</div>';
   }
   const w = el("div", "rainsky");
-  w.dataset.tier = tier;
+  w.dataset.tier = as || tier;
   w.innerHTML = html;
   return w;
 }
@@ -1669,12 +1881,23 @@ function buildRainfall(s){
   c.insertBefore(rainFill(enough ? yearIn : null, annual, expect / (annual || 1)),
                  c.firstChild);
 
-  // Rain falling behind the figures, over the gauge, while it is raining.
-  const rate = TEST_RAIN ? TEST_RAIN.rate : (d.rain_rate_mm_h || 0);
-  const ptype = TEST_RAIN ? TEST_RAIN.type : (s.obs.precip_type || 0);
-  const sky = rainSky(rate, ptype, s.obs.wind_avg_ms, s.obs.wind_dir);
+  // What is falling, behind the figures and over the gauge. Winter first —
+  // snow, sleet and freezing rain from the nearest NWS station — then the
+  // Tempest's own rain and hail.
+  const wo = s.obs.wind_avg_ms, wd = s.obs.wind_dir;
+  const winter = skyNow(s);
+  let sky;
+  if (winter && winter.tier === "sleet") sky = rainSky(6, 2, wo, wd, "sleet");
+  else if (winter && winter.tier === "freezing") sky = rainSky(winter.heavy ? 5 : 1.2, 1, wo, wd, "freezing");
+  else if (winter) sky = snowSky(winter.tier, wo, wd);
+  else {
+    const t = TEST_RAIN && TEST_RAIN.rate != null ? TEST_RAIN : null;
+    sky = rainSky(t ? t.rate : (d.rain_rate_mm_h || 0),
+                  t ? t.type : (s.obs.precip_type || 0), wo, wd);
+  }
   if (sky) c.insertBefore(sky, c.children[1]);
-  const joke = {heavy: "Duck weather", violent: "Consider building an ark"}[sky && sky.dataset.tier];
+  const joke = sky ? skyCaption(sky.dataset.tier, winter && winter.source) : null;
+  const snowing = !!winter && /snow|blizzard/.test(winter.tier);
 
   // a rate dial in the card header, like the reference
   const dial = el("span","headicon");
@@ -1708,8 +1931,16 @@ function buildRainfall(s){
   // the record actually starts. A week-old install must not let seven days of
   // rain pose as a year of it.
   if (joke) {
-    // A downpour outranks the year-to-date comparison for as long as it lasts.
+    // What is falling outranks the year-to-date comparison while it falls.
     b.appendChild(caption(joke + (TEST_RAIN ? " · preview" : ""), "cold"));
+    if (snowing) {
+      // The totals below are rain: snow barely registers on the Tempest, and
+      // may arrive later as a burst of "rain" when it melts on the sensor.
+      const note = el("div", "sub");
+      note.style.textAlign = "center";
+      note.textContent = "The gauge under-counts snow";
+      b.appendChild(note);
+    }
   }
   else if (enough) {
     // The fill says how much of a year's rain has fallen; this says whether
@@ -3240,6 +3471,11 @@ const TESTALL_STEPS = [
   {label: "Heavy rain — duck weather", rain: "heavy"},
   {label: "Violent rain — the ark", rain: "violent", dwell: 2},
   {label: "Hail", rain: "hail"},
+  {label: "Snow", rain: "snow"},
+  {label: "Heavy snow — snowman weather", rain: "heavysnow"},
+  {label: "Blizzard — stay inside", rain: "blizzard"},
+  {label: "Freezing rain", rain: "freezing"},
+  {label: "Sleet", rain: "sleet"},
   {label: "Alerts — the three worst", alerts: ["extreme", "severe", "moderate"]},
   {label: "Alerts — minor and unknown", alerts: ["minor", "unknown"]},
   ...[0, 1, 2, 3, 4, 5].map(i => ({label: "Pollen — " + POLLEN_WORDS[i], pollen: i})),

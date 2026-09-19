@@ -197,6 +197,7 @@ settings page wins, because it is written to `tempest_config.json` at runtime.
 | `--demo` | `TEMPEST_DEMO` | off | Synthetic weather, no hub |
 | `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
 | `--no-alerts` | `TEMPEST_NO_ALERTS` | on | Disable weather alerts |
+| `--no-observations` | `TEMPEST_NO_OBSERVATIONS` | on | Stop asking the nearest NWS station what is falling (the snow, sleet and freezing rain the Tempest cannot see) |
 
 > Prefer the settings page for the token. `docker-compose.yml` is committed to
 > git; `tempest_config.json` is gitignored and written `0600`.
@@ -336,6 +337,21 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Snow, which the Tempest cannot see.** Its rain sensor feels drops strike
+  the unit; snowflakes land too softly to register, and its own report knows
+  only rain and hail. So the nearest National Weather Service station — found
+  from the station's coordinates, keyless, checked every ten minutes — says
+  what is falling, with the forecast model standing in if that station goes
+  quiet. Either is believed only when the Tempest reads 35°F or colder, since
+  the airport can be twenty miles away. Snow drifts down behind the Rainfall
+  card, leaning hard in any wind; heavy snow builds a snowman, piece by piece,
+  in a drift (*Snowman weather*); a blizzard — a Blizzard Warning, or heavy
+  snow in 35 mph gusts — sends a yeti in a scarf trudging across (*Stay
+  inside*). Freezing rain hangs icicles along the top of the card; sleet falls
+  as pellets. While snow falls the card says the gauge under-counts it, which
+  is the hardware, not the dashboard. The card keeps its name: its totals
+  are still rain. `?testrain=snow`, `heavysnow`, `blizzard`, `freezing` and
+  `sleet` preview each, and `/testall` steps through them.
 - **`/testall`** loops through everything the dashboard can show — rain from
   light to the ark, hail, the alert banner, the six pollen faces, the tree in
   rising wind, the Internet card turned over and the ten-day outlook. Click

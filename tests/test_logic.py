@@ -381,6 +381,60 @@ class AlertTimes(unittest.TestCase):
         self.assertEqual(self.one()["sender"], "NWS Chicago IL")
 
 
+class WhatIsFalling(unittest.TestCase):
+    """The nearest NWS station's present weather, reduced to what the Rainfall
+    card draws. The shapes are the API's own: presentWeather items carry the
+    METAR code in rawString."""
+
+    def obs(self, *codes, ts="2026-12-19T19:05:00+00:00"):
+        return server.ObservationFetcher.parse({"properties": {
+            "timestamp": ts, "textDescription": "x",
+            "presentWeather": [{"rawString": c} for c in codes]}})
+
+    def test_intensity_comes_from_the_prefix(self):
+        self.assertEqual(self.obs("-SN")["intensity"], "light")
+        self.assertEqual(self.obs("SN")["intensity"], "moderate")
+        self.assertEqual(self.obs("+SN")["intensity"], "heavy")
+
+    def test_snow_outranks_rain_when_both_fall(self):
+        self.assertEqual(self.obs("-RA", "SN")["kind"], "snow")
+        self.assertEqual(self.obs("RASN")["kind"], "snow")
+
+    def test_freezing_rain_outranks_everything(self):
+        self.assertEqual(self.obs("-SN", "FZRA")["kind"], "freezing_rain")
+        self.assertEqual(self.obs("-FZDZ")["kind"], "freezing_rain")
+
+    def test_sleet_hail_and_showers(self):
+        self.assertEqual(self.obs("PL")["kind"], "sleet")
+        self.assertEqual(self.obs("GS")["kind"], "hail")
+        self.assertEqual(self.obs("-SHSN")["kind"], "snow")
+        self.assertEqual(self.obs("TSRA")["kind"], "rain")
+
+    def test_blowing_snow_is_not_falling_snow(self):
+        o = self.obs("BLSN")
+        self.assertEqual(o["kind"], "none")
+        self.assertTrue(o["blowing"])
+        self.assertEqual(self.obs("-SN", "BLSN")["kind"], "snow")
+
+    def test_vicinity_is_not_here(self):
+        self.assertEqual(self.obs("VCSH")["kind"], "none")
+
+    def test_nothing_falling(self):
+        o = self.obs()
+        self.assertEqual((o["kind"], o["intensity"], o["blowing"]), ("none", None, False))
+        self.assertEqual(server.ObservationFetcher.parse({})["kind"], "none")
+
+    def test_timestamp_and_bad_timestamp(self):
+        self.assertAlmostEqual(self.obs("SN")["observed_at"],
+            datetime.datetime(2026, 12, 19, 19, 5, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertIsNone(self.obs("SN", ts="yesterday")["observed_at"])
+
+    def test_short_station_name(self):
+        f = server.ObservationFetcher.short_name
+        self.assertEqual(f("Chicago / West Chicago, Dupage Airport"), "Dupage Airport")
+        self.assertEqual(f("KDPA"), "KDPA")
+
+
 class StationHealth(unittest.TestCase):
     """The dot on every hub-fed card is this one function."""
 

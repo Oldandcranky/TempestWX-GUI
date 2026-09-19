@@ -33,7 +33,8 @@
  * Last, once, in TV mode: every way back from the outlook — the Back button,
  * a tap anywhere on it, the idle return — and that two exits at once go back
  * one step, not two. Two would take the wall display off the dashboard. And
- * the way in: a tap anywhere on the Forecast card, on the TV and off it.
+ * the way in: a tap anywhere on the Forecast card, on the TV and off it. And
+ * the Internet card turning over, and back, from a tap anywhere on it.
  *
  * What it cannot check: whether any of it looks right. A card can pass every
  * assertion here and still be ugly, or say something untrue. Look at a
@@ -264,6 +265,8 @@ const measureOutlook = () => {
       await page.waitForTimeout(800);
       return isOpen();
     };
+    const flipped = () => page.evaluate(() =>
+      document.getElementById('card-internet').classList.contains('flipped'));
     const onDashboard = () => page.evaluate(
       (base) => location.href.startsWith(base) && !!document.getElementById('grid'), BASE);
     try {
@@ -312,6 +315,44 @@ const measureOutlook = () => {
       await page.waitForTimeout(800);
       if (await isOpen()) bad.push('a tap on the body did not close it outside TV mode');
       if (!await onDashboard()) bad.push('closing outside TV mode left the dashboard');
+      // A real press: a quick one opens the outlook, a held one does not,
+      // and dragging the card moves it without opening anything.
+      const centre = (sel) => page.evaluate(s => {
+        const r = document.querySelector(s).getBoundingClientRect();
+        return [r.left + r.width / 2, r.top + r.height / 2]; }, sel);
+      const press = async (sel, ms) => {
+        const [x, y] = await centre(sel);
+        await page.mouse.move(x, y); await page.mouse.down();
+        await page.waitForTimeout(ms); await page.mouse.up();
+        await page.waitForTimeout(800);
+      };
+      await press('#card-fc .card-body', 60);
+      if (!await isOpen()) bad.push('a quick click on the Forecast card did not open it');
+      await page.goBack(); await page.waitForTimeout(800);
+      await press('#card-fc .card-body', 800);
+      if (await isOpen()) bad.push('a press held on the Forecast card opened it — a hold is a grab, not a tap');
+      await press('#card-internet .face.front .card-body', 800);
+      if (await flipped()) bad.push('a press held on the Internet card turned it over');
+      await page.evaluate(() => { window.__dragged = false;
+        document.addEventListener('dragend', () => { window.__dragged = true; }, { once: true }); });
+      const [x0, y0] = await centre('#card-fc'), [x1, y1] = await centre('#card-temp');
+      await page.mouse.move(x0, y0); await page.mouse.down();
+      await page.mouse.move(x0 + 10, y0 + 10, { steps: 3 });
+      await page.mouse.move(x1, y1, { steps: 15 }); await page.mouse.up();
+      await page.waitForTimeout(800);
+      if (!await page.evaluate(() => window.__dragged)) bad.push('the Forecast card could not be dragged');
+      if (await isOpen()) bad.push('dragging the Forecast card opened the outlook');
+
+      // The Internet card turns over from a tap anywhere on either face.
+      await page.$eval('#card-internet .face.front .card-body', el => el.click());
+      await page.waitForTimeout(600);
+      if (!await flipped()) bad.push('a tap on the Internet card front did not turn it over');
+      await page.$eval('#card-internet .face.back .card-body', el => el.click());
+      await page.waitForTimeout(600);
+      if (await flipped()) bad.push('a tap on the Internet card back did not turn it back');
+      await page.$eval('#card-internet .face.front .card-head', el => el.click());
+      await page.waitForTimeout(600);
+      if (!await flipped()) bad.push('the Internet header turned it twice, or not at all');
     } catch (e) {
       bad.push(e.message.split('\n')[0]);
     }

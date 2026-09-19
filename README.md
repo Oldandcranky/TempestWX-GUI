@@ -336,6 +336,17 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **A hold is a grab, not a tap.** Once Forecast opened the outlook from a
+  tap anywhere, pressing and holding it to move it — then letting go without
+  moving — opened the outlook instead, and the card had lost its grab cursor,
+  so rearranging felt broken. Dragging itself never broke (measured: the same
+  events and the same saved order as before). A press held half a second now
+  counts as a grab across every card, a click straight after a drag is
+  ignored, and the grab cursor is back.
+- A tap anywhere on the Internet card turns it over, and anywhere on the
+  back turns it back — not only the header. Nothing on either face is
+  clickable, so a tap cannot have meant anything else. The header and its
+  button still work, and still turn it exactly once.
 - A tap anywhere on the Forecast card opens the ten-day outlook, not just a
   tap on its header — the same big target on the way in as on the way out.
   It started as TV-only, since that is where the header is hard to hit with

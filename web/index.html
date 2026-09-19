@@ -198,10 +198,11 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
 /* The header turns the card over, so it has to look like it does. */
 .fliphead{cursor:pointer;-webkit-tap-highlight-color:transparent}
 .fliphead:hover .flipbtn{color:var(--accent)}
-/* The whole Forecast card opens the outlook, so it should look clickable
-   (not on the TV, which hides the cursor). */
-body:not(.tv) #card-fc{cursor:pointer}
-body:not(.tv) #card-fc:hover .flipbtn{color:var(--accent)}
+/* Forecast and Internet act on a tap anywhere, but they are draggable cards
+   first, so they keep the grab cursor; the flip button lighting up on hover
+   is the hint. The outlook is not draggable, so it can say "click" outright. */
+body:not(.tv) #card-fc:hover .flipbtn,
+body:not(.tv) #card-internet.flip:hover .flipbtn{color:var(--accent)}
 body:not(.tv) #outlook .card{cursor:pointer}
 body:not(.tv) #outlook .card:hover .flipbtn{color:var(--accent)}
 
@@ -2398,11 +2399,13 @@ function buildInternet(s){
     const {card:tmp, body} = card("internet","Internet",glyph,"cold",srcHealth(n));
     const f = el("div","face " + cls);
     while (tmp.firstChild) f.appendChild(tmp.firstChild);
-    // The header is the tap target, not the whole card: the body holds the
-    // figures people read and sometimes select, and on a touchscreen a card
-    // that turns over when anyone brushes past it is worse than one that
-    // needs aiming. The button stays inside it — discoverable, and the part
-    // a keyboard can reach.
+    // The header turns it over, and so does a tap anywhere else on the card
+    // (the grid listener below the outlook's). Header-only was the first
+    // version, on the reasoning that a card which turns over when brushed is
+    // worse than one that needs aiming; on the TV's pointer the header proved
+    // too small a target, and the owner chose the whole card. Nothing on
+    // either face is clickable, so a tap cannot have meant anything else.
+    // The button stays — discoverable, and the part a keyboard can reach.
     const head = f.querySelector(".card-head");
     head.classList.add("fliphead");
     head.title = label;
@@ -3301,6 +3304,34 @@ document.getElementById("outlook").addEventListener("click", (e) => {
 document.getElementById("grid").addEventListener("click", (e) => {
   if (!e.target.closest("#card-fc") || e.target.closest(".card-head")) return;
   toggleOutlook(true);
+});
+
+/* A tap is not a grab. Cards act on a tap anywhere now, and a card is also
+   something you press, hold and drag — so a press held half a second and let
+   go without moving was opening the outlook when someone meant to move the
+   card, and a browser that fires a click after a drag would do the same. This
+   sits in the capture phase on the grid, ahead of every card's own handlers,
+   and swallows any click that was really a hold or the end of a drag.
+   Keyboard activation (detail 0) has no press to measure and is let through. */
+const HOLD_MS = 500;
+let pressAt = 0, dragEndAt = 0;
+grid.addEventListener("pointerdown", () => { pressAt = Date.now(); }, true);
+grid.addEventListener("dragend", () => { dragEndAt = Date.now(); }, true);
+grid.addEventListener("click", (e) => {
+  if (e.detail === 0) return;
+  const now = Date.now();
+  if (now - pressAt >= HOLD_MS || now - dragEndAt < 300) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+}, true);
+
+/* The Internet card turns over from a tap anywhere on it, either face. Only a
+   card that can turn: when Speedtest is unavailable it is a single face. The
+   headers handle their own clicks. */
+document.getElementById("grid").addEventListener("click", (e) => {
+  if (!e.target.closest("#card-internet.flip") || e.target.closest(".card-head")) return;
+  netFlip(!netFlipped);
 });
 
 // Any input counts as someone still looking.

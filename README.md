@@ -336,6 +336,10 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- On the TV, a tap anywhere on the Forecast card opens the ten-day outlook,
+  not just a tap on its header — the same big target on the way in as on
+  the way out. Off the TV it stays header-only, so the card's figures can be
+  read and selected without the page changing under you.
 - **Three ways back from the outlook, none needing aim.** The remote's Back
   button closes it — opening it adds a history entry, so Back works the way
   it does on any page, and a phone's back swipe with it. In TV mode a tap

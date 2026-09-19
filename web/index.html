@@ -3288,6 +3288,15 @@ document.getElementById("outlook").addEventListener("click", (e) => {
   toggleOutlook(false);
 });
 
+/* And the way in, the same way round: on the TV the whole Forecast card opens
+   the outlook, not just its header. One listener on the grid, since the card
+   itself is rebuilt every two seconds. The header handles its own clicks. */
+document.getElementById("grid").addEventListener("click", (e) => {
+  if (!document.body.classList.contains("tv")) return;
+  if (!e.target.closest("#card-fc") || e.target.closest(".card-head")) return;
+  toggleOutlook(true);
+});
+
 // Any input counts as someone still looking.
 for (const ev of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"])
   document.addEventListener(ev, () => { outlookSince = Date.now(); }, {passive: true});

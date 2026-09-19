@@ -30,6 +30,10 @@
  * outlook's own header takes you back. The corner scale figures that people
  * misread as normals must stay gone.
  *
+ * Then the alert banner at a phone, a tablet and the TV: each alert centred,
+ * saying "until …" rather than NWS's sentence, naming the office, and never
+ * cutting off the event or the end time.
+ *
  * Last, once, in TV mode: every way back from the outlook — the Back button,
  * a tap anywhere on it, the idle return — and that two exits at once go back
  * one step, not two. Two would take the wall display off the dashboard. And
@@ -247,6 +251,60 @@ const measureOutlook = () => {
       console.log('  FAIL ' + label + '  ' + e.message.split('\n')[0]);
     }
     await page.close();
+  }
+
+  // ── the alert banner: centred, and the end time never cut off ─────────
+  {
+    const soon = (h) => new Date(Date.now() + h * 36e5).toISOString();
+    const alerts = { checked: true, error: '', alerts: [
+      { event: 'Tornado Warning', severity: 'Extreme', rank: 4, ends: soon(1),
+        expires: soon(1), sender: 'NWS Chicago IL', headline: 'x' },
+      { event: 'Severe Thunderstorm Warning', severity: 'Severe', rank: 3,
+        ends: soon(20), expires: soon(3), sender: 'NWS Chicago IL', headline: 'x' },
+      { event: 'Flood Watch', severity: 'Moderate', rank: 2, ends: null,
+        expires: soon(50), sender: 'NWS Quad Cities IA IL', headline: 'x' },
+    ]};
+    const bad = [];
+    for (const [w, h, tv] of [[414, 896, false], [1024, 768, false], [1920, 1080, true]]) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify(Object.assign(freshen(), { alerts })),
+      }));
+      await page.goto(BASE + (tv ? '/?tv' : '/'), { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const found = await page.evaluate(() => [...document.querySelectorAll('#alerts .alert')].map(a => {
+        const r = a.getBoundingClientRect(), cs = getComputedStyle(a);
+        const inner = [r.left + parseFloat(cs.paddingLeft), r.right - parseFloat(cs.paddingRight)];
+        const kids = [...a.children].map(k => k.getBoundingClientRect());
+        const lines = {};
+        for (const k of kids) (lines[Math.round(k.top)] ||= []).push(k);
+        const offCentre = Math.max(...Object.values(lines).map(row => {
+          const mid = (Math.min(...row.map(k => k.left)) + Math.max(...row.map(k => k.right))) / 2;
+          return Math.abs(mid - (inner[0] + inner[1]) / 2);
+        }));
+        const cut = [...a.children].filter(k => k.scrollWidth > k.clientWidth + 1)
+                                   .map(k => k.className);
+        const hl = a.querySelector('.hl');
+        return { ev: a.querySelector('.ev').textContent, hl: hl ? hl.textContent : '',
+                 src: (a.querySelector('.src') || {}).textContent || '',
+                 overflow: a.scrollWidth - a.clientWidth, offCentre, cut };
+      }));
+      const where = w + 'px' + (tv ? ' TV' : '');
+      if (found.length !== 3) bad.push(where + ': expected 3 alerts, found ' + found.length);
+      for (const f of found) {
+        if (f.overflow > 1) bad.push(where + ': "' + f.ev + '" overflows by ' + f.overflow + 'px');
+        if (f.cut.includes('ev') || f.cut.includes('hl'))
+          bad.push(where + ': "' + f.ev + '" has its ' + f.cut.join('+') + ' cut off');
+        if (!/^until /.test(f.hl)) bad.push(where + ': "' + f.ev + '" says "' + f.hl + '", not an end time');
+        if (!/^NWS /.test(f.src)) bad.push(where + ': "' + f.ev + '" does not name the office');
+        if (f.offCentre > 3) bad.push(where + ': "' + f.ev + '" sits ' + f.offCentre.toFixed(0) + 'px off centre');
+      }
+      await page.close();
+    }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL alert banner' : '  ok   alert banner');
+    for (const why of bad) console.log('         ' + why);
   }
 
   // ── ways back from the outlook, once, in TV mode ──────────────────────

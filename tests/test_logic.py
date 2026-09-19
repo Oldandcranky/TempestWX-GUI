@@ -357,6 +357,30 @@ class FetcherWording(unittest.TestCase):
         self.assertEqual(fc.backoff(1), 15)
 
 
+class AlertTimes(unittest.TestCase):
+    """The banner says when an alert stops, which needs the hazard's end kept
+    alongside the message's expiry — they differ, most of all for warnings."""
+
+    def one(self, **props):
+        base = {"event": "Flood Watch", "severity": "Moderate",
+                "senderName": "NWS Chicago IL",
+                "expires": "2026-09-20T07:00:00-05:00"}
+        base.update(props)
+        return server.AlertsFetcher.parse({"features": [{"properties": base}]})[0]
+
+    def test_keeps_the_hazard_end(self):
+        a = self.one(ends="2026-09-20T13:00:00-05:00")
+        self.assertEqual(a["ends"], "2026-09-20T13:00:00-05:00")
+        self.assertEqual(a["expires"], "2026-09-20T07:00:00-05:00")
+
+    def test_no_end_is_none_not_missing(self):
+        self.assertIn("ends", self.one())
+        self.assertIsNone(self.one()["ends"])
+
+    def test_keeps_the_office(self):
+        self.assertEqual(self.one()["sender"], "NWS Chicago IL")
+
+
 class StationHealth(unittest.TestCase):
     """The dot on every hub-fed card is this one function."""
 

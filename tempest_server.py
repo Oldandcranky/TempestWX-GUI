@@ -809,7 +809,10 @@ class AlertsFetcher(PollingFetcher):
                 "severity": p.get("severity") or "Unknown",
                 "urgency": p.get("urgency") or "",
                 "headline": headline,
+                # "ends" is when the hazard is over; "expires" only when this
+                # message lapses. The banner shows ends, falling back to expires.
                 "onset": p.get("onset"), "expires": p.get("expires"),
+                "ends": p.get("ends"),
                 "sender": p.get("senderName") or "",
                 "rank": cls.RANK.get(p.get("severity") or "Unknown", 0),
             })

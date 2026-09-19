@@ -336,6 +336,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Alerts say when they end, centred.** The banner printed NWS's headline —
+  the event name a second time, the issue time, and the end time last — and
+  clipped it with an ellipsis, so on the TV the part that mattered was the
+  part cut off. It now reads `FLOOD WATCH  until tomorrow 7:00 AM  NWS
+  Chicago IL`, centred, using the hazard's end time where NWS gives one and
+  the message's expiry where it does not. On a phone it wraps to a second
+  line rather than cut anything.
 - **A hold is a grab, not a tap.** Once Forecast opened the outlook from a
   tap anywhere, pressing and holding it to move it — then letting go without
   moving — opened the outlook instead, and the card had lost its grab cursor,

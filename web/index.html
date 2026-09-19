@@ -432,10 +432,16 @@ body.show-map #map{display:block}
   padding:.5em .9em;border-radius:var(--inset-radius);
   font-size:clamp(12px,1.05vw,17px);font-weight:600;
   border:1px solid currentColor;display:flex;gap:.6em;align-items:baseline;
+  justify-content:center;flex-wrap:wrap;row-gap:.15em;
 }
-.alert .ev{text-transform:uppercase;letter-spacing:.06em}
+/* On a phone the line wraps, centred, rather than cut the end time off —
+   that was the whole complaint. Only a part wider than a line on its own
+   gets an ellipsis, the office before the time; the event name never does. */
+.alert .ev{text-transform:uppercase;letter-spacing:.06em;flex:0 0 auto;white-space:nowrap}
 .alert .hl{font-weight:400;opacity:.85;overflow:hidden;text-overflow:ellipsis;
-           white-space:nowrap}
+           white-space:nowrap;min-width:0;flex:0 1 auto}
+.alert .src{font-weight:400;opacity:.6;overflow:hidden;text-overflow:ellipsis;
+            white-space:nowrap;min-width:0;flex:0 1000 auto}
 /* Extreme is filled, not outlined: at TV distance a tornado warning must not
    read as the same thing as a small-craft advisory. */
 .alert.sev-extreme{color:var(--bg);background:var(--red);border-color:var(--red);
@@ -2500,11 +2506,31 @@ const TEST_ALERTS = (() => {
   const want = (q.get("testalert") || "").split(",").map(x => x.trim().toLowerCase())
                  .filter(x => x in sample);
   const keys = want.length ? want : ["extreme","severe","moderate","minor","unknown"];
+  const hours = {extreme:1, severe:2, moderate:20, minor:50, unknown:0};
   return keys.map(k => ({
-    event: sample[k][0], headline: "PREVIEW · " + sample[k][1],
+    event: sample[k][0], headline: sample[k][1], preview: true,
+    ends: hours[k] ? new Date(Date.now() + hours[k] * 36e5).toISOString() : null,
+    sender: "NWS Chicago IL",
     severity: k.charAt(0).toUpperCase() + k.slice(1), rank: rank[k],
   })).sort((a, b) => b.rank - a.rank);
 })();
+
+/* When an alert stops, in words — "until 7:00 AM", "until tomorrow 7:00 AM",
+   "until Sat 7:00 AM". NWS's own headline says this too, but last, after the
+   event name a second time and the issue time, so on a narrow screen the end
+   time was the part that got cut off. */
+function alertUntil(a){
+  const d = new Date(a.ends || a.expires || NaN);
+  if (isNaN(d)) return "";
+  const now = new Date(), tom = new Date(now);
+  tom.setDate(now.getDate() + 1);
+  const t = d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+  const day = d.toDateString() === now.toDateString() ? ""
+    : d.toDateString() === tom.toDateString() ? "tomorrow "
+    : d - now > 6 * 864e5 ? d.toLocaleDateString([], {month:"short", day:"numeric"}) + " "
+    : d.toLocaleDateString([], {weekday:"short"}) + " ";
+  return "until " + day + t;
+}
 
 function renderAlerts(s){
   const host = document.getElementById("alerts");
@@ -2513,8 +2539,13 @@ function renderAlerts(s){
   host.className = "show";
   host.replaceChildren(...list.slice(0, 3).map(a => {
     const n = el("div", "alert sev-" + (a.severity || "unknown").toLowerCase());
+    // Our own short line rather than NWS's sentence. With no end time at all,
+    // the headline is the only thing left to say, so it stands in. A preview
+    // says so in the part that never gives way.
+    const what = (a.preview ? "PREVIEW · " : "") + (alertUntil(a) || a.headline || "");
     n.innerHTML = '<span class="ev">' + esc(a.event) + '</span>' +
-                  '<span class="hl">' + esc(a.headline || "") + '</span>';
+      (what ? '<span class="hl">' + esc(what) + '</span>' : '') +
+      (a.sender ? '<span class="src">' + esc(a.sender) + '</span>' : '');
     return n;
   }));
 }

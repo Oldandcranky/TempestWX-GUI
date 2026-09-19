@@ -336,6 +336,11 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- The flip icons in the Forecast, Internet and outlook headers are hidden on
+  the TV, where the whole card is the target and there is no keyboard. On a
+  laptop or phone they stay, as the hint that a card does something and as
+  the part a keyboard can reach. The headers' own click wiring is gone — the
+  whole-card listeners cover them now.
 - On a phone, alerts sit just above the footer instead of at the top. iOS 26
   Safari draws its address bar over the top of the page, see-through, and
   with the page resting on the first card the banner sat blurred behind it.

@@ -199,8 +199,10 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
 .card.flipped .face.back{transform:scaleX(1);transition-delay:.24s}
 @media (prefers-reduced-motion:reduce){.face{transition:none}}
 /* The header turns the card over, so it has to look like it does. */
-.fliphead{cursor:pointer;-webkit-tap-highlight-color:transparent}
-.fliphead:hover .flipbtn{color:var(--accent)}
+/* The flip button is a hint that a card does something, and the one part a
+   keyboard can reach. The TV has no keyboard and its owner knows the cards,
+   so there it is only clutter. */
+body.tv .flipbtn{display:none}
 /* Forecast and Internet act on a tap anywhere, but they are draggable cards
    first, so they keep the grab cursor; the flip button lighting up on hover
    is the hint. The outlook is not draggable, so it can say "click" outright. */
@@ -2203,15 +2205,12 @@ function flipBtn(label, action){
   return b;
 }
 
-/* A card header that does something when tapped: the same affordance the
-   Internet card's flip uses. The header, not the body, is the target, for the
-   reasons given there. TV mode hides the footer, so for the ten-day outlook
-   this is the only way in — and back out. */
+/* The flip button in a card's header. Taps anywhere on the card, header
+   included, are handled by the listeners on #grid and #outlook; this adds only
+   the button — the visible hint, and what a keyboard can reach. */
 function headAction(c, label, action){
   const head = c.querySelector(".card-head");
-  head.classList.add("fliphead");
   head.title = label;
-  head.addEventListener("click", action);
   head.appendChild(flipBtn(label, action));
 }
 
@@ -2417,17 +2416,15 @@ function buildInternet(s){
     const {card:tmp, body} = card("internet","Internet",glyph,"cold",srcHealth(n));
     const f = el("div","face " + cls);
     while (tmp.firstChild) f.appendChild(tmp.firstChild);
-    // The header turns it over, and so does a tap anywhere else on the card
-    // (the grid listener below the outlook's). Header-only was the first
-    // version, on the reasoning that a card which turns over when brushed is
-    // worse than one that needs aiming; on the TV's pointer the header proved
-    // too small a target, and the owner chose the whole card. Nothing on
-    // either face is clickable, so a tap cannot have meant anything else.
-    // The button stays — discoverable, and the part a keyboard can reach.
+    // A tap anywhere on the card turns it over — the grid listener below the
+    // outlook's. Header-only was the first version, on the reasoning that a
+    // card which turns over when brushed is worse than one that needs aiming;
+    // on the TV's pointer the header proved too small a target, and the owner
+    // chose the whole card. Nothing on either face is clickable, so a tap
+    // cannot have meant anything else. The button stays, off the TV — a hint,
+    // and the part a keyboard can reach.
     const head = f.querySelector(".card-head");
-    head.classList.add("fliphead");
     head.title = label;
-    head.addEventListener("click", () => netFlip(to));
     head.appendChild(flipBtn(label, () => netFlip(to)));
     flipper.appendChild(f);
     return body;
@@ -3338,12 +3335,11 @@ window.addEventListener("popstate", () => {
     toggleOutlook(want, true);
 });
 
-/* The whole outlook is the way back: nothing on it is clickable, and the
-   header is a thin strip to hit with a remote's pointer. It began TV-only and
-   was widened to every screen by the owner's choice, to match the way in.
-   The header handles its own clicks. */
-document.getElementById("outlook").addEventListener("click", (e) => {
-  if (e.target.closest(".card-head")) return;
+/* The whole outlook is the way back, header included: nothing on it is
+   clickable, and the header alone is a thin strip for a remote's pointer. It
+   began TV-only and was widened to every screen by the owner's choice. The
+   flip button stops its own click, so it cannot fire this as well. */
+document.getElementById("outlook").addEventListener("click", () => {
   toggleOutlook(false);
 });
 
@@ -3351,9 +3347,9 @@ document.getElementById("outlook").addEventListener("click", (e) => {
    header — on the TV, where the header is a hard target for a remote's
    pointer, and everywhere else too, by the owner's choice. One listener on
    the grid, since the card itself is rebuilt every two seconds. The header
-   handles its own clicks. */
+   is part of the card; its flip button stops its own click. */
 document.getElementById("grid").addEventListener("click", (e) => {
-  if (!e.target.closest("#card-fc") || e.target.closest(".card-head")) return;
+  if (!e.target.closest("#card-fc")) return;
   toggleOutlook(true);
 });
 
@@ -3379,9 +3375,9 @@ grid.addEventListener("click", (e) => {
 
 /* The Internet card turns over from a tap anywhere on it, either face. Only a
    card that can turn: when Speedtest is unavailable it is a single face. The
-   headers handle their own clicks. */
+   headers are part of it; the flip buttons stop their own clicks. */
 document.getElementById("grid").addEventListener("click", (e) => {
-  if (!e.target.closest("#card-internet.flip") || e.target.closest(".card-head")) return;
+  if (!e.target.closest("#card-internet.flip")) return;
   netFlip(!netFlipped);
 });
 

@@ -394,6 +394,10 @@ const measureOutlook = () => {
       await page.goto(BASE + '/?tv', { waitUntil: 'networkidle' });
       await page.waitForTimeout(SETTLE_MS);
 
+      const shown = () => page.evaluate(() => [...document.querySelectorAll('#grid .flipbtn')]
+        .some(b => b.getBoundingClientRect().width > 0));
+      if (await shown()) bad.push('flip icons are showing on the TV');
+
       if (!await open()) bad.push('the Forecast header did not open it');
       await page.goBack();
       await page.waitForTimeout(800);
@@ -426,9 +430,17 @@ const measureOutlook = () => {
       await page.goBack();
       await page.waitForTimeout(800);
 
-      // Off the TV, both whole-card taps work the same way.
+      // Off the TV, both whole-card taps work the same way, and the flip
+      // icons come back — as hints, and for the keyboard.
       await page.evaluate(() => setTv(false));
       await page.waitForTimeout(SETTLE_MS);
+      if (!await shown()) bad.push('flip icons are hidden off the TV');
+      await page.focus('#card-fc .flipbtn');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(800);
+      if (!await isOpen()) bad.push('Enter on the Forecast flip button did not open the outlook');
+      await page.goBack(); await page.waitForTimeout(800);
+      if (await isOpen()) bad.push('Back after a keyboard open did not close it');
       await page.$eval('#card-fc .card-body', el => el.click());
       await page.waitForTimeout(800);
       if (!await isOpen()) bad.push('a tap on the Forecast card body did not open it outside TV mode');

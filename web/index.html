@@ -1099,8 +1099,11 @@ function srcHealth(src){
    actual wind, so the card reads as "windy" before you read the number. */
 function tree(windMs){
   const ms = windMs == null ? 0 : windMs;
-  const lean = Math.min(9, 1 + ms * 1.15).toFixed(2);      // degrees
-  const period = Math.max(1.1, 6.5 - ms * 0.55).toFixed(2); // seconds
+  // Below about 7 m/s this is what it always was; past that it used to stop,
+  // so a gale bent the tree no further than a stiff breeze and only shook it
+  // faster. It keeps leaning now, to 20° at around 37 mph.
+  const lean = Math.min(20, 1 + ms * 1.15).toFixed(2);      // degrees
+  const period = Math.max(0.8, 6.5 - ms * 0.55).toFixed(2); // seconds
   const n = el("div", "tree");
   n.style.setProperty("--lean", lean + "deg");
   n.style.setProperty("--sway", period + "s");
@@ -3490,11 +3493,10 @@ const TESTALL_STEPS = [
   {label: "Alerts — the three worst", alerts: ["extreme", "severe", "moderate"]},
   {label: "Alerts — minor and unknown", alerts: ["minor", "unknown"]},
   ...[0, 1, 2, 3, 4, 5].map(i => ({label: "Pollen — " + POLLEN_WORDS[i], pollen: i})),
-  // The tree stops leaning further at about 7 m/s, so the loop stays below it;
-  // past that, only its sway quickens.
   {label: "Wind — calm", wind: 0.3},
   {label: "Wind — a breeze", wind: 3.5},
-  {label: "Wind — strong", wind: 7},
+  {label: "Wind — strong", wind: 9},
+  {label: "Wind — a gale", wind: 19},
   // Turned over without the half-minute timer that turns it back, since a
   // step now lasts until the next click.
   {label: "Internet card, turned over",

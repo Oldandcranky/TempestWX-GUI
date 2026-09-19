@@ -301,6 +301,34 @@ const measureOutlook = () => {
     await page.close();
   }
 
+  // ── the wind tree in a gale, which must stay inside its card ──────────
+  {
+    const bad = [];
+    for (const [w, h] of [[1920, 720], [1920, 1080], [1024, 768], [414, 896], [2560, 1080]]) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify((() => { const s = freshen();
+          s.obs = Object.assign({}, s.obs, {wind_avg_ms: 24, wind_gust_ms: 33});
+          return s; })()),
+      }));
+      await page.goto(BASE, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const at = w + 'x' + h;
+      for (const [id, why] of await page.evaluate(measure, '#grid'))
+        if (id === 'wind') bad.push(at + ' in a gale: ' + why);
+      const lean = await page.evaluate(() => {
+        const t = document.querySelector('#card-wind .tree');
+        return t ? parseFloat(t.style.getPropertyValue('--lean')) : null;
+      });
+      if (!(lean > 9)) bad.push(at + ': a 24 m/s wind leans the tree ' + lean + '°');
+      await page.close();
+    }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL wind tree' : '  ok   wind tree');
+    for (const why of bad) console.log('         ' + why);
+  }
+
   // ── the pollen card's in-season list, which used to be cut off ────────
   {
     const bad = [];
@@ -405,7 +433,7 @@ const measureOutlook = () => {
       await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(800);
       if (await page.evaluate(() => testStep) !== total - 1) bad.push('the left arrow did not go back');
       // The wind steps rise, so the tree should lean further at each.
-      if (leans.length !== 3 || !(leans[0] < leans[1] && leans[1] < leans[2]))
+      if (leans.length !== 4 || !leans.every((v, i) => !i || v > leans[i - 1]))
         bad.push('the tree does not lean further in stronger wind: ' + leans.join(', '));
     } catch (e) { bad.push(e.message.split('\n')[0]); }
     if (posted) bad.push('the test page saved settings ' + posted + ' time(s)');

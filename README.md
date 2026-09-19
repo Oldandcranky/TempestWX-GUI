@@ -338,6 +338,11 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- The wind card's tree keeps leaning in strong wind. It stopped at 9° — about
+  16 mph — so a gale bent it no further than a stiff breeze and only shook it
+  faster; it now reaches 20° at around 37 mph. Ordinary days are unchanged,
+  the formula below 7 m/s being the same one. A new test flies a 24 m/s wind
+  at five screen sizes to check the tree still paints inside its card.
 - The Pollen card's in-season list may take up to three lines instead of being
   cut off after one — eight plants in season fitted on no card size. (The AQI
   scale's "300+" label, suspected of the same, measured fine: it only looks

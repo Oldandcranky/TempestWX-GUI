@@ -396,7 +396,7 @@ const measureOutlook = () => {
 
       const shown = () => page.evaluate(() => [...document.querySelectorAll('#grid .flipbtn')]
         .some(b => b.getBoundingClientRect().width > 0));
-      if (await shown()) bad.push('flip icons are showing on the TV');
+      if (!await shown()) bad.push('flip icons are hidden on the TV — the owner wants them');
 
       if (!await open()) bad.push('the Forecast header did not open it');
       await page.goBack();
@@ -434,7 +434,7 @@ const measureOutlook = () => {
       // icons come back — as hints, and for the keyboard.
       await page.evaluate(() => setTv(false));
       await page.waitForTimeout(SETTLE_MS);
-      if (!await shown()) bad.push('flip icons are hidden off the TV');
+      if (!await shown()) bad.push('flip icons are missing off the TV');
       await page.focus('#card-fc .flipbtn');
       await page.keyboard.press('Enter');
       await page.waitForTimeout(800);

@@ -30,6 +30,10 @@
  * outlook's own header takes you back. The corner scale figures that people
  * misread as normals must stay gone.
  *
+ * Last, once, in TV mode: every way back from the outlook — the Back button,
+ * a tap anywhere on it, the idle return — and that two exits at once go back
+ * one step, not two. Two would take the wall display off the dashboard.
+ *
  * What it cannot check: whether any of it looks right. A card can pass every
  * assertion here and still be ugly, or say something untrue. Look at a
  * screenshot as well.
@@ -240,6 +244,69 @@ const measureOutlook = () => {
       failures++;
       console.log('  FAIL ' + label + '  ' + e.message.split('\n')[0]);
     }
+    await page.close();
+  }
+
+  // ── ways back from the outlook, once, in TV mode ──────────────────────
+  {
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const errs = [];
+    page.on('pageerror', e => errs.push(e.message));
+    await page.route('**/api/state', route => route.fulfill({
+      status: 200, contentType: 'application/json; charset=utf-8',
+      body: JSON.stringify(freshen()),
+    }));
+    const bad = [];
+    const isOpen = () => page.evaluate(() => document.body.classList.contains('show-outlook'));
+    const open = async () => {
+      await page.$eval('#card-fc .card-head', el => el.click());
+      await page.waitForTimeout(800);
+      return isOpen();
+    };
+    const onDashboard = () => page.evaluate(
+      (base) => location.href.startsWith(base) && !!document.getElementById('grid'), BASE);
+    try {
+      await page.goto(BASE + '/?tv', { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+
+      if (!await open()) bad.push('the Forecast header did not open it');
+      await page.goBack();
+      await page.waitForTimeout(800);
+      if (await isOpen()) bad.push('the Back button did not close it');
+      if (!await onDashboard()) bad.push('Back left the dashboard');
+
+      await open();
+      await page.$eval('#outlook .card-body', el => el.click());
+      await page.waitForTimeout(800);
+      if (await isOpen()) bad.push('a tap on the body did not close it in TV mode');
+
+      await open();
+      await page.evaluate(() => {           // header and body in the same instant
+        document.querySelector('#outlook .card-head').click();
+        document.querySelector('#outlook .card-body').click();
+      });
+      await page.waitForTimeout(1200);
+      if (await isOpen()) bad.push('a double exit left it open');
+      if (!await onDashboard()) bad.push('a double exit went back two steps and left the dashboard');
+
+      await open();
+      await page.evaluate(() => { outlookSince = 0; });   // as if idle for hours
+      await page.waitForTimeout(SETTLE_MS);
+      if (await isOpen()) bad.push('the idle return did not bring the cards back');
+
+      // Off the TV, a tap on the body must leave it alone.
+      await page.evaluate(() => setTv(false));
+      await open();
+      await page.$eval('#outlook .card-body', el => el.click());
+      await page.waitForTimeout(800);
+      if (!await isOpen()) bad.push('a tap on the body closed it outside TV mode');
+    } catch (e) {
+      bad.push(e.message.split('\n')[0]);
+    }
+    for (const m of errs) bad.push('pageerror: ' + m);
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL ways back from the outlook' : '  ok   ways back from the outlook');
+    for (const why of bad) console.log('         ' + why);
     await page.close();
   }
 

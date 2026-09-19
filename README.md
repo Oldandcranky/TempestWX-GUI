@@ -336,6 +336,15 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Three ways back from the outlook, none needing aim.** The remote's Back
+  button closes it — opening it adds a history entry, so Back works the way
+  it does on any page, and a phone's back swipe with it. In TV mode a tap
+  anywhere on the outlook closes it too; nothing there is clickable, and the
+  header was a thin strip to hit with an LG pointer. And a TV left on the
+  outlook returns to the cards by itself after three minutes without input.
+  Every exit goes back through the same history entry, guarded so two at
+  once cannot go back two steps — which, tested without the guard, took the
+  browser off the dashboard entirely.
 - The geometry tests now cover the ten-day outlook: opened from the Forecast
   header as a TV would, measured like the cards, with the band labels
   checked against the plot, each other and the drawn forecast lines, and

@@ -2958,7 +2958,12 @@ function render(s){
   if (document.body.classList.contains("show-map") ||
       document.body.classList.contains("show-settings") ||
       document.body.classList.contains("show-outlook")) {
-    if (document.body.classList.contains("show-outlook")) renderOutlook();
+    if (document.body.classList.contains("show-outlook")) {
+      // A wall display left on the outlook goes back to the cards by itself.
+      if (document.body.classList.contains("tv") &&
+          Date.now() - outlookSince > OUTLOOK_IDLE_MS) toggleOutlook(false);
+      else renderOutlook();
+    }
     updateFooter(s);
     return;                                   // cards are hidden; skip the work
   }
@@ -3164,7 +3169,7 @@ function setTv(on){
   document.body.classList.toggle("tv", on);
   const url = new URL(location.href);
   if (on) url.searchParams.set("tv", "1"); else url.searchParams.delete("tv");
-  history.replaceState(null, "", url);
+  history.replaceState(history.state, "", url);   // keep the outlook's entry
 }
 
 /* The map is a third-party embed (Windy — free, no account, no key). It is
@@ -3230,10 +3235,29 @@ function toggleSettings(force){
   else swap();
 }
 
-function toggleOutlook(force){
+/* The outlook is a page of its own as far as the browser is concerned: opening
+   it pushes a history entry, so the Back button — the LG remote's, a phone's
+   swipe — closes it without anyone having to aim at anything. Every other way
+   out (the header, Escape, a tap on the TV, the idle timer) goes back through
+   that same entry, so history and the screen never disagree. leavingOutlook
+   stops two exits in the same moment from going back two steps. */
+let leavingOutlook = false;
+let outlookSince = 0;       // last input while the outlook was up, for the idle return
+const OUTLOOK_IDLE_MS = 3 * 60 * 1000;
+
+function toggleOutlook(force, fromHistory){
+  const open = document.body.classList.contains("show-outlook");
+  const on = force != null ? force : !open;
+  if (!fromHistory) {
+    const ours = !!(history.state && history.state.outlook);
+    if (!on && ours) {
+      if (!leavingOutlook) { leavingOutlook = true; history.back(); }
+      return;                               // popstate does the closing
+    }
+    if (on && !ours) history.pushState({outlook: true}, "");
+  }
+  if (on) outlookSince = Date.now();
   const swap = () => {
-    const on = force != null ? force
-      : !document.body.classList.contains("show-outlook");
     document.body.classList.toggle("show-outlook", on);
     if (on) {
       document.body.classList.remove("show-map", "show-settings");
@@ -3246,6 +3270,27 @@ function toggleOutlook(force){
   else swap();
 }
 document.getElementById("outBtn").addEventListener("click", () => toggleOutlook());
+
+window.addEventListener("popstate", () => {
+  leavingOutlook = false;
+  const want = !!(history.state && history.state.outlook);
+  if (want !== document.body.classList.contains("show-outlook"))
+    toggleOutlook(want, true);
+});
+
+/* On the TV, the whole outlook is the way back: nothing on it is clickable,
+   and the header is a thin strip to hit with a remote's pointer. Elsewhere it
+   stays header-only, so a stray tap on a laptop or phone does not close it.
+   The header handles its own clicks. */
+document.getElementById("outlook").addEventListener("click", (e) => {
+  if (!document.body.classList.contains("tv")) return;
+  if (e.target.closest(".card-head")) return;
+  toggleOutlook(false);
+});
+
+// Any input counts as someone still looking.
+for (const ev of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"])
+  document.addEventListener(ev, () => { outlookSince = Date.now(); }, {passive: true});
 
 document.getElementById("setBtn").addEventListener("click", async () => {
   if (!cfg) await loadConfig();
@@ -3275,6 +3320,9 @@ document.addEventListener("keydown", (e) => {
   try { saved = localStorage.getItem("theme"); } catch (e) {}
   applyTheme(saved === "light" ? "light" : "dark");
   if (new URLSearchParams(location.search).has("tv")) setTv(true);
+  // The page reloads itself after a deploy. If it was on the outlook, the
+  // history entry survived the reload; put the outlook back to match it.
+  if (history.state && history.state.outlook) toggleOutlook(true, true);
   loadPrefs(null);
   tickClock();
   setInterval(tickClock, 1000);

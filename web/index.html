@@ -229,6 +229,17 @@ body:not(.tv) #outlook .card:hover .flipbtn{color:var(--accent)}
 .gauge .fill.yellow{background:var(--yellow)}
 .gauge .fill.red{background:var(--red)}
 
+/* A way out to another page: a button in everything but element. */
+.linkbtn{
+  flex:0 0 auto;align-self:center;margin-top:.35em;padding:.3em .85em;
+  border:1px solid var(--rule);border-radius:999px;
+  font-size:var(--fs-label);font-weight:600;letter-spacing:.06em;
+  color:var(--label);text-decoration:none;white-space:nowrap;
+  -webkit-tap-highlight-color:transparent;
+}
+.linkbtn:hover{color:var(--accent);border-color:var(--accent)}
+body.tv .linkbtn{display:none}
+
 .flipbtn{
   background:none;border:0;padding:0;margin-left:.1em;line-height:0;
   color:var(--faint);cursor:pointer;-webkit-tap-highlight-color:transparent;
@@ -2855,6 +2866,39 @@ function netDetail(b, n){
   b.appendChild(caption(bits.join(" · "), "faint"));
 }
 
+/* A way into Speedtest Tracker itself, for the detail this card will not
+   show. It belongs on the back whether or not there is any history yet —
+   with none, it is the only thing there worth tapping. Not on the TV, where
+   a second browser tab is no use to a remote. */
+function netLink(n){
+  const href = lanLink(n.url);
+  if (!href) return null;
+  const a = el("a", "linkbtn");
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.textContent = "Speedtest Tracker \u2197";
+  // The card turns over when tapped anywhere, so this keeps its own tap,
+  // exactly as the flip button does.
+  a.addEventListener("click", (e) => e.stopPropagation());
+  a.draggable = false;
+  return a;
+}
+
+/* The server reaches its own services over the loopback address, which means
+   nothing in a browser on another device. Anything pointed at this machine is
+   rewritten to whatever address this page was opened on, so the link works
+   from the sofa as well as from the NAS. */
+function lanLink(url){
+  if (!url) return "";
+  try {
+    const u = new URL(url, location.href);
+    if (["127.0.0.1", "localhost", "0.0.0.0", "[::1]", "::1"].includes(u.hostname))
+      u.hostname = location.hostname;
+    return u.href;
+  } catch (e) { return ""; }
+}
+
 function buildInternet(s){
   const n = s.internet || {};
   if (!n.available) {
@@ -2945,6 +2989,8 @@ function buildInternet(s){
   b.appendChild(caption(bits.join(" · ") || "Speedtest Tracker", "faint"));
 
   netDetail(back, n);
+  const link = netLink(n);
+  if (link) back.appendChild(link);
   return c;
 }
 

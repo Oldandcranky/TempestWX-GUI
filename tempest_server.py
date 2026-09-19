@@ -623,7 +623,10 @@ class SpeedtestFetcher(PollingFetcher):
     # -- fetch ------------------------------------------------------------
     def fetch_once(self):
         url = (self.base + "/api/v1/results?"
-               + urllib.parse.urlencode({"per.page": self.WINDOW,
+               # JSON:API paging: page[size], not per_page or per.page, both
+               # of which the tracker ignores — it was returning its default
+               # 25 and happening to be enough.
+               + urllib.parse.urlencode({"page[size]": self.WINDOW,
                                          "sort": "-created_at"}))
         req = urllib.request.Request(
             url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
@@ -1573,6 +1576,9 @@ class Dashboard:
         snap["internet"] = (self.speedtest.snapshot() if self.speedtest
                             else {"available": False,
                                   "error": "Add a Speedtest token in settings"})
+        # Where the tracker's own page lives, so the card can offer a way in.
+        # It is a LAN address and no secret; the token stays server-side.
+        snap["internet"]["url"] = self.args.speedtest_url or ""
         snap["precip_obs"] = (self.observations.snapshot() if self.observations
                               else {"available": False, "error": ""})
         snap["alerts"] = (self.alerts.snapshot() if self.alerts

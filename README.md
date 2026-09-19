@@ -338,6 +338,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- The Internet card's back carries a link to Speedtest Tracker itself, for
+  the detail the card will not show. The server knows its tracker as
+  `127.0.0.1`, which means nothing in a browser on the sofa, so the link is
+  rebuilt around whatever address the page was opened on. Not shown on the
+  TV, where a second tab is no use to a remote.
+- The results request asked for `per.page`, which Speedtest Tracker ignores —
+  it was taking the default 25 and that happening to cover a day. It now asks
+  the way the API documents, `page[size]`.
 - The wind card's tree keeps leaning in strong wind. It stopped at 9° — about
   16 mph — so a gale bent it no further than a stiff breeze and only shook it
   faster; it now reaches 20° at around 37 mph. Ordinary days are unchanged,

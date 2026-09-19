@@ -301,6 +301,59 @@ const measureOutlook = () => {
     await page.close();
   }
 
+  // ── the Internet card's way out to Speedtest Tracker ──────────────────
+  {
+    const bad = [];
+    for (const [w, h, tv] of [[1920, 1080, false], [414, 896, false], [1920, 1080, true]]) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify((() => { const s = freshen();
+          s.internet = Object.assign({}, s.internet, {url: 'http://127.0.0.1:8080'});
+          return s; })()),
+      }));
+      await page.goto(BASE + (tv ? '/?tv' : '/'), { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      await page.$eval('#card-internet .face.front .card-body', el => el.click());
+      await page.waitForTimeout(900);
+      const at = w + 'x' + h + (tv ? ' TV' : '');
+      const r = await page.evaluate(() => {
+        const a = document.querySelector('#card-internet .face.back .linkbtn');
+        if (!a) return {missing: true};
+        const ar = a.getBoundingClientRect();
+        const cr = document.getElementById('card-internet').getBoundingClientRect();
+        return {href: a.href, target: a.target, rel: a.rel,
+                shown: ar.width > 0 && ar.height > 0,
+                inside: ar.left >= cr.left - 1 && ar.right <= cr.right + 1 &&
+                        ar.top >= cr.top - 1 && ar.bottom <= cr.bottom + 1};
+      });
+      if (r.missing) { bad.push(at + ': no link'); await page.close(); continue; }
+      if (tv) {
+        if (r.shown) bad.push(at + ': the link is showing on the TV');
+      } else {
+        if (!r.shown) bad.push(at + ': the link is hidden');
+        if (!r.inside) bad.push(at + ': the link sits outside the card');
+        // 127.0.0.1 is the server talking to itself; a browser needs this host.
+        const want = new URL(BASE).hostname;
+        if (!r.href.includes(want + ':8080')) bad.push(at + ': link points at ' + r.href);
+        if (r.target !== '_blank' || !/noopener/.test(r.rel))
+          bad.push(at + ': link opens unsafely (' + r.target + ', ' + r.rel + ')');
+        // Tapping it must not turn the card over.
+        await page.$eval('#card-internet .face.back .linkbtn', a => {
+          a.addEventListener('click', e => e.preventDefault(), {once: true});
+          a.click();
+        });
+        await page.waitForTimeout(700);
+        if (!await page.evaluate(() => document.querySelector('#card-internet.flipped')))
+          bad.push(at + ': tapping the link turned the card back');
+      }
+      await page.close();
+    }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL internet link' : '  ok   internet link');
+    for (const why of bad) console.log('         ' + why);
+  }
+
   // ── the wind tree in a gale, which must stay inside its card ──────────
   {
     const bad = [];

@@ -191,7 +191,233 @@
   "failures": 1,
   "fetched_at": 1789568229.1540258,
   "healthy": null,
-  "history": [],
+  "history": [
+   {
+    "at": 1789482129.1540258,
+    "down": 101.3,
+    "loaded": 18.6,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 12.4,
+    "up": 9.8
+   },
+   {
+    "at": 1789485729.1540258,
+    "down": 200.0,
+    "loaded": 45.0,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 15.5,
+    "up": 51.0
+   },
+   {
+    "at": 1789489329.1540258,
+    "down": 298.7,
+    "loaded": 71.4,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 18.6,
+    "up": 92.2
+   },
+   {
+    "at": 1789492929.1540258,
+    "down": 397.4,
+    "loaded": 97.8,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 21.7,
+    "up": 133.4
+   },
+   {
+    "at": 1789496529.1540258,
+    "down": 496.1,
+    "loaded": 124.2,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 24.8,
+    "up": 174.6
+   },
+   {
+    "at": 1789500129.1540258,
+    "down": 594.8,
+    "loaded": 150.6,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 12.4,
+    "up": 215.8
+   },
+   {
+    "at": 1789503729.1540258,
+    "down": 693.5,
+    "loaded": 177.0,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 15.5,
+    "up": 9.8
+   },
+   {
+    "at": 1789507329.1540258,
+    "down": null,
+    "loaded": null,
+    "loss": null,
+    "ok": false,
+    "ping": null,
+    "up": null
+   },
+   {
+    "at": 1789510929.1540258,
+    "down": 890.9,
+    "loaded": 45.0,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 21.7,
+    "up": 92.2
+   },
+   {
+    "at": 1789514529.1540258,
+    "down": 101.3,
+    "loaded": 71.4,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 24.8,
+    "up": 133.4
+   },
+   {
+    "at": 1789518129.1540258,
+    "down": 200.0,
+    "loaded": 97.8,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 12.4,
+    "up": 174.6
+   },
+   {
+    "at": 1789521729.1540258,
+    "down": 298.7,
+    "loaded": 124.2,
+    "loss": 3.7,
+    "ok": true,
+    "ping": 15.5,
+    "up": 215.8
+   },
+   {
+    "at": 1789525329.1540258,
+    "down": 397.4,
+    "loaded": 150.6,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 18.6,
+    "up": 9.8
+   },
+   {
+    "at": 1789528929.1540258,
+    "down": 496.1,
+    "loaded": 177.0,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 21.7,
+    "up": 51.0
+   },
+   {
+    "at": 1789532529.1540258,
+    "down": 594.8,
+    "loaded": 18.6,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 24.8,
+    "up": 92.2
+   },
+   {
+    "at": 1789536129.1540258,
+    "down": 693.5,
+    "loaded": 45.0,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 12.4,
+    "up": 133.4
+   },
+   {
+    "at": 1789539729.1540258,
+    "down": 792.2,
+    "loaded": 71.4,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 15.5,
+    "up": 174.6
+   },
+   {
+    "at": 1789543329.1540258,
+    "down": 890.9,
+    "loaded": 97.8,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 18.6,
+    "up": 215.8
+   },
+   {
+    "at": 1789546929.1540258,
+    "down": null,
+    "loaded": null,
+    "loss": null,
+    "ok": false,
+    "ping": null,
+    "up": null
+   },
+   {
+    "at": 1789550529.1540258,
+    "down": 200.0,
+    "loaded": 150.6,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 24.8,
+    "up": 51.0
+   },
+   {
+    "at": 1789554129.1540258,
+    "down": 298.7,
+    "loaded": 177.0,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 12.4,
+    "up": 92.2
+   },
+   {
+    "at": 1789557729.1540258,
+    "down": 397.4,
+    "loaded": 18.6,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 15.5,
+    "up": 133.4
+   },
+   {
+    "at": 1789561329.1540258,
+    "down": 496.1,
+    "loaded": 45.0,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 18.6,
+    "up": 174.6
+   },
+   {
+    "at": 1789564929.1540258,
+    "down": 594.8,
+    "loaded": 71.4,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 21.7,
+    "up": 215.8
+   },
+   {
+    "at": 1789568529.1540258,
+    "down": 693.5,
+    "loaded": 97.8,
+    "loss": 0.0,
+    "ok": true,
+    "ping": 24.8,
+    "up": 9.8
+   }
+  ],
   "isp": "Comcast Cable Communications LLC",
   "issues": [
    "Most recent test failed"
@@ -205,6 +431,7 @@
   "status": "degraded",
   "tests": 25,
   "up": 209.1,
+  "url": "http://127.0.0.1:8080",
   "window_h": 24.0
  },
  "last_type": "rapid_wind",

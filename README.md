@@ -338,6 +338,15 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **An Internet page** (`n`, or the footer icon, or "The last week" on the
+  card's back): a week of tests full-screen — speed against the plan, latency
+  idle against under load, failed tests marked on the floor, the medians and
+  the worst of each, and the last eight tests each linking to its own result
+  on speedtest.net. Its week is fetched when the page is opened, not ridden
+  along with every snapshot, and held for a few minutes.
+- The Internet card's own window is a week rather than a day: one bad
+  afternoon says little, and a week says whether the line is getting worse.
+  Windows that run to days are now said in days, not "168h".
 - The Internet card's back carries a link to Speedtest Tracker itself, for
   the detail the card will not show. The server knows its tracker as
   `127.0.0.1`, which means nothing in a browser on the sofa, so the link is

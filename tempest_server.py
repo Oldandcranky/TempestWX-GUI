@@ -188,6 +188,68 @@ class PollingFetcher(threading.Thread):
         thing would have refreshed anyway."""
         return min(self.REFRESH, self.RETRY * (2 ** min(fails - 1, 3)))
 
+    def long_history(self, days=None):
+        """Several days of results, for the Internet page. Held for five
+        minutes: the page is opened by hand, and a tracker that tests hourly
+        has nothing new to say in between."""
+        days = int(days or self.HISTORY_DAYS)
+        now = time.time()
+        with self.history_lock:
+            got = self.history_cache
+        if got and got[0] == days and now - got[2] < self.HISTORY_CACHE:
+            return got[1]
+        url = (self.base + "/api/v1/results?"
+               + urllib.parse.urlencode({"page[size]": self.HISTORY_ROWS,
+                                         "sort": "-created_at"}))
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
+                          "Accept": "application/json",
+                          "Authorization": "Bearer " + self.token})
+        with urllib.request.urlopen(req, timeout=25) as r:
+            raw = json.loads(r.read().decode("utf-8"))
+        out = self.window(raw, days, now)
+        with self.history_lock:
+            self.history_cache = (days, out, now)
+        return out
+
+    @staticmethod
+    def span(hours):
+        """How long a window is, in words. Past a couple of days "168h" is
+        arithmetic the reader should not have to do."""
+        h = round(hours or 0) or 24
+        return "%dd" % round(h / 24.0) if h >= 48 else "%dh" % h
+
+    @classmethod
+    def window(cls, raw, days, now=None):
+        """Every result within the last `days`, oldest first, with the per-test
+        detail the card has no room for: jitter, the server that answered, and
+        the link to the test's own page on speedtest.net."""
+        now = time.time() if now is None else now
+        floor = now - days * 86400.0
+        rnd = lambda v, dp=1: None if v is None else round(v, dp)
+        pts = []
+        for r in raw.get("data") or []:
+            at = cls._epoch(r.get("created_at"))
+            if at is None or at < floor:
+                continue
+            d = r.get("data") or {}
+            idle, load = cls._latency(r)
+            pts.append({
+                "at": at,
+                "ok": cls._ok(r),
+                "down": rnd(cls._mbps(r.get("download_bits"), r.get("download"))),
+                "up": rnd(cls._mbps(r.get("upload_bits"), r.get("upload"))),
+                "ping": rnd(idle),
+                "loaded": rnd(load),
+                "jitter": rnd(cls._num((d.get("ping") or {}).get("jitter")), 2),
+                "loss": rnd(cls._num(d.get("packetLoss")), 2),
+                "server": ((d.get("server") or {}).get("name") or "") or None,
+                "url": ((d.get("result") or {}).get("url") or "") or None,
+            })
+        pts.sort(key=lambda p: p["at"])
+        return {"available": True, "error": "", "days": days,
+                "fetched_at": now, "points": pts}
+
     def run(self):
         fails = 0
         while not self.stop_event.is_set():
@@ -519,8 +581,11 @@ class SpeedtestFetcher(PollingFetcher):
 
     REFRESH = 300             # tests run hourly; this is just staleness
     RETRY = 60
-    WINDOW = 24               # results to pull, i.e. a day at hourly
-    WINDOW_H = 24.0           # and how far back those results may reach
+    # A week, not a day: one bad afternoon says little, and a week says
+    # whether the line is getting worse. 200 rows covers seven days of
+    # hourly tests with room to spare.
+    WINDOW = 200              # results to pull
+    WINDOW_H = 168.0          # and how far back those results may reach
     DOWN_AFTER = 3            # consecutive failures before the line is "down"
 
     # What counts as a problem worth putting on a wall display.
@@ -529,6 +594,13 @@ class SpeedtestFetcher(PollingFetcher):
     JITTER_MS = 30.0
     PLAN_FRAC = 0.5           # this fraction of the advertised rate
 
+    # The Internet page's week, fetched when someone opens it rather than
+    # every two seconds: 400 rows covers a fortnight of hourly tests, and the
+    # answer is held for five minutes so reopening the page is free.
+    HISTORY_DAYS = 7
+    HISTORY_ROWS = 400
+    HISTORY_CACHE = 300
+
     def __init__(self, base_url, token, stop_event,
                  plan_down=0.0, plan_up=0.0):
         PollingFetcher.__init__(self, stop_event)
@@ -536,6 +608,8 @@ class SpeedtestFetcher(PollingFetcher):
         self.token = token
         self.plan_down = plan_down or 0.0
         self.plan_up = plan_up or 0.0
+        self.history_lock = threading.Lock()
+        self.history_cache = None        # (days, payload, fetched_at)
 
     def describe(self, exc):
         # A token without the right ability is a setup mistake, not an
@@ -736,10 +810,10 @@ class SpeedtestFetcher(PollingFetcher):
             issues.append("Upload %d%% of plan"
                           % round(out["up"] / plan_up * 100))
         if out["failures"]:
-            issues.append("%d failed test%s in %dh"
+            issues.append("%d failed test%s in %s"
                           % (out["failures"],
                              "" if out["failures"] == 1 else "s",
-                             round(out["window_h"]) or 24))
+                             cls.span(out["window_h"])))
         if out["healthy"] is False:
             issues.append("Below your threshold")
 
@@ -1681,6 +1755,15 @@ class Handler(BaseHTTPRequestHandler):
         body["changed"] = changed
         self._send(200, json.dumps(body), "application/json; charset=utf-8")
 
+    @staticmethod
+    def _days(query):
+        """?days=N from the Internet page, held to something sensible."""
+        try:
+            n = int(urllib.parse.parse_qs(query or "").get("days", ["7"])[0])
+        except (TypeError, ValueError):
+            return 7
+        return max(1, min(31, n))
+
     def do_GET(self):
         raw, _, query = self.path.partition("?")
         path = raw.rstrip("/") or "/"
@@ -1699,6 +1782,21 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.dumps(self.server.dashboard.snapshot(),
                                   allow_nan=False, default=str)
                 self._send(200, body, "application/json; charset=utf-8")
+            elif path == "/api/internet":
+                # Fetched only when the Internet page is opened, not with
+                # every snapshot: a week of results is far too much to send
+                # twice a second.
+                dash = self.server.dashboard
+                if not dash.speedtest:
+                    body = {"available": False,
+                            "error": "Add a Speedtest token in settings"}
+                else:
+                    try:
+                        body = dash.speedtest.long_history(self._days(query))
+                    except Exception as e:
+                        body = {"available": False,
+                                "error": dash.speedtest.describe(e)}
+                self._send(200, json.dumps(body), "application/json; charset=utf-8")
             elif path == "/api/wind":
                 # Tiny payload, so the compass can be polled far more often
                 # than the full snapshot without wasting bandwidth.

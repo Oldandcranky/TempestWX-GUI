@@ -636,6 +636,48 @@ body.no-drift #app{animation:none}
    six small ones: the Forecast card's day strip, stretched to all ten days,
    under a range plot drawn the way the Temperature trace is. It fills the
    page because it IS a card — the type sizes against it like any other. */
+/* The Internet page: the same idea as the ten-day outlook — one card the size
+   of the grid — but its week of tests is fetched when the page is opened
+   rather than ridden along with every snapshot. */
+#netpage{display:none;flex:1;min-height:0}
+body.show-net #grid{display:none}
+body.show-net #netpage{display:flex}
+#netpage .card{flex:1;min-width:0}
+#netpage .netplots{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+                   gap:clamp(4px,1.4cqh,14px)}
+#netpage .card-body > .row{flex:0 0 auto}
+#netpage .netplot{position:relative;flex:1 1 0;min-height:0}
+#netpage .netplot .ax{position:absolute;left:.4em;font-size:var(--fs-label);
+                      color:var(--faint);line-height:1;white-space:nowrap}
+#netpage .netplot .ax.hi{top:.2em} #netpage .netplot .ax.lo{bottom:.2em}
+#netpage .netplot .ax.mid{top:50%;transform:translateY(-50%)}
+#netpage .netplot .tag{position:absolute;right:.4em;top:.2em;
+                       font-size:var(--fs-label);letter-spacing:.06em;
+                       text-transform:uppercase;color:var(--label)}
+/* The recent tests, one per row: what the card cannot show and the tracker
+   shows too slowly to glance at. */
+#netpage .tests{flex:0 0 auto;display:flex;flex-direction:column;gap:2px;
+                font-size:var(--fs-label)}
+#netpage .tests .row{display:grid;grid-template-columns:auto 1fr 1fr 1fr 1fr auto;
+                     gap:.6em;align-items:baseline;padding:.15em .4em;
+                     border-radius:var(--inset-radius)}
+#netpage .tests .row.head{color:var(--label);letter-spacing:.06em;
+                          text-transform:uppercase}
+#netpage .tests .row.bad{background:color-mix(in srgb,var(--red) 12%,transparent)}
+#netpage .tests .row .n{text-align:right;font-variant-numeric:tabular-nums}
+#netpage .tests .row a{color:var(--label);text-decoration:none}
+#netpage .tests .row a:hover{color:var(--accent)}
+body.tv #netpage .tests .row a{display:none}
+@media (max-width:720px){
+  #netpage{display:block;flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
+  body.show-net #netpage{display:block}
+  #netpage .card{container-type:inline-size;min-height:100%;overflow:visible}
+  #netpage .netplot{flex:0 0 auto;height:clamp(120px,22dvh,220px)}
+  /* Six columns will not fit a phone: the middle four carry the reading. */
+  #netpage .tests .row{grid-template-columns:auto 1fr 1fr 1fr}
+  #netpage .tests .row .drop,#netpage .tests .row a{display:none}
+}
+
 #outlook{display:none;flex:1;min-height:0}
 body.show-outlook #grid{display:none}
 body.show-outlook #outlook{display:flex}
@@ -904,6 +946,7 @@ body.show-settings #settings{display:block}
   <div id="map" aria-hidden="true"></div>
   <div id="settings" aria-hidden="true"></div>
   <div id="outlook" aria-hidden="true"></div>
+  <div id="netpage" aria-hidden="true"></div>
   <footer>
     <span class="clock" id="clock">--:--:--</span>
     <span class="date" id="date"></span>
@@ -928,6 +971,14 @@ body.show-settings #settings{display:block}
                 stroke="currentColor" stroke-width="1.8"/>
           <path d="M3 10h18M8 3v4M16 3v4" stroke="currentColor"
                 stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button id="netBtn" title="Internet, the last week (n)" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+             style="vertical-align:-.12em">
+          <path d="M7 14V6M7 6 4.5 8.5M7 6l2.5 2.5M17 10v8M17 18l2.5-2.5M17 18l-2.5-2.5"
+                stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                stroke-linejoin="round"/>
         </svg>
       </button>
       <button id="setBtn" title="Settings (s)" aria-pressed="false">⚙</button>
@@ -2634,6 +2685,12 @@ function buildHardware(s){
    is what people look for, but the wording underneath is driven by packet
    loss, jitter and latency under load — a line can test fast and still be
    unusable, and those are the numbers that say so. */
+/* A window in words: "6h", "7 days". Past a couple of days, hours are
+   arithmetic the reader should not have to do. */
+function spanWords(hours){
+  const h = Math.round(hours || 0) || 24;
+  return h >= 48 ? Math.round(h / 24) + " days" : h + "h";
+}
 const NET_TONE = {good:"green", degraded:"accent", down:"red", unknown:"muted"};
 const NET_WORD = {good:"No problems", degraded:"Degraded", down:"Down",
                   unknown:"Unknown"};
@@ -2861,7 +2918,7 @@ function netDetail(b, n){
      sub:range(ups)},
   ]));
   const bits = [pts.length + " test" + (pts.length === 1 ? "" : "s") +
-                " over " + (Math.round(n.window_h) || 24) + "h"];
+                " over " + spanWords(n.window_h)];
   if (n.server) bits.push("via " + n.server);
   b.appendChild(caption(bits.join(" · "), "faint"));
 }
@@ -2873,7 +2930,7 @@ function netDetail(b, n){
 function netLink(n){
   const href = lanLink(n.url);
   if (!href) return null;
-  const a = el("a", "linkbtn");
+  const a = el("a", "linkbtn out");
   a.href = href;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
@@ -2965,7 +3022,7 @@ function buildInternet(s){
   list.style.textAlign = "center";
   list.innerHTML = issues.length
     ? issues.map(esc).join("<br>")
-    : esc("Nothing flagged in " + (Math.round(n.window_h) || 24) + " hours");
+    : esc("Nothing flagged in " + spanWords(n.window_h));
   if (issues.length) list.style.color = "var(--" + tone + ")";
   b.appendChild(list);
 
@@ -2989,6 +3046,12 @@ function buildInternet(s){
   b.appendChild(caption(bits.join(" · ") || "Speedtest Tracker", "faint"));
 
   netDetail(back, n);
+  const week = el("a", "linkbtn week");
+  week.href = "#";
+  week.textContent = "The last week";
+  week.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleNet(true); });
+  week.draggable = false;
+  back.appendChild(week);
   const link = netLink(n);
   if (link) back.appendChild(link);
   return c;
@@ -3512,6 +3575,199 @@ function normLabel(band, days, y, H, n){
          esc(String(Math.round(temp(e.v)))) + '°</span>';
 }
 
+/* The Internet page: a week of tests, fetched when the page is opened.
+
+   The card answers "is the line all right now?". This answers the questions
+   that need a week to ask: is it getting worse, does it fall over at the same
+   time every day, is the slow afternoon unusual. Speed is plotted against the
+   plan, and latency idle against latency under load, because a line that
+   tests fast and buckles under load is the one that ruins calls. */
+let netWeek = null, netWeekAt = 0, netWeekBusy = false;
+const NET_WEEK_MS = 4 * 60 * 1000;
+
+async function loadNetWeek(force){
+  if (netWeekBusy) return netWeek;
+  if (!force && netWeek && Date.now() - netWeekAt < NET_WEEK_MS) return netWeek;
+  netWeekBusy = true;
+  try {
+    const r = await fetch("api/internet?days=7", {cache: "no-store"});
+    netWeek = await r.json();
+    netWeekAt = Date.now();
+  } catch (e) {
+    netWeek = {available: false, error: "Could not reach the dashboard server"};
+  } finally {
+    netWeekBusy = false;
+  }
+  if (document.body.classList.contains("show-net")) renderNetPage();
+  return netWeek;
+}
+
+const netMed = (vals) => {
+  const v = vals.filter(x => x != null).sort((a, b) => a - b);
+  return v.length ? v[Math.floor(v.length / 2)] : null;
+};
+
+function renderNetPage(){
+  const host = document.getElementById("netpage");
+  const s = last || {};
+  const n = s.internet || {};
+  const w = netWeek || {};
+  const {card: c, body: b} = card("net", "Internet", "⇅", "cold", srcHealth(n));
+  headAction(c, "Back to the cards", () => toggleNet(false));
+  if (!w.available) {
+    b.appendChild(el("div", "mid"));
+    b.appendChild(caption(w.error || "Loading the last week…"));
+    const link = netLink(n);
+    if (link) b.appendChild(link);
+    b.appendChild(el("div", "mid"));
+    host.replaceChildren(c);
+    return;
+  }
+  const pts = w.points || [];
+  const ok = pts.filter(p => p.ok);
+  const failed = pts.length - ok.length;
+  const bloats = ok.filter(p => p.ping != null && p.loaded != null)
+                   .map(p => p.loaded - p.ping);
+  const worstBloat = bloats.length ? Math.max(...bloats) : null;
+  const worstLoss = ok.reduce((m, p) => p.loss != null && p.loss > m ? p.loss : m, 0);
+
+  b.appendChild(cells([
+    {k: "Down", v: netMb(netMed(ok.map(p => p.down))), u: "Mbps", small: true,
+     sub: "median of " + ok.length},
+    {k: "Up", v: netMb(netMed(ok.map(p => p.up))), u: "Mbps", small: true,
+     sub: "median"},
+    {k: "Under load", v: worstBloat == null ? DASH : sign(worstBloat, 0), u: "ms",
+     small: true, sub: "worst", tone: (worstBloat != null && worstBloat > BLOAT_BAD) ? "red" : null},
+    {k: "Loss", v: worstLoss ? fg(worstLoss) : "0", u: "%", small: true,
+     sub: "worst", tone: worstLoss ? "red" : null},
+    {k: "Failed", v: String(failed), small: true,
+     sub: "of " + pts.length, tone: failed ? "red" : null},
+  ]));
+
+  const plots = el("div", "netplots");
+  plots.appendChild(netWeekPlot(pts, "speed", n));
+  plots.appendChild(netWeekPlot(pts, "latency", n));
+  b.appendChild(plots);
+
+  // The last handful of tests, newest first, each linking to its own result.
+  const rows = el("div", "tests");
+  const head = el("div", "row head");
+  head.innerHTML = '<span>When</span><span class="n">Down</span><span class="n">Up</span>' +
+    '<span class="n">Ping</span><span class="n drop">Loss</span><span></span>';
+  rows.appendChild(head);
+  for (const p of pts.slice(-8).reverse()) {
+    const r = el("div", "row" + (p.ok ? "" : " bad"));
+    const link = p.url ? '<a href="' + esc(p.url) + '" target="_blank" ' +
+      'rel="noopener noreferrer" title="This test on speedtest.net">↗</a>' : '<span></span>';
+    r.innerHTML =
+      '<span>' + esc(dayClock(p.at)) + '</span>' +
+      '<span class="n">' + esc(p.ok ? netMb(p.down) : "failed") + '</span>' +
+      '<span class="n">' + esc(p.ok ? netMb(p.up) : DASH) + '</span>' +
+      '<span class="n">' + esc(p.ping == null ? DASH : fg(p.ping)) + '</span>' +
+      '<span class="n drop">' + esc(p.loss == null ? DASH : fg(p.loss)) + '</span>' +
+      link;
+    rows.appendChild(r);
+  }
+  b.appendChild(rows);
+
+  const bits = [pts.length + " tests over " + spanWords(w.days * 24)];
+  if (n.isp) bits.push(n.isp);
+  b.appendChild(caption(bits.join(" · "), "faint"));
+  const link = netLink(n);
+  if (link) b.appendChild(link);
+  host.replaceChildren(c);
+  fitCards();
+}
+
+/* One week-long plot: either speed against the plan, or latency idle against
+   latency under load. Failed tests are marked on the floor — a gap in a line
+   says "no reading", and the difference matters. */
+function netWeekPlot(pts, kind, n){
+  const W = 100, H = 30, pad = 3;
+  const wrap = el("div", "netplot");
+  const times = pts.map(p => p.at);
+  const t0 = Math.min(...times), t1 = Math.max(...times);
+  const x = (t) => t1 === t0 ? W / 2 : ((t - t0) / (t1 - t0)) * W;
+  const speed = kind === "speed";
+  const series = speed
+    ? [["down", "cold"], ["up", "accent"]]
+    : [["ping", "green"], ["loaded", "red"]];
+  let hi = 0;
+  for (const p of pts) for (const [key] of series)
+    if (p[key] != null) hi = Math.max(hi, p[key]);
+  if (speed && n.plan_down) hi = Math.max(hi, n.plan_down);
+  if (!isFinite(hi) || hi <= 0) hi = 1;
+  const y = (v) => H - pad - (v / hi) * (H - 2 * pad);
+  const line = (key, tone) => {
+    let d = "", pen = false;
+    for (const p of pts) {
+      if (p[key] == null) { pen = false; continue; }
+      d += (pen ? "L" : "M") + x(p.at).toFixed(2) + " " + y(p[key]).toFixed(2);
+      pen = true;
+    }
+    return d ? '<path d="' + d + '" fill="none" stroke="var(--' + tone + ')" ' +
+      'stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" ' +
+      'vector-effect="non-scaling-stroke"/>' : "";
+  };
+  let art = "";
+  if (speed && n.plan_down)
+    art += '<path d="M0 ' + y(n.plan_down).toFixed(2) + ' H' + W + '" fill="none" ' +
+      'stroke="var(--label)" stroke-width="1" stroke-dasharray="3 3" opacity=".5" ' +
+      'vector-effect="non-scaling-stroke"/>';
+  if (!speed)
+    art += '<path d="M0 ' + y(BLOAT_BAD).toFixed(2) + ' H' + W + '" fill="none" ' +
+      'stroke="var(--red)" stroke-width="1" stroke-dasharray="3 3" opacity=".45" ' +
+      'vector-effect="non-scaling-stroke"/>';
+  for (const p of pts)
+    if (!p.ok)
+      art += '<path d="M' + x(p.at).toFixed(2) + ' ' + (H - 1.2) + ' V' + H + '" ' +
+        'stroke="var(--red)" stroke-width="2" vector-effect="non-scaling-stroke"/>';
+  const dayTicks = [];
+  for (let t = Math.ceil(t0 / 86400) * 86400; t <= t1; t += 86400) dayTicks.push(t);
+  for (const t of dayTicks)
+    art += '<path d="M' + x(t).toFixed(2) + ' 0 V' + H + '" stroke="var(--rule)" ' +
+      'stroke-dasharray="1 3" vector-effect="non-scaling-stroke"/>';
+
+  wrap.innerHTML =
+    '<svg class="plot" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+      art + series.map(([k, tone]) => line(k, tone)).join("") +
+    '</svg>' +
+    '<span class="ax hi">' + esc(speed ? netMb(hi) + " Mbps" : Math.round(hi) + " ms") + '</span>' +
+    '<span class="ax lo">0</span>' +
+    '<span class="tag">' + (speed
+      ? 'Down <b style="color:var(--cold)">—</b> Up <b style="color:var(--accent)">—</b>'
+      : 'Idle <b style="color:var(--green)">—</b> Loaded <b style="color:var(--red)">—</b>') +
+    '</span>';
+  return wrap;
+}
+
+let leavingNet = false;
+
+function toggleNet(force, fromHistory){
+  const open = document.body.classList.contains("show-net");
+  const on = force != null ? force : !open;
+  if (!fromHistory) {
+    const ours = !!(history.state && history.state.netpage);
+    if (!on && ours) {
+      if (!leavingNet) { leavingNet = true; history.back(); }
+      return;
+    }
+    if (on && !ours) history.pushState({netpage: true}, "");
+  }
+  const swap = () => {
+    document.body.classList.toggle("show-net", on);
+    if (on) {
+      document.body.classList.remove("show-map", "show-settings", "show-outlook");
+      renderNetPage();
+      loadNetWeek();
+    }
+    document.getElementById("netpage").setAttribute("aria-hidden", on ? "false" : "true");
+    document.getElementById("netBtn").setAttribute("aria-pressed", on ? "true" : "false");
+  };
+  if (document.startViewTransition) document.startViewTransition(swap);
+  else swap();
+}
+
 /* ── render loop ─────────────────────────────────────────────────────── */
 let last = null;
 
@@ -3591,6 +3847,7 @@ function render(s){
   if (paused) return;                       // a drag is in progress
   if (document.body.classList.contains("show-map") ||
       document.body.classList.contains("show-settings") ||
+      document.body.classList.contains("show-net") ||
       document.body.classList.contains("show-outlook")) {
     if (document.body.classList.contains("show-outlook")) {
       // A wall display left on the outlook goes back to the cards by itself.
@@ -3912,12 +4169,17 @@ function toggleOutlook(force, fromHistory){
   else swap();
 }
 document.getElementById("outBtn").addEventListener("click", () => toggleOutlook());
+document.getElementById("netBtn").addEventListener("click", () => toggleNet());
 
 window.addEventListener("popstate", () => {
   leavingOutlook = false;
-  const want = !!(history.state && history.state.outlook);
-  if (want !== document.body.classList.contains("show-outlook"))
-    toggleOutlook(want, true);
+  leavingNet = false;
+  const outlook = !!(history.state && history.state.outlook);
+  if (outlook !== document.body.classList.contains("show-outlook"))
+    toggleOutlook(outlook, true);
+  const net = !!(history.state && history.state.netpage);
+  if (net !== document.body.classList.contains("show-net"))
+    toggleNet(net, true);
 });
 
 /* The whole outlook is the way back, header included: nothing on it is
@@ -3983,6 +4245,9 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "f") setTv(!document.body.classList.contains("tv"));
   if (e.key === "w") toggleMap();
   if (e.key === "d") toggleOutlook();
+  if (e.key === "n") toggleNet();
+  if (e.key === "Escape" && document.body.classList.contains("show-net"))
+    toggleNet(false);
   if (e.key === "Escape" && document.body.classList.contains("show-outlook"))
     toggleOutlook(false);
   if (e.key === "s") { if (!cfg) loadConfig().then(() => toggleSettings());
@@ -4010,6 +4275,7 @@ document.addEventListener("keydown", (e) => {
   // The page reloads itself after a deploy. If it was on the outlook, the
   // history entry survived the reload; put the outlook back to match it.
   if (history.state && history.state.outlook) toggleOutlook(true, true);
+  if (history.state && history.state.netpage) toggleNet(true, true);
   loadPrefs(null);
   tickClock();
   setInterval(tickClock, 1000);

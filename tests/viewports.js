@@ -318,7 +318,7 @@ const measureOutlook = () => {
       await page.waitForTimeout(900);
       const at = w + 'x' + h + (tv ? ' TV' : '');
       const r = await page.evaluate(() => {
-        const a = document.querySelector('#card-internet .face.back .linkbtn');
+        const a = document.querySelector('#card-internet .face.back .linkbtn.out');
         if (!a) return {missing: true};
         const ar = a.getBoundingClientRect();
         const cr = document.getElementById('card-internet').getBoundingClientRect();
@@ -339,7 +339,7 @@ const measureOutlook = () => {
         if (r.target !== '_blank' || !/noopener/.test(r.rel))
           bad.push(at + ': link opens unsafely (' + r.target + ', ' + r.rel + ')');
         // Tapping it must not turn the card over.
-        await page.$eval('#card-internet .face.back .linkbtn', a => {
+        await page.$eval('#card-internet .face.back .linkbtn.out', a => {
           a.addEventListener('click', e => e.preventDefault(), {once: true});
           a.click();
         });
@@ -351,6 +351,93 @@ const measureOutlook = () => {
     }
     failures += bad.length;
     console.log(bad.length ? '  FAIL internet link' : '  ok   internet link');
+    for (const why of bad) console.log('         ' + why);
+  }
+
+  // ── the Internet page: a week of tests, fetched when it is opened ─────
+  {
+    const bad = [];
+    const week = (() => {                     // a week of hourly tests
+      const now = Date.now() / 1000, pts = [];
+      for (let i = 0; i < 168; i++) {
+        const ok = i % 40 !== 7;
+        pts.push({at: now - (168 - i) * 3600, ok,
+          down: ok ? 300 + (i % 11) * 60 : null, up: ok ? 90 + (i % 7) * 30 : null,
+          ping: ok ? 9 + (i % 5) * 2 : null, loaded: ok ? 20 + (i % 9) * 18 : null,
+          jitter: ok ? 1.5 : null, loss: ok ? (i === 44 ? 4.2 : 0) : null,
+          server: 'EZEE Fiber',
+          url: ok ? 'https://www.speedtest.net/result/c/abc' + i : null});
+      }
+      return {available: true, error: '', days: 7, fetched_at: now, points: pts};
+    })();
+    for (const [w, h] of [[1920, 1080], [1920, 720], [414, 896]]) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      const errs = [];
+      let asked = 0;
+      page.on('pageerror', e => errs.push(e.message));
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify((() => { const s = freshen();
+          s.internet = Object.assign({}, s.internet, {url: 'http://127.0.0.1:8080'});
+          return s; })()),
+      }));
+      await page.route('**/api/internet*', route => {
+        asked++;
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8',
+                               body: JSON.stringify(week) });
+      });
+      await page.goto(BASE, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const at = w + 'x' + h;
+      // Nothing should have been fetched before the page is opened.
+      if (asked) bad.push(at + ': the week was fetched before the page was opened');
+      await page.$eval('#netBtn', el => el.click());
+      await page.waitForTimeout(2200);
+      if (!asked) bad.push(at + ': opening the page fetched nothing');
+      const r = await page.evaluate(() => {
+        const host = document.getElementById('netpage');
+        const body = host.querySelector('.card-body');
+        const plots = [...host.querySelectorAll('.netplot svg')];
+        const rows = host.querySelectorAll('.tests .row');
+        const card = host.querySelector('.card').getBoundingClientRect();
+        const out = host.querySelector('.linkbtn.out');
+        const spill = plots.map(v => { const b = v.getBoundingClientRect();
+          return Math.max(card.top - b.top, b.bottom - card.bottom,
+                          card.left - b.left, b.right - card.right); });
+        return {open: document.body.classList.contains('show-net'),
+                overflow: body.scrollHeight - body.clientHeight,
+                sideways: body.scrollWidth - body.clientWidth,
+                plots: plots.length, rows: rows.length,
+                paths: plots.map(v => v.querySelectorAll('path').length),
+                worstSpill: spill.length ? Math.max(...spill) : 0,
+                link: out ? out.href : null,
+                caption: host.textContent.includes('173') || host.textContent.includes('168')};
+      });
+      if (!r.open) bad.push(at + ': the page did not open');
+      if (r.plots !== 2) bad.push(at + ': ' + r.plots + ' plots, expected 2');
+      if (r.paths.some(n => n < 3)) bad.push(at + ': a plot drew almost nothing (' + r.paths + ')');
+      if (r.worstSpill > 1) bad.push(at + ': a plot paints ' + r.worstSpill.toFixed(0) + 'px outside the card');
+      if (r.rows < 5) bad.push(at + ': the test list has ' + r.rows + ' rows');
+      if (r.overflow > 1) bad.push(at + ': overflows down by ' + r.overflow + 'px');
+      if (r.sideways > 1) bad.push(at + ': overflows sideways by ' + r.sideways + 'px');
+      if (!r.link || !r.link.includes(':8080')) bad.push(at + ': no link to the tracker');
+      // Reopening must not fetch again — the answer is held for a few minutes.
+      const before = asked;
+      await page.$eval('#netpage .card-head', el => el.click());
+      await page.waitForTimeout(900);
+      await page.$eval('#netBtn', el => el.click());
+      await page.waitForTimeout(1200);
+      if (asked > before) bad.push(at + ': reopening fetched the week again');
+      // And the Back button closes it, as everywhere else.
+      await page.goBack();
+      await page.waitForTimeout(900);
+      if (await page.evaluate(() => document.body.classList.contains('show-net')))
+        bad.push(at + ': Back did not close the page');
+      for (const m of errs) bad.push(at + ': pageerror: ' + m);
+      await page.close();
+    }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL internet page' : '  ok   internet page');
     for (const why of bad) console.log('         ' + why);
   }
 

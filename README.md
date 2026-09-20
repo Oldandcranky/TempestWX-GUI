@@ -338,6 +338,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The normals are NOAA's now.** Everything that says "normal" — the rain
+  gauge's percentage, the outlook's dashed band, the temperature
+  comparisons — was measured against twelve estimates typed into the compose
+  file. `tools/normals.py` fetches NOAA's official 1991-2020 monthly normals
+  for the nearest station with all three (here Crystal Lake, 6.6 miles away)
+  and prints the three compose lines, keyless. The temperature guesses were
+  within a degree or two; the rain was not — June's normal is 5.26 inches, not
+  4.0, and the year is 39.4, not 37.7 — so the gauge had been generous.
 - A speedtest the Ookla CLI never ran — "Cannot read from socket", "An
   unexpected error occurred" — no longer counts as a failed test of the line.
   A week of them scattered across every hour is the tool being flaky, not an

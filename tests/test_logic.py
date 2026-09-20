@@ -557,6 +557,37 @@ class TwoStations(unittest.TestCase):
         self.assertEqual([s[0] for s in f.find_stations()], ["KDKB"])
 
 
+class NormalsTool(unittest.TestCase):
+    """tools/normals.py reshapes NCEI's rows into the compose lines."""
+
+    def rows(self, months=range(1, 13)):
+        return [{"DATE": "%02d" % m, "MLY-TMAX-NORMAL": str(30 + m), "MLY-TMIN-NORMAL": str(10 + m),
+                 "MLY-PRCP-NORMAL": "%.2f" % (1 + m / 10)} for m in months]
+
+    def setUp(self):
+        import importlib.util, os
+        spec = importlib.util.spec_from_file_location("normals", os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "normals.py"))
+        self.tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.tool)
+
+    def test_reshape_is_in_month_order_whatever_the_rows_order(self):
+        hi, lo, pr = self.tool.reshape(list(reversed(self.rows())))
+        self.assertEqual(hi[0], 31.0); self.assertEqual(hi[11], 42.0)
+        self.assertEqual(lo[5], 16.0); self.assertAlmostEqual(pr[11], 2.2)
+
+    def test_a_missing_month_is_an_error_not_a_zero(self):
+        with self.assertRaises(ValueError):
+            self.tool.reshape(self.rows(range(1, 12)))
+
+    def test_compose_lines_are_what_the_server_parses(self):
+        hi, lo, pr = self.tool.reshape(self.rows())
+        h, l, r = self.tool.compose_lines(hi, lo, pr)
+        val = lambda line: line.split('"')[1]
+        self.assertEqual(len(server.twelve(val(h), "x")), 12)
+        self.assertEqual(server.twelve(val(r), "x")[0], 1.1)
+
+
 class StationHealth(unittest.TestCase):
     """The dot on every hub-fed card is this one function."""
 

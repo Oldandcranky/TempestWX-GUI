@@ -60,8 +60,10 @@ token — are entered on the dashboard's settings page and stored server-side in
 `data/tempest_config.json`. They are never sent to a browser and never belong
 in the compose file.
 
-The rain and temperature normals are estimates for the area, not the station's
-published NOAA figures. Treat them as the owner's to correct.
+The rain and temperature normals are NOAA's 1991-2020 monthly normals for
+**Crystal Lake 4NW (USC00112048)**, 6.6 miles from the station, fetched with
+`tools/normals.py` on 2026-09-19. Re-run it if the station moves; do not
+guess them.
 
 ## Working on the page
 

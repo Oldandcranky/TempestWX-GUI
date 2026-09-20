@@ -338,6 +338,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The Lightning card has a picture at last.** Rings at 5, 10, 20 and 30
+  miles with the station at the centre, and a storm cloud on the ring that
+  matches the nearest recent strike, flashing as often as the strikes come.
+  Inside five miles in the last ten minutes it fills the sky and the whole
+  card lights with each strike — that caption stays plain, since it is the
+  one weather on here that matters in the next ten minutes. After a week of
+  nothing, Franklin's kite is still up the tree. `?teststorm=overhead`,
+  `nearby`, `quiet` or `kite` previews each; `/testall` has all three.
 - **An Internet page** (`n`, or the footer icon, or "The last week" on the
   card's back): a week of tests full-screen — speed against the plan, latency
   idle against under load, failed tests marked on the floor, the medians and

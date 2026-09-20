@@ -261,6 +261,34 @@ body.tv .linkbtn{display:none}
 }
 .tree svg{width:100%;height:100%;display:block}
 
+/* The storm behind the Lightning card: rings at 5, 10, 20 and 30 miles with
+   you at the middle of the bottom edge, and a cloud sitting on the ring that
+   matches the nearest recent strike. The rings keep their shape whatever the
+   card's proportions, so a distance read off one is honest. */
+.stormsky{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+/* The rings live in the card's spare middle, clear of the hero above and the
+   figures below; only the flash covers the whole card. */
+.stormsky .band{position:absolute;left:0;right:0;top:42%;bottom:13%}
+.stormsky svg{width:100%;height:100%;display:block}
+.stormsky .bolt{animation:boltflash var(--flash,6s) steps(1,end) infinite}
+@keyframes boltflash{
+  0%,4%{opacity:1} 5%,9%{opacity:.15} 10%,14%{opacity:1} 15%,100%{opacity:.15}
+}
+/* A strike close by lights the whole card for an instant. Faint, brief, and
+   never on a display that has asked for less motion. */
+.stormsky .sheet{
+  position:absolute;inset:0;background:radial-gradient(120% 90% at 50% 100%,
+    rgba(245,197,24,.20), rgba(245,197,24,.06) 45%, transparent 70%);
+  opacity:0;animation:sheetflash var(--flash,6s) steps(1,end) infinite;
+}
+@keyframes sheetflash{
+  0%,3%{opacity:1} 4%,8%{opacity:.25} 9%,12%{opacity:.9} 13%,100%{opacity:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .stormsky .bolt,.stormsky .sheet{animation:none}
+  .stormsky .sheet{opacity:0}
+}
+
 /* Rain falling behind the Rainfall card while it is actually raining — the
    tree's idea again: the picture says it before the number does. Drops are
    plain elements, not SVG, and the duck and the ark are images, all inside
@@ -1477,6 +1505,125 @@ function rainSky(rate, ptype, windMs, windDir, as){
   return w;
 }
 
+/* The Lightning card's picture.
+
+   The card is empty almost always, so the quiet state has to be worth looking
+   at: rings at 5, 10, 20 and 30 miles, you at the centre of the bottom edge,
+   and a horizon. A storm puts a cloud on the ring matching the nearest recent
+   strike, flashing as often as the strikes come. Overhead — inside five miles
+   in the last ten minutes — the cloud fills the sky and the whole card lights
+   with each strike. After a week with nothing, Franklin's kite is still up
+   the tree where he left it.
+
+   The Tempest reports how far a strike was, never which way, so where the
+   cloud sits around the ring means nothing. It is placed from the strike's
+   own timestamp: fixed for that strike, rather than skipping about every two
+   seconds as the card is rebuilt. */
+const STORM_RINGS_MI = [5, 10, 20, 30];
+const STORM_OVERHEAD_MI = 5;
+const STORM_QUIET_DAYS = 7;
+
+/* ?teststorm=overhead|nearby|quiet|kite, the same idea as ?testrain. */
+let TEST_STORM = (() => {
+  const q = new URLSearchParams(location.search);
+  return q.has("teststorm") ? stormPreset(q.get("teststorm")) : null;
+})();
+function stormPreset(name){
+  const now = Date.now() / 1000;
+  switch ((name || "nearby").toLowerCase()) {
+    case "overhead": return {kind: "overhead", mi: 3.1, age: 120,
+                             last: {ts: now - 120, dist_km: 5}};
+    case "quiet":    return {kind: "quiet", kite: false, mi: null, age: 3 * 86400,
+                             last: {ts: now - 3 * 86400, dist_km: 30}};
+    case "kite":     return {kind: "quiet", kite: true, mi: null, age: 12 * 86400,
+                             last: {ts: now - 12 * 86400, dist_km: 22}};
+    default:         return {kind: "nearby", mi: 13.5, age: 1500,
+                             last: {ts: now - 1500, dist_km: 21.7}};
+  }
+}
+
+function stormState(d, now){
+  if (TEST_STORM) return TEST_STORM;
+  const last = d.strike_last || null;
+  const age = last && last.ts ? now - last.ts : null;
+  const nearMi = d.strike_nearest_km == null ? null : d.strike_nearest_km / 1.609;
+  const lastMi = last && last.dist_km != null ? last.dist_km / 1.609 : null;
+  if (age != null && age < 600 && (nearMi != null && nearMi <= STORM_OVERHEAD_MI))
+    return {kind: "overhead", mi: nearMi, age, last};
+  if (age != null && age < 3 * 3600)
+    return {kind: "nearby", mi: nearMi != null ? nearMi : lastMi, age, last};
+  const stale = age == null || age > STORM_QUIET_DAYS * 86400;
+  return {kind: "quiet", kite: stale, mi: null, age, last};
+}
+
+function stormSky(st, strikes1h){
+  const w = el("div", "stormsky");
+  const R = 50;                                  // the 30-mile ring, in units
+  const ring = (mi) => R * mi / 30;
+  let art = "";
+  for (const mi of STORM_RINGS_MI)
+    art += '<circle cx="50" cy="58" r="' + ring(mi).toFixed(1) + '" fill="none" ' +
+      'stroke="var(--label)" stroke-width=".7" opacity=".35" ' +
+      (mi === 30 ? '' : 'stroke-dasharray="2 3" ') + 'vector-effect="non-scaling-stroke"/>';
+  art += '<path d="M0 58 H100" stroke="var(--label)" stroke-width=".7" opacity=".3" ' +
+         'vector-effect="non-scaling-stroke"/>';
+  art += '<circle cx="50" cy="58" r="1.5" fill="var(--label)" opacity=".8"/>';  // the station
+  art += '<text x="1.5" y="14" fill="var(--faint)" font-size="4" letter-spacing=".3">30 mi</text>';
+
+  const cloud = (cx, cy, scale, bolt) =>
+    '<g transform="translate(' + cx.toFixed(1) + ' ' + cy.toFixed(1) + ') scale(' + scale + ')">' +
+      '<ellipse cx="0" cy="0" rx="11" ry="5.2" fill="#2a2f3d"/>' +
+      '<ellipse cx="-5" cy="-2.6" rx="6" ry="4.4" fill="#333a4a"/>' +
+      '<ellipse cx="4.5" cy="-2.2" rx="7" ry="4.8" fill="#39405240"/>' +
+      '<ellipse cx="4.5" cy="-2.2" rx="7" ry="4.8" fill="#333a4a"/>' +
+      (bolt ? '<path class="bolt" d="M1 4 L-3.5 11 L0 11 L-2 17 L5 9 L1.4 9 L4 4 Z" ' +
+              'fill="var(--yellow)"/>' : "") +
+    '</g>';
+
+  if (st.kind === "overhead") {
+    art += cloud(50, 22, 1.9, true);
+  } else if (st.kind === "nearby" && st.mi != null) {
+    // A fixed angle for this strike: from its own timestamp, so the cloud
+    // stays put between renders.
+    const seed = st.last && st.last.ts ? st.last.ts : 0;
+    const ang = (25 + (Math.abs(Math.sin(seed)) * 130)) * Math.PI / 180;
+    const r = ring(Math.max(2, Math.min(30, st.mi)));
+    art += cloud(50 + r * Math.cos(ang), 58 - r * Math.sin(ang), 0.95, true);
+  } else {
+    art += cloud(76, 20, 0.85, false);           // a harmless one, passing by
+    if (st.kite) {
+      // Franklin's kite, still up the tree.
+      art += '<g transform="translate(15 58) scale(1.1)">' +
+        '<path d="M0 0 V-13" stroke="#6b4a2b" stroke-width="1.6" stroke-linecap="round"/>' +
+        '<ellipse cx="0" cy="-17" rx="7.5" ry="6" fill="#2b4420"/>' +
+        '<ellipse cx="-4" cy="-14" rx="4.5" ry="3.6" fill="#243a1b"/>' +
+        '<ellipse cx="4.5" cy="-14.5" rx="4" ry="3.4" fill="#243a1b"/>' +
+        '<g transform="translate(6.5 -22) rotate(18)">' +
+          '<path d="M0 -5 L4 0 L0 5 L-4 0 Z" fill="#d9483b"/>' +
+          '<path d="M0 -5 V5 M-4 0 H4" stroke="#8f2f27" stroke-width=".5"/>' +
+          '<path d="M0 5 Q2 9 -1 12 Q-4 15 -1 18" stroke="#c9c2a8" stroke-width=".7" fill="none"/>' +
+        '</g></g>';
+    }
+  }
+
+  // How often the sky lights: a strike or two an hour is occasional, a storm
+  // overhead is most of the time.
+  const rate = Math.max(0, strikes1h || 0);
+  const flash = st.kind === "overhead" ? Math.max(2.5, 9 - rate * 0.6)
+              : st.kind === "nearby" ? Math.max(6, 18 - rate * 1.2) : 0;
+  w.innerHTML = '<div class="band"><svg viewBox="0 0 100 60" ' +
+    'preserveAspectRatio="xMidYMax meet" aria-hidden="true">' + art + '</svg></div>' +
+    (st.kind === "overhead" ? '<div class="sheet"></div>' : "");
+  if (flash) {
+    w.style.setProperty("--flash", flash.toFixed(1) + "s");
+    // Phase from the clock, so a rebuild does not restart the storm.
+    const off = (-(Date.now() / 1000 % flash)).toFixed(2) + "s";
+    for (const e of w.querySelectorAll(".bolt, .sheet")) e.style.animationDelay = off;
+  }
+  w.dataset.storm = st.kind + (st.kite ? " kite" : "");
+  return w;
+}
+
 /* A face that dresses for the pollen count, behind the Pollen card.
 
    The same idea as the wind card's tree: the picture should tell you the
@@ -2383,10 +2530,22 @@ function buildRadar(s){
 function buildLightning(s){
   const d = s.derived;
   const {card:c, body:b} = card("bolt","Lightning","lightning","yellow",s.health);
+  const st = stormState(d, s.now || Date.now() / 1000);
+  c.insertBefore(stormSky(st, d.strikes_1h), c.firstChild);
   const n = d.strikes_today || 0;
   b.appendChild(hero(String(n), "today", n ? "yellow" : null));
-  b.appendChild(caption(n ? "Strikes detected" : "No activity detected",
-                        n ? "yellow" : "label"));
+  // Close by, the card says so plainly. It is the one weather on here that
+  // matters in the next ten minutes.
+  // The preview has no reading of its own, so the distance comes from
+  // whichever of the two knows it.
+  const nearKm = d.strike_nearest_km != null ? d.strike_nearest_km
+               : st.mi != null ? st.mi * 1.609 : null;
+  const said =
+    st.kind === "overhead" ? ["Overhead · " + fg(dist(nearKm)) + " " + prefs.dist, "yellow"]
+  : st.kind === "nearby" ? ["Storm nearby", "yellow"]
+  : st.kite && st.last && st.last.ts ? ["Nothing since " + shortDate(st.last.ts), "label"]
+  : [n ? "Strikes detected" : "No activity detected", n ? "yellow" : "label"];
+  b.appendChild(caption(said[0], said[1]));
   b.appendChild(el("div","mid"));
   const last = d.strike_last;
   b.appendChild(cells([
@@ -3780,7 +3939,7 @@ let last = null;
    makes it advance by itself every N seconds instead. */
 const TESTALL = /\/testall$/.test(location.pathname);
 const TESTALL_DWELL = Math.max(0, Number(new URLSearchParams(location.search).get("dwell")) || 0) * 1000;
-const TESTALL_SLOTS = ["rainfall", "pollen", "wind", "internet", "forecast", "temperature"];
+const TESTALL_SLOTS = ["rainfall", "lightning", "pollen", "wind", "internet", "forecast"];
 const TESTALL_STEPS = [
   {label: "Light rain", rain: "light"},
   {label: "Moderate rain", rain: "moderate"},
@@ -3792,6 +3951,9 @@ const TESTALL_STEPS = [
   {label: "Blizzard — stay inside", rain: "blizzard"},
   {label: "Freezing rain", rain: "freezing"},
   {label: "Sleet", rain: "sleet"},
+  {label: "Lightning — a storm nearby", storm: "nearby"},
+  {label: "Lightning — overhead", storm: "overhead"},
+  {label: "Lightning — quiet, and the kite", storm: "kite"},
   {label: "Alerts — the three worst", alerts: ["extreme", "severe", "moderate"]},
   {label: "Alerts — minor and unknown", alerts: ["minor", "unknown"]},
   ...[0, 1, 2, 3, 4, 5].map(i => ({label: "Pollen — " + POLLEN_WORDS[i], pollen: i})),
@@ -3831,6 +3993,7 @@ function testallNext(dir = 1){
   testStep = ((testStep + dir) % n + n) % n;
   const st = TESTALL_STEPS[testStep];
   TEST_RAIN = st.rain ? rainPreset(st.rain) : null;
+  TEST_STORM = st.storm ? stormPreset(st.storm) : null;
   TEST_ALERTS = st.alerts ? sampleAlerts(st.alerts) : null;
   document.getElementById("testtag").textContent =
     "TEST " + (testStep + 1) + "/" + n + " · " + st.label + "  \u203a";

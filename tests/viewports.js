@@ -441,6 +441,79 @@ const measureOutlook = () => {
     for (const why of bad) console.log('         ' + why);
   }
 
+  // ── the lightning card's storm, in each of its states ─────────────────
+  {
+    const bad = [];
+    const SPEC = {
+      overhead: {words: 'Overhead', sheet: true, kite: false},
+      nearby:   {words: 'Storm nearby', sheet: false, kite: false},
+      quiet:    {words: 'No activity', sheet: false, kite: false},
+      kite:     {words: 'Nothing since', sheet: false, kite: true},
+    };
+    for (const kind of Object.keys(SPEC)) {
+      for (const [w, h] of [[1920, 1080], [1920, 720], [414, 896]]) {
+        const page = await browser.newPage({ viewport: { width: w, height: h } });
+        const errs = [];
+        page.on('pageerror', e => errs.push(e.message));
+        await page.route('**/api/state', route => route.fulfill({
+          status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+        }));
+        await page.goto(BASE + '/?teststorm=' + kind, { waitUntil: 'networkidle' });
+        await page.waitForTimeout(SETTLE_MS);
+        const at = kind + ' at ' + w + 'x' + h;
+        for (const [id, why] of await page.evaluate(measure, '#grid'))
+          if (id === 'bolt') bad.push(at + ': ' + why);
+        const r = await page.evaluate(() => {
+          const card = document.getElementById('card-bolt');
+          const sky = card.querySelector('.stormsky');
+          const band = sky && sky.querySelector('.band').getBoundingClientRect();
+          const cr = card.getBoundingClientRect();
+          const cells = [...card.querySelectorAll('.card-body .row')].map(x => x.getBoundingClientRect());
+          return {
+            storm: sky ? sky.dataset.storm : null,
+            rings: sky ? sky.querySelectorAll('circle').length : 0,
+            bolt: !!(sky && sky.querySelector('.bolt')),
+            sheet: !!(sky && sky.querySelector('.sheet')),
+            // the kite's own red diamond, drawn nowhere else
+            kite: !!(sky && /d9483b/.test(sky.innerHTML)),
+            caption: [...card.querySelectorAll('.caption')].map(c => c.textContent).join(' | '),
+            // A backdrop may sit behind the figures, as the wind card's tree
+            // does, but never behind the headline number.
+            overHero: (() => { const h = card.querySelector('.hero');
+              return h && band ? h.getBoundingClientRect().bottom - band.top : 0; })(),
+            inside: band ? (band.top >= cr.top - 1 && band.bottom <= cr.bottom + 1) : false,
+          };
+        });
+        const sp = SPEC[kind];
+        if (!r.storm) bad.push(at + ': no storm picture');
+        if (r.rings < 5) bad.push(at + ': ' + r.rings + ' rings');
+        if (!r.inside) bad.push(at + ': the picture escapes the card');
+        if (r.overHero > 2) bad.push(at + ': the picture runs ' + Math.round(r.overHero) + 'px into the headline');
+        if (sp.sheet !== r.sheet) bad.push(at + ': the flash is ' + (r.sheet ? 'on' : 'off'));
+        if (sp.kite !== r.kite) bad.push(at + ': the kite is ' + (r.kite ? 'there' : 'missing'));
+        if ((kind === 'overhead' || kind === 'nearby') && !r.bolt) bad.push(at + ': no bolt');
+        if (!r.caption.includes(sp.words)) bad.push(at + ': caption says "' + r.caption + '"');
+        if (kind === 'overhead' && /—\s*mi/.test(r.caption)) bad.push(at + ': overhead without a distance');
+        for (const m of errs) bad.push(at + ': pageerror: ' + m);
+        await page.close();
+      }
+    }
+    // A wall display asked for less motion must not be lit up by lightning.
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce' });
+    await page.route('**/api/state', route => route.fulfill({
+      status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+    }));
+    await page.goto(BASE + '/?teststorm=overhead', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(SETTLE_MS);
+    const still = await page.evaluate(() => [...document.querySelectorAll('#card-bolt .bolt, #card-bolt .sheet')]
+      .map(e => getComputedStyle(e).animationName));
+    if (still.some(n => n !== 'none')) bad.push('reduced motion: the storm still flashes');
+    await page.close();
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL lightning storm' : '  ok   lightning storm');
+    for (const why of bad) console.log('         ' + why);
+  }
+
   // ── the wind tree in a gale, which must stay inside its card ──────────
   {
     const bad = [];

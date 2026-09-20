@@ -671,9 +671,13 @@ body.no-drift #app{animation:none}
 body.show-net #grid{display:none}
 body.show-net #netpage{display:flex}
 #netpage .card{flex:1;min-width:0}
-#netpage .netplots{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+#netpage .netplots{flex:1 1 auto;min-height:42cqh;display:flex;flex-direction:column;
                    gap:clamp(4px,1.4cqh,14px)}
 #netpage .card-body > .row{flex:0 0 auto}
+/* Labels ride over the plot, so they need a little card behind them or the
+   lines run through the text. */
+#netpage .netplot .ax,#netpage .netplot .tag{background:var(--card);padding:0 .3em;
+                                             border-radius:3px}
 #netpage .netplot{position:relative;flex:1 1 0;min-height:0}
 #netpage .netplot .ax{position:absolute;left:.4em;font-size:var(--fs-label);
                       color:var(--faint);line-height:1;white-space:nowrap}
@@ -684,8 +688,8 @@ body.show-net #netpage{display:flex}
                        text-transform:uppercase;color:var(--label)}
 /* The recent tests, one per row: what the card cannot show and the tracker
    shows too slowly to glance at. */
-#netpage .tests{flex:0 0 auto;display:flex;flex-direction:column;gap:2px;
-                font-size:var(--fs-label)}
+#netpage .tests{flex:0 1 auto;min-height:0;overflow:hidden;display:flex;
+                flex-direction:column;gap:2px;font-size:var(--fs-label)}
 #netpage .tests .row{display:grid;grid-template-columns:auto 1fr 1fr 1fr 1fr auto;
                      gap:.6em;align-items:baseline;padding:.15em .4em;
                      border-radius:var(--inset-radius)}
@@ -3818,7 +3822,7 @@ function renderNetPage(){
   head.innerHTML = '<span>When</span><span class="n">Down</span><span class="n">Up</span>' +
     '<span class="n">Ping</span><span class="n drop">Loss</span><span></span>';
   rows.appendChild(head);
-  for (const p of pts.slice(-8).reverse()) {
+  for (const p of pts.slice(-6).reverse()) {
     const r = el("div", "row" + (p.ok || p.tool ? "" : " bad"));
     const link = p.url ? '<a href="' + esc(p.url) + '" target="_blank" ' +
       'rel="noopener noreferrer" title="This test on speedtest.net">↗</a>' : '<span></span>';
@@ -3864,6 +3868,7 @@ function netWeekPlot(pts, kind, n){
   const line = (key, tone) => {
     let d = "", pen = false;
     for (const p of pts) {
+      if (p.tool) continue;                      // never ran: no reading, no gap
       if (p[key] == null) { pen = false; continue; }
       d += (pen ? "L" : "M") + x(p.at).toFixed(2) + " " + y(p[key]).toFixed(2);
       pen = true;

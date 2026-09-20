@@ -370,7 +370,7 @@ const measureOutlook = () => {
       }
       return {available: true, error: '', days: 7, fetched_at: now, points: pts};
     })();
-    for (const [w, h] of [[1920, 1080], [1920, 720], [414, 896]]) {
+    for (const [w, h] of [[1920, 1080], [1400, 860], [1920, 720], [414, 896]]) {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
       const errs = [];
       let asked = 0;
@@ -415,6 +415,12 @@ const measureOutlook = () => {
       });
       if (!r.open) bad.push(at + ': the page did not open');
       if (r.plots !== 2) bad.push(at + ': ' + r.plots + ' plots, expected 2');
+      // The charts are the page: between them, at least a third of the card.
+      const share = await page.evaluate(() => {
+        const c = document.querySelector('#netpage .card').getBoundingClientRect();
+        const p = document.querySelector('#netpage .netplots').getBoundingClientRect();
+        return p.height / c.height; });
+      if (w > 720 && share < 0.33) bad.push(at + ': the charts get only ' + Math.round(share * 100) + '% of the card');
       if (r.paths.some(n => n < 3)) bad.push(at + ': a plot drew almost nothing (' + r.paths + ')');
       if (r.worstSpill > 1) bad.push(at + ': a plot paints ' + r.worstSpill.toFixed(0) + 'px outside the card');
       if (r.rows < 5) bad.push(at + ': the test list has ' + r.rows + ' rows');

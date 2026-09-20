@@ -1645,6 +1645,23 @@ class Dashboard:
             print("  watchdog : restart failed (%s)" % e.__class__.__name__)
             sys.stdout.flush()
 
+    # What changes slowly is served slowly. The 24-hour series and the
+    # Internet card's week of tests were 28 KB of a 35 KB snapshot sent every
+    # two seconds to every screen — 1.5 GB a day each — and they change once
+    # a minute and once an hour. They ride a second endpoint the page asks
+    # for every thirty seconds.
+    SLOW = ("series",)
+    SLOW_INTERNET = ("history",)
+
+    @classmethod
+    def split_slow(cls, snap):
+        """Take the slow-changing parts out of a snapshot. Returns them."""
+        slow = {"series": snap.pop("series", None), "internet_history": None}
+        net = snap.get("internet")
+        if isinstance(net, dict):
+            slow["internet_history"] = net.pop("history", None)
+        return slow
+
     def snapshot(self):
         snap = self.state.snapshot(self.args.lat, self.args.lon)
         snap["source_error"] = getattr(self.source, "error", "") or ""
@@ -1797,8 +1814,15 @@ class Handler(BaseHTTPRequestHandler):
                 # /testall is the same page; it loops through every preview.
                 self._serve_file("index.html", "text/html; charset=utf-8")
             elif path == "/api/state":
-                body = json.dumps(self.server.dashboard.snapshot(),
-                                  allow_nan=False, default=str)
+                snap = self.server.dashboard.snapshot()
+                Dashboard.split_slow(snap)
+                body = json.dumps(snap, allow_nan=False, default=str)
+                self._send(200, body, "application/json; charset=utf-8")
+            elif path == "/api/series":
+                # The slow half of the snapshot: the 24-hour series and the
+                # Internet card's history. Polled every thirty seconds.
+                slow = Dashboard.split_slow(self.server.dashboard.snapshot())
+                body = json.dumps(slow, allow_nan=False, default=str)
                 self._send(200, body, "application/json; charset=utf-8")
             elif path == "/api/internet":
                 # Fetched only when the Internet page is opened, not with

@@ -193,6 +193,9 @@ settings page wins, because it is written to `tempest_config.json` at runtime.
 | `--rain-monthly` | `TEMPEST_RAIN_MONTHLY` | unset | The same thing month by month — twelve figures in inches, January first, comma separated. Overrides `--rain-normal`, and makes the card's pace mark honest |
 | `--temp-normal-high` | `TEMPEST_TEMP_NORMAL_HIGH` | unset | Twelve normal monthly high temperatures in Fahrenheit, January first. Drawn behind the Temperature trace |
 | `--temp-normal-low` | `TEMPEST_TEMP_NORMAL_LOW` | unset | Twelve normal monthly lows, also Fahrenheit. Both are needed or neither is used |
+
+> `python3 tools/normals.py LAT LON` prints all three lines from NOAA's
+> 1991-2020 normals for the nearest station, keyless. Use it rather than guess.
 | `--data-dir` | `TEMPEST_DATA_DIR` | beside the script | Where history is written |
 | `--demo` | `TEMPEST_DEMO` | off | Synthetic weather, no hub |
 | `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
@@ -338,6 +341,12 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The two-second snapshot is a tenth of the size.** It was 35 KB, and 28 KB
+  of that — the 24-hour series and the Internet card's week of tests — changes
+  once a minute and once an hour, yet went to every screen every two seconds:
+  1.5 GB a day each. Those now ride `/api/series`, which the page asks for
+  every thirty seconds and folds into each snapshot before drawing. The live
+  poll is 4 KB. The TV's browser was the client this mattered most for.
 - **The normals are NOAA's now.** Everything that says "normal" — the rain
   gauge's percentage, the outlook's dashed band, the temperature
   comparisons — was measured against twelve estimates typed into the compose

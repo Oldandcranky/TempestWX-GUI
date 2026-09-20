@@ -4183,11 +4183,31 @@ function checkUi(s){
   location.reload();
 }
 
+/* The slow half of the state — the 24-hour series and the Internet card's
+   history — comes every thirty seconds rather than every two, and is folded
+   into each snapshot before it is drawn. A snapshot that already carries them
+   (the test state does) is used as it is. */
+const slow = {series: null, history: null};
+async function pollSlow(){
+  try {
+    const res = await fetch("api/series", {cache: "no-store"});
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d.series) slow.series = d.series;
+    if (d.internet_history) slow.history = d.internet_history;
+  } catch (e) { /* the next snapshot poll reports connection trouble */ }
+}
+function withSlow(s){
+  if (!s.series && slow.series) s.series = slow.series;
+  if (s.internet && !s.internet.history && slow.history) s.internet.history = slow.history;
+  return s;
+}
+
 async function poll(){
   try {
     const res = await fetch("api/state", {cache:"no-store"});
     if (!res.ok) throw new Error("HTTP " + res.status);
-    const s = await res.json();
+    const s = withSlow(await res.json());
     if (!Object.keys(prefs).length) loadPrefs(s.units);
     failures = 0;
     WATCH.failingSince = null;
@@ -4454,8 +4474,9 @@ document.addEventListener("keydown", (e) => {
   setInterval(tickClock, 1000);
   loadConfig();
   wireCardDrag();
-  poll();
+  pollSlow().then(poll);
   setInterval(poll, 2000);
+  setInterval(pollSlow, 30000);
   setInterval(pollWind, 900);
   setInterval(watchdogTick, 20000);
   // A tab thawed after being frozen may hold minutes-old data; check at once.

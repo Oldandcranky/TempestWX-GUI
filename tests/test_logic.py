@@ -588,6 +588,26 @@ class NormalsTool(unittest.TestCase):
         self.assertEqual(server.twelve(val(r), "x")[0], 1.1)
 
 
+class SlowHalf(unittest.TestCase):
+    """The 24-hour series and the Internet history leave the two-second
+    snapshot for the thirty-second one."""
+
+    def test_split_takes_both_and_leaves_the_rest(self):
+        snap = {"obs": {"temp_c": 1}, "series": {"temp_c": [1, 2]},
+                "internet": {"status": "good", "history": [{"at": 1}]}}
+        slow = server.Dashboard.split_slow(snap)
+        self.assertEqual(slow, {"series": {"temp_c": [1, 2]}, "internet_history": [{"at": 1}]})
+        self.assertNotIn("series", snap)
+        self.assertNotIn("history", snap["internet"])
+        self.assertEqual(snap["internet"]["status"], "good")
+
+    def test_split_copes_with_an_unavailable_internet_card(self):
+        snap = {"internet": {"available": False, "error": "x"}}
+        slow = server.Dashboard.split_slow(snap)
+        self.assertIsNone(slow["internet_history"])
+        self.assertIsNone(slow["series"])
+
+
 class StationHealth(unittest.TestCase):
     """The dot on every hub-fed card is this one function."""
 

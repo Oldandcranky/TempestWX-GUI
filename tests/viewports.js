@@ -520,6 +520,44 @@ const measureOutlook = () => {
     for (const why of bad) console.log('         ' + why);
   }
 
+  // ── the slow half: series and Internet history come every 30 s, not 2 ─
+  {
+    const bad = [];
+    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    let states = 0, slows = 0;
+    await page.route('**/api/state', route => {
+      states++;
+      const s = freshen();
+      delete s.series;                      // as the live server now sends it
+      delete s.internet.history;
+      return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8',
+                             body: JSON.stringify(s) });
+    });
+    await page.route('**/api/series', route => {
+      slows++;
+      const s = freshen();
+      return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify({ series: s.series, internet_history: s.internet.history }) });
+    });
+    await page.goto(BASE, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(SETTLE_MS + 4000);
+    const r = await page.evaluate(() => ({
+      trace: !!document.querySelector('#card-temp svg path'),
+      presTrace: !!document.querySelector('#card-pres svg path'),
+      backHistory: (() => { const c = [...document.querySelectorAll('#card-internet .face.back .cell')]
+        .find(x => /Failed/i.test(x.textContent)); return c ? c.textContent : ''; })(),
+    }));
+    if (!r.trace) bad.push('the temperature trace did not draw from the slow half');
+    if (!r.presTrace) bad.push('the pressure trace did not draw from the slow half');
+    if (!/of 25/.test(r.backHistory)) bad.push('the Internet back lacks its history: "' + r.backHistory + '"');
+    if (slows !== 1) bad.push('the slow half was fetched ' + slows + ' times in 7 s, expected once');
+    if (states < 3) bad.push('the snapshot was fetched only ' + states + ' times in 7 s');
+    await page.close();
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL slow half' : '  ok   slow half');
+    for (const why of bad) console.log('         ' + why);
+  }
+
   // ── the wind tree in a gale, which must stay inside its card ──────────
   {
     const bad = [];

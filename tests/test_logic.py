@@ -436,6 +436,47 @@ class WhatIsFalling(unittest.TestCase):
         self.assertEqual(f("KDPA"), "KDPA")
 
 
+class ToolErrors(unittest.TestCase):
+    """A test the Ookla CLI never ran is not a failed test of the line."""
+
+    def rows(self, *specs):
+        out = []
+        for i, kind in enumerate(specs):
+            at = "2026-09-19T%02d:00:00Z" % (23 - i)
+            if kind == "ok":
+                out.append(result(at=at))
+            elif kind == "tool":
+                out.append({"created_at": at, "status": "failed", "download": None,
+                            "data": {"type": "log", "level": "error",
+                                     "message": "Error: [0] Cannot read from socket: "}})
+            else:
+                out.append(result(ok=False, at=at))
+        return {"data": out}
+
+    def parse(self, *specs):
+        return server.SpeedtestFetcher.parse(self.rows(*specs))
+
+    def test_a_tool_error_is_not_a_failure(self):
+        p = self.parse("tool", "ok", "ok", "ok")
+        self.assertEqual((p["failures"], p["skipped"]), (0, 1))
+        self.assertEqual(p["status"], "good")
+        self.assertNotIn("Most recent test failed", p["issues"])
+
+    def test_a_real_failure_still_is(self):
+        p = self.parse("fail", "ok", "ok", "ok")
+        self.assertEqual((p["failures"], p["skipped"]), (1, 0))
+        self.assertIn("Most recent test failed", p["issues"])
+
+    def test_three_tool_errors_in_a_row_is_still_down(self):
+        # An outage stops the CLI too; a run of them is not the tool being flaky.
+        self.assertEqual(self.parse("tool", "tool", "tool", "ok")["status"], "down")
+
+    def test_history_marks_them(self):
+        h = self.parse("tool", "fail", "ok")["history"]
+        self.assertEqual([(x["ok"], x["tool"]) for x in h],
+                         [(True, False), (False, False), (False, True)])
+
+
 class TwoStations(unittest.TestCase):
     """DuPage and DeKalb, merged into one answer for the card."""
 

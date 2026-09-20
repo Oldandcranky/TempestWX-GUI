@@ -338,6 +338,12 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- A speedtest the Ookla CLI never ran — "Cannot read from socket", "An
+  unexpected error occurred" — no longer counts as a failed test of the line.
+  A week of them scattered across every hour is the tool being flaky, not an
+  outage, and they were reading as *degraded* and *down* on the card. They are
+  counted separately ("3 didn't run"), drawn grey rather than red, and a run
+  of three in a row still reads as down, because an outage stops the tool too.
 - **The Lightning card has a picture at last.** Rings at 5, 10, 20 and 30
   miles with the station at the centre, and a storm cloud on the ring that
   matches the nearest recent strike, flashing as often as the strikes come.

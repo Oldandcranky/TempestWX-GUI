@@ -3051,7 +3051,8 @@ function netDetail(b, n){
                     .map(p => p.loaded - p.ping);
   const peak = bloats.length ? Math.max(...bloats) : null;
   const tone = peak != null && peak > BLOAT_BAD ? "red" : "accent";
-  const failed = pts.filter(p => !p.ok).length;
+  const failed = pts.filter(p => !p.ok && !p.tool).length;
+  const skipped = pts.filter(p => p.tool).length;
   const loss = worst("loss");
   const downs = pts.map(p => p.down).filter(v => v != null);
   const ups = pts.map(p => p.up).filter(v => v != null);
@@ -3067,7 +3068,8 @@ function netDetail(b, n){
      sub:"worst", tone:(peak != null && peak > BLOAT_BAD) ? "red" : null},
     {k:"Loss", v:loss == null ? DASH : fg(loss), u:"%", small:true,
      sub:"worst", tone:loss ? "red" : null},
-    {k:"Failed", v:String(failed), small:true, sub:"of " + pts.length,
+    {k:"Failed", v:String(failed), small:true,
+     sub:"of " + pts.length + (skipped ? " · " + skipped + " didn't run" : ""),
      tone:failed ? "red" : null},
   ]));
   b.appendChild(cells([
@@ -3784,7 +3786,8 @@ function renderNetPage(){
   }
   const pts = w.points || [];
   const ok = pts.filter(p => p.ok);
-  const failed = pts.length - ok.length;
+  const failed = pts.filter(p => !p.ok && !p.tool).length;
+  const skipped = pts.filter(p => p.tool).length;
   const bloats = ok.filter(p => p.ping != null && p.loaded != null)
                    .map(p => p.loaded - p.ping);
   const worstBloat = bloats.length ? Math.max(...bloats) : null;
@@ -3800,7 +3803,8 @@ function renderNetPage(){
     {k: "Loss", v: worstLoss ? fg(worstLoss) : "0", u: "%", small: true,
      sub: "worst", tone: worstLoss ? "red" : null},
     {k: "Failed", v: String(failed), small: true,
-     sub: "of " + pts.length, tone: failed ? "red" : null},
+     sub: "of " + pts.length + (skipped ? " · " + skipped + " didn't run" : ""),
+     tone: failed ? "red" : null},
   ]));
 
   const plots = el("div", "netplots");
@@ -3815,12 +3819,12 @@ function renderNetPage(){
     '<span class="n">Ping</span><span class="n drop">Loss</span><span></span>';
   rows.appendChild(head);
   for (const p of pts.slice(-8).reverse()) {
-    const r = el("div", "row" + (p.ok ? "" : " bad"));
+    const r = el("div", "row" + (p.ok || p.tool ? "" : " bad"));
     const link = p.url ? '<a href="' + esc(p.url) + '" target="_blank" ' +
       'rel="noopener noreferrer" title="This test on speedtest.net">↗</a>' : '<span></span>';
     r.innerHTML =
       '<span>' + esc(dayClock(p.at)) + '</span>' +
-      '<span class="n">' + esc(p.ok ? netMb(p.down) : "failed") + '</span>' +
+      '<span class="n">' + esc(p.ok ? netMb(p.down) : p.tool ? "didn't run" : "failed") + '</span>' +
       '<span class="n">' + esc(p.ok ? netMb(p.up) : DASH) + '</span>' +
       '<span class="n">' + esc(p.ping == null ? DASH : fg(p.ping)) + '</span>' +
       '<span class="n drop">' + esc(p.loss == null ? DASH : fg(p.loss)) + '</span>' +
@@ -3880,7 +3884,8 @@ function netWeekPlot(pts, kind, n){
   for (const p of pts)
     if (!p.ok)
       art += '<path d="M' + x(p.at).toFixed(2) + ' ' + (H - 1.2) + ' V' + H + '" ' +
-        'stroke="var(--red)" stroke-width="2" vector-effect="non-scaling-stroke"/>';
+        'stroke="var(--' + (p.tool ? "label" : "red") + ')" stroke-width="2" ' +
+        'vector-effect="non-scaling-stroke"/>';
   const dayTicks = [];
   for (let t = Math.ceil(t0 / 86400) * 86400; t <= t1; t += 86400) dayTicks.push(t);
   for (const t of dayTicks)

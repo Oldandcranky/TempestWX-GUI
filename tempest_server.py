@@ -237,6 +237,7 @@ class PollingFetcher(threading.Thread):
             pts.append({
                 "at": at,
                 "ok": cls._ok(r),
+                "tool": cls._tool_error(r),
                 "down": rnd(cls._mbps(r.get("download_bits"), r.get("download"))),
                 "up": rnd(cls._mbps(r.get("upload_bits"), r.get("upload"))),
                 "ping": rnd(idle),
@@ -674,6 +675,20 @@ class SpeedtestFetcher(PollingFetcher):
         return [r for r, s in stamped if s is None or s >= floor]
 
     @staticmethod
+    def _tool_error(row):
+        """A test that never ran: the Ookla CLI itself fell over ("Cannot read
+        from socket", "An unexpected error occurred…") and the tracker stored
+        its log line instead of a result. That says nothing about the line —
+        a week of them scattered across every hour is the tool being flaky,
+        not an outage. An outage shows as a run of them, which the
+        consecutive-failures rule still catches, because they are still not
+        successes."""
+        if str(row.get("status") or "").lower() == "completed":
+            return False
+        d = row.get("data") or {}
+        return isinstance(d, dict) and d.get("type") == "log"
+
+    @staticmethod
     def _ok(row):
         status = str(row.get("status") or "").lower()
         return status in ("", "completed") and row.get("download") is not None
@@ -721,7 +736,9 @@ class SpeedtestFetcher(PollingFetcher):
                "failures": 0, "issues": [], "status": "unknown",
                "plan_down": plan_down or None, "plan_up": plan_up or None}
 
-        failures = [r for r in rows if not cls._ok(r)]
+        # Tests that ran and failed, as distinct from tests that never ran.
+        failures = [r for r in rows if not cls._ok(r) and not cls._tool_error(r)]
+        out["skipped"] = sum(1 for r in rows if cls._tool_error(r))
         good = [r for r in rows if cls._ok(r)]
         out["failures"] = len(failures)
 
@@ -753,6 +770,7 @@ class SpeedtestFetcher(PollingFetcher):
             history.append({
                 "at": cls._epoch(r.get("created_at")),
                 "ok": cls._ok(r),
+                "tool": cls._tool_error(r),
                 "ping": rnd(idle),
                 "loaded": rnd(load),
                 "loss": rnd(cls._num((r.get("data") or {}).get("packetLoss")), 2),
@@ -793,7 +811,7 @@ class SpeedtestFetcher(PollingFetcher):
         if len(recent) == cls.DOWN_AFTER and not any(cls._ok(r) for r in recent):
             out["status"] = "down"
             issues.append("Last %d tests failed" % cls.DOWN_AFTER)
-        elif rows and not cls._ok(rows[0]):
+        elif rows and not cls._ok(rows[0]) and not cls._tool_error(rows[0]):
             issues.append("Most recent test failed")
         if out["loss"] is not None and out["loss"] > cls.LOSS_PCT:
             issues.append("Packet loss %.1f%%" % out["loss"])

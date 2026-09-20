@@ -1013,6 +1013,75 @@ class ObservationFetcher(PollingFetcher):
         }
 
 
+class NwsForecastFetcher(PollingFetcher):
+    """The National Weather Service's written forecast for the station's own
+    grid square — "Tonight: showers and thunderstorms before 1am…" — from the
+    same keyless API the alerts use.
+
+    The ten-day outlook is numbers and icons; this is the sentence a person
+    wants. It is the forecaster's own words for this place rather than a
+    global model's output, and it reads across a room.
+    """
+
+    POINTS = "https://api.weather.gov/points/%.4f,%.4f"
+    REFRESH = 1800
+    RETRY = 120
+    LABEL = "NWS forecast"
+    KEEP = 6                  # periods to carry: three days, day and night
+
+    def __init__(self, lat, lon, stop_event):
+        PollingFetcher.__init__(self, stop_event)
+        self.lat, self.lon = lat, lon
+        self.url = None
+        self.office = ""
+
+    def _get(self, url):
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "tempest-dashboard/%s (self-hosted station display)"
+                          % core.VERSION,
+            "Accept": "application/geo+json",
+        })
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    def fetch_once(self):
+        if not self.url:
+            p = self._get(self.POINTS % (self.lat, self.lon))["properties"]
+            self.url = p["forecast"]
+            self.office = p.get("cwa") or ""
+        out = self.parse(self._get(self.url))
+        out["office"] = self.office
+        return out
+
+    @classmethod
+    def parse(cls, raw):
+        p = (raw or {}).get("properties") or {}
+        periods = []
+        for q in (p.get("periods") or [])[:cls.KEEP]:
+            if not isinstance(q, dict) or not q.get("name"):
+                continue
+            pop = (q.get("probabilityOfPrecipitation") or {}).get("value")
+            periods.append({
+                "name": q["name"],
+                "short": q.get("shortForecast") or "",
+                "detail": q.get("detailedForecast") or "",
+                "temp_f": q.get("temperature"),
+                "day": bool(q.get("isDaytime")),
+                "start": cls._epoch(q.get("startTime")),
+                "pop": pop,
+            })
+        return {"periods": periods, "updated": cls._epoch(p.get("updateTime"))}
+
+    @staticmethod
+    def _epoch(text):
+        if not isinstance(text, str) or not text:
+            return None
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+
+
 class AlertsFetcher(PollingFetcher):
     """Active weather alerts for the station's location, from the US National
     Weather Service. No key and no account — the NWS only asks that clients
@@ -1534,6 +1603,12 @@ class Dashboard:
             self.alerts = AlertsFetcher(args.lat, args.lon, self.stop)
             self.alerts.start()
 
+        # The forecaster's own words for this grid square, for the outlook.
+        self.nws = None
+        if args.nws and args.lat is not None and args.lon is not None:
+            self.nws = NwsForecastFetcher(args.lat, args.lon, self.stop)
+            self.nws.start()
+
         # What is falling at the nearest airport, for snow the Tempest cannot see.
         self.observations = None
         if args.observations and args.lat is not None and args.lon is not None:
@@ -1656,7 +1731,8 @@ class Dashboard:
     @classmethod
     def split_slow(cls, snap):
         """Take the slow-changing parts out of a snapshot. Returns them."""
-        slow = {"series": snap.pop("series", None), "internet_history": None}
+        slow = {"series": snap.pop("series", None), "internet_history": None,
+                "nws": snap.pop("nws", None)}
         net = snap.get("internet")
         if isinstance(net, dict):
             slow["internet_history"] = net.pop("history", None)
@@ -1688,6 +1764,8 @@ class Dashboard:
         # Where the tracker's own page lives, so the card can offer a way in.
         # It is a LAN address and no secret; the token stays server-side.
         snap["internet"]["url"] = self.args.speedtest_url or ""
+        snap["nws"] = (self.nws.snapshot() if self.nws
+                       else {"available": False, "error": ""})
         snap["precip_obs"] = (self.observations.snapshot() if self.observations
                               else {"available": False, "error": ""})
         snap["alerts"] = (self.alerts.snapshot() if self.alerts
@@ -2008,6 +2086,10 @@ def parse_args(argv):
                         "draws them as a band behind its trace, and one line "
                         "alone would be the daily mean, which every day "
                         "crosses twice")
+    p.add_argument("--no-nws", dest="nws", action="store_false",
+                   default=not env_default("TEMPEST_NO_NWS", ""),
+                   help="do not fetch the National Weather Service's written "
+                        "forecast for the outlook page")
     p.add_argument("--no-observations", dest="observations", action="store_false",
                    default=not env_default("TEMPEST_NO_OBSERVATIONS", ""),
                    help="do not ask the nearest NWS station what is falling "

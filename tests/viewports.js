@@ -161,6 +161,13 @@ const measureOutlook = () => {
 
   if (host.querySelector('.ax.hi, .ax.lo'))
     say('the corner scale figures are back — they read as normals');
+  const periods = [...host.querySelectorAll('.nwswords .period')];
+  if (periods.length !== 2) say('expected the forecaster\'s words for 2 periods, found ' + periods.length);
+  for (const p of periods) {
+    if (p.scrollWidth - p.clientWidth > 1) say('"' + p.querySelector('b').textContent + '" is cut off sideways');
+    if (!/Tonight|Night|day/.test(p.querySelector('b').textContent)) say('a period with no name');
+  }
+  if (!/Words: NWS/.test(host.textContent)) say('the words carry no attribution');
 
   const plotEl = host.querySelector('.outplot');
   if (!plotEl) { say('no plot'); return bad; }
@@ -530,6 +537,7 @@ const measureOutlook = () => {
       const s = freshen();
       delete s.series;                      // as the live server now sends it
       delete s.internet.history;
+      delete s.nws;
       return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8',
                              body: JSON.stringify(s) });
     });
@@ -537,7 +545,7 @@ const measureOutlook = () => {
       slows++;
       const s = freshen();
       return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8',
-        body: JSON.stringify({ series: s.series, internet_history: s.internet.history }) });
+        body: JSON.stringify({ series: s.series, internet_history: s.internet.history, nws: s.nws }) });
     });
     await page.goto(BASE, { waitUntil: 'networkidle' });
     await page.waitForTimeout(SETTLE_MS + 4000);
@@ -550,6 +558,11 @@ const measureOutlook = () => {
     if (!r.trace) bad.push('the temperature trace did not draw from the slow half');
     if (!r.presTrace) bad.push('the pressure trace did not draw from the slow half');
     if (!/of 25/.test(r.backHistory)) bad.push('the Internet back lacks its history: "' + r.backHistory + '"');
+    await page.evaluate(() => toggleOutlook(true));
+    await page.waitForTimeout(1500);
+    const words = await page.evaluate(() => document.querySelectorAll('#outlook .nwswords .period').length);
+    if (words !== 2) bad.push('the outlook lacks the NWS words from the slow half (' + words + ')');
+    await page.evaluate(() => toggleOutlook(false));
     if (slows !== 1) bad.push('the slow half was fetched ' + slows + ' times in 7 s, expected once');
     if (states < 3) bad.push('the snapshot was fetched only ' + states + ' times in 7 s');
     await page.close();

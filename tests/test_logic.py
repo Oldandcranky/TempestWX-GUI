@@ -596,7 +596,7 @@ class SlowHalf(unittest.TestCase):
         snap = {"obs": {"temp_c": 1}, "series": {"temp_c": [1, 2]},
                 "internet": {"status": "good", "history": [{"at": 1}]}}
         slow = server.Dashboard.split_slow(snap)
-        self.assertEqual(slow, {"series": {"temp_c": [1, 2]}, "internet_history": [{"at": 1}]})
+        self.assertEqual(slow, {"series": {"temp_c": [1, 2]}, "internet_history": [{"at": 1}], "nws": None})
         self.assertNotIn("series", snap)
         self.assertNotIn("history", snap["internet"])
         self.assertEqual(snap["internet"]["status"], "good")
@@ -606,6 +606,33 @@ class SlowHalf(unittest.TestCase):
         slow = server.Dashboard.split_slow(snap)
         self.assertIsNone(slow["internet_history"])
         self.assertIsNone(slow["series"])
+
+
+class NwsWords(unittest.TestCase):
+    """The written forecast, reduced to the periods the outlook shows."""
+
+    def raw(self, n=8):
+        return {"properties": {"updateTime": "2026-09-20T02:51:23+00:00", "periods": [
+            {"name": "P%d" % i, "shortForecast": "s", "detailedForecast": "d%d" % i,
+             "temperature": 60 + i, "isDaytime": i % 2 == 0,
+             "startTime": "2026-09-20T%02d:00:00-05:00" % i,
+             "probabilityOfPrecipitation": {"value": None if i == 1 else i * 10}}
+            for i in range(n)]}}
+
+    def test_keeps_six_periods_in_order(self):
+        out = server.NwsForecastFetcher.parse(self.raw())
+        self.assertEqual([p["name"] for p in out["periods"]], ["P0", "P1", "P2", "P3", "P4", "P5"])
+        self.assertEqual(out["periods"][1]["pop"], None)
+        self.assertEqual(out["periods"][2]["pop"], 20)
+        self.assertTrue(out["periods"][0]["day"])
+
+    def test_times_and_empty(self):
+        out = server.NwsForecastFetcher.parse(self.raw(2))
+        self.assertAlmostEqual(out["updated"],
+            datetime.datetime(2026, 9, 20, 2, 51, 23, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertIsNotNone(out["periods"][0]["start"])
+        self.assertEqual(server.NwsForecastFetcher.parse({})["periods"], [])
+        self.assertEqual(server.NwsForecastFetcher.parse({"properties": {"periods": [{"x": 1}]}})["periods"], [])
 
 
 class StationHealth(unittest.TestCase):

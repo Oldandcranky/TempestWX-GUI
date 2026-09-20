@@ -728,6 +728,18 @@ body.show-outlook #outlook{display:flex}
    a 1280-wide screen gives each day 128px, and two three-digit figures
    at full size do not fit that. */
 #outlook .fc-strip{flex:0 0 auto}
+/* The forecaster's words: two periods side by side, each held to a few
+   lines so a wordy night cannot push the day strip off the card. */
+#outlook .nwswords{flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;
+                   gap:var(--gap);margin-block:clamp(4px,1.2cqh,12px)}
+#outlook .period{background:var(--inset);border:1px solid var(--inset-edge);
+                 border-radius:var(--inset-radius);padding:.5em .85em;
+                 font-size:var(--fs-label);line-height:1.35;color:var(--text);min-width:0}
+#outlook .period b{display:block;color:var(--label);font-weight:600;
+                   text-transform:uppercase;letter-spacing:.08em;margin-bottom:.2em}
+#outlook .period span{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;
+                      overflow:hidden}
+body.tv #outlook .period{font-size:calc(var(--fs-label)*1.15)}
 #outlook .fc-day{gap:.18em;padding-block:clamp(.3rem,1.6cqh,.9rem)}
 #outlook .fc-day .date{font-size:calc(var(--fs-label)*.9);color:var(--faint);
                        white-space:nowrap}
@@ -752,6 +764,8 @@ body.show-outlook #outlook{display:flex}
   #outlook .card-body{justify-content:flex-start;gap:clamp(6px,1.4dvh,14px)}
   #outlook .outplot{flex:0 0 auto;height:clamp(130px,26dvh,240px)}
   #outlook .fc-strip{flex-direction:column;gap:calc(var(--gap)*.75)}
+  #outlook .nwswords{grid-template-columns:1fr}
+  #outlook .period span{-webkit-line-clamp:6}
   /* Day over date in one column: side by side, the two plus a full-size
      high/low overran a 375px row and the fit pass shrank everything to
      make it fit — the opposite of what the rows are for. */
@@ -3604,10 +3618,27 @@ function renderOutlook(){
     return;
   }
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = (() => { const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" +
+           String(d.getDate()).padStart(2, "0"); })();
   const dateOf = (iso) => { const p = iso.split("-").map(Number);
                             return new Date(p[0], p[1] - 1, p[2]); };
   b.appendChild(outlookPlot(days, s.temp_normal_c, dateOf));
+
+  // The forecaster's own words for the next two periods — "Tonight" and
+  // "Sunday" — which are what a person asks the outlook for. The rest of the
+  // periods are in the strip below as numbers.
+  const nws = s.nws || {};
+  const periods = nws.available ? (nws.periods || []).slice(0, 2) : [];
+  if (periods.length) {
+    const words = el("div", "nwswords");
+    for (const p of periods) {
+      const cell = el("div", "period");
+      cell.innerHTML = '<b>' + esc(p.name) + '</b><span>' + esc(p.detail || p.short) + '</span>';
+      words.appendChild(cell);
+    }
+    b.appendChild(words);
+  }
 
   const strip = el("div","fc-strip");
   for (const d of days) {
@@ -3637,6 +3668,7 @@ function renderOutlook(){
   const cold = pick("tmin_c", (v, a) => v < a);
   const wet  = pick("pop",    (v, a) => v > a);
   const bits = [];
+  if (periods.length) bits.push("Words: NWS " + (nws.office || "") + (nws.updated ? " · " + clock(nws.updated) : ""));
   if (warm) bits.push("Warmest " + fg(temp(warm.tmax_c)) + "° " + name(warm));
   if (cold) bits.push("Coolest " + fg(temp(cold.tmin_c)) + "° " + name(cold));
   if (wet && wet.pop > 0) bits.push("Wettest " + wet.pop + "% " + name(wet));
@@ -3707,8 +3739,9 @@ function outlookPlot(days, normal, dateOf){
       bandArt + rules + fill + line(his, "red") + line(los, "cold") +
     '</svg>';
   if (bHi) {
+    const top = normLabel(bHi, days, y, H, n);
     wrap.insertAdjacentHTML("beforeend",
-      normLabel(bHi, days, y, H, n) + normLabel(bLo, days, y, H, n));
+      top.html + normLabel(bLo, days, y, H, n, top.end).html);
   }
   return wrap;
 }
@@ -3718,7 +3751,7 @@ function outlookPlot(days, normal, dateOf){
    the scale figures as the normals. Each dashed line now says what it is, at
    whichever end of the plot, and on whichever side of the line, keeps it
    furthest from the forecast lines. */
-function normLabel(band, days, y, H, n){
+function normLabel(band, days, y, H, n, avoidEnd){
   const gap = (i) => {
     const d = days[i], v = band[i];
     const near = [d.tmax_c, d.tmin_c].filter(t => t != null)
@@ -3728,16 +3761,19 @@ function normLabel(band, days, y, H, n){
   };
   const ends = [gap(0), gap(n - 1)];
   const room = (e) => e.near ? e.near.off : Infinity;
-  const e = room(ends[1]) > room(ends[0]) ? ends[1] : ends[0];
+  // The second label takes whichever end the first did not: on a short plot
+  // the band is thin, and two labels at one end sat on each other.
+  const e = avoidEnd != null ? (avoidEnd === 0 ? ends[1] : ends[0])
+          : room(ends[1]) > room(ends[0]) ? ends[1] : ends[0];
   const top = y(e.v) / H * 100;
   // Sit on the side of the line away from the nearest forecast line, unless
   // that would push the label out of the plot.
   let above = !e.near || e.near.t < e.v;
   if (above && top < 12) above = false;
   if (!above && top > 88) above = true;
-  return '<span class="ax norm' + (e.i ? " end" : "") + (above ? " above" : "") + '" ' +
+  return {end: e.i, html: '<span class="ax norm' + (e.i ? " end" : "") + (above ? " above" : "") + '" ' +
          'style="top:' + top.toFixed(2) + '%">normal ' +
-         esc(String(Math.round(temp(e.v)))) + '°</span>';
+         esc(String(Math.round(temp(e.v)))) + '°</span>'};
 }
 
 /* The Internet page: a week of tests, fetched when the page is opened.
@@ -4187,7 +4223,7 @@ function checkUi(s){
    history — comes every thirty seconds rather than every two, and is folded
    into each snapshot before it is drawn. A snapshot that already carries them
    (the test state does) is used as it is. */
-const slow = {series: null, history: null};
+const slow = {series: null, history: null, nws: null};
 async function pollSlow(){
   try {
     const res = await fetch("api/series", {cache: "no-store"});
@@ -4195,11 +4231,13 @@ async function pollSlow(){
     const d = await res.json();
     if (d.series) slow.series = d.series;
     if (d.internet_history) slow.history = d.internet_history;
+    if (d.nws) slow.nws = d.nws;
   } catch (e) { /* the next snapshot poll reports connection trouble */ }
 }
 function withSlow(s){
   if (!s.series && slow.series) s.series = slow.series;
   if (s.internet && !s.internet.history && slow.history) s.internet.history = slow.history;
+  if (!s.nws && slow.nws) s.nws = slow.nws;
   return s;
 }
 

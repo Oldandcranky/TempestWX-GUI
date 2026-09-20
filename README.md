@@ -201,6 +201,7 @@ settings page wins, because it is written to `tempest_config.json` at runtime.
 | `--no-forecast` | `TEMPEST_NO_FORECAST` | on | Disable the forecast fetch |
 | `--no-alerts` | `TEMPEST_NO_ALERTS` | on | Disable weather alerts |
 | `--no-observations` | `TEMPEST_NO_OBSERVATIONS` | on | Stop asking the nearest NWS station what is falling (the snow, sleet and freezing rain the Tempest cannot see) |
+| `--no-nws` | `TEMPEST_NO_NWS` | on | Stop fetching the National Weather Service's written forecast for the outlook |
 | `--obs-stations` | `TEMPEST_OBS_STATIONS` | two nearest | NWS stations to ask what is falling, e.g. `KDPA,KDKB` |
 
 > Prefer the settings page for the token. `docker-compose.yml` is committed to
@@ -341,6 +342,15 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The forecaster's own words on the outlook.** The ten-day page was
+  numbers and icons; it now carries the National Weather Service's written
+  forecast for the station's grid square — "Tonight: showers and
+  thunderstorms before 1am…" — for the next two periods, from the keyless API
+  the alerts already use. It is the local office's forecast rather than a
+  global model's output, and it reads across a room. Fetched every half hour
+  and served with the slow half of the state. `--no-nws` turns it off.
+- "Today" on the outlook is the local date. It was taken from the UTC date,
+  which at 11 PM here had already rolled to tomorrow.
 - **The two-second snapshot is a tenth of the size.** It was 35 KB, and 28 KB
   of that — the 24-hour series and the Internet card's week of tests — changes
   once a minute and once an hour, yet went to every screen every two seconds:

@@ -451,6 +451,41 @@
   "waxing": true
  },
  "now": 1789568529.1540258,
+ "nws": {
+  "available": true,
+  "error": "",
+  "office": "LOT",
+  "periods": [
+   {
+    "day": false,
+    "detail": "Showers and thunderstorms before 1am, then patchy fog and showers and thunderstorms between 1am and 5am, then patchy fog and showers and thunderstorms. Some of the storms could produce heavy rain. Cloudy. Low around 62, with temperatures rising to around 65 overnight. East northeast wind 5 to 10 mph. Chance of precipitation is 100%. New rainfall amounts between 1 and 2 inches possible. Locally higher amounts possible.",
+    "name": "Tonight",
+    "pop": 100,
+    "short": "Showers And Thunderstorms",
+    "start": 1789568529.1540258,
+    "temp_f": 62
+   },
+   {
+    "day": true,
+    "detail": "Showers and thunderstorms before noon, then patchy fog and showers and thunderstorms between 1am and 5am, then patchy fog and showers and thunderstorms. Some of the storms could produce heavy rain. Cloudy. Low around 62, with temperatures rising to around 65 overnight. East northeast wind 5 to 10 mph. Chance of precipitation is 100%. New rainfall amounts between 1 and 2 inches possible. Locally higher amounts possible.",
+    "name": "Washington's Birthday Night",
+    "pop": 90,
+    "short": "Rain Showers",
+    "start": 1789597329.1540258,
+    "temp_f": 65
+   },
+   {
+    "day": false,
+    "detail": "A slight chance of rain showers.",
+    "name": "Sunday Night",
+    "pop": 20,
+    "short": "Slight Chance Rain Showers",
+    "start": 1789640529.1540258,
+    "temp_f": 54
+   }
+  ],
+  "updated": 1789566729.1540258
+ },
  "obs": {
   "battery": 2.68,
   "lux": 87920,

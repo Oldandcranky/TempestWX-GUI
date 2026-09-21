@@ -2715,7 +2715,14 @@ function buildRecords(s){
   const now = s.obs.temp_c;
   let inner = '<div class="track"></div>';
   if (month) {
-    const a = pct(month.lo[0]), bb = pct(month.hi[0]);
+    // An outline that stops a degree short of the end leaves a sliver of bar
+    // poking out past it — true, and it looks like a drawing fault. Within a
+    // few percent of either end the difference cannot be read off a bar this
+    // size anyway, so the outline takes the end. The figures are in the rows.
+    const SNAP = 4;
+    let a = pct(month.lo[0]), bb = pct(month.hi[0]);
+    if (a < SNAP) a = 0;
+    if (bb > 100 - SNAP) bb = 100;
     inner += '<div class="month" style="left:' + a.toFixed(1) +
              '%;width:' + Math.max(1.5, bb - a).toFixed(1) + '%"></div>';
   }

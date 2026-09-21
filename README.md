@@ -353,6 +353,10 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- The Records card's "this month" outline takes the end of the bar when the
+  month's range comes within a few percent of it. A month whose high was one
+  degree under the record left a stub of red past the outline, which was true
+  and looked like the bar bleeding through.
 - **The test suite has a clock and a kill switch.** It had grown to eight
   minutes, one page load after another, printing nothing while a section
   ran — indistinguishable from a hang, and twice taken for one. Sections now

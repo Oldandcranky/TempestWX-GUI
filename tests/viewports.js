@@ -160,6 +160,11 @@ const measure = (root) => {
       const month = band.querySelector('.month');
       if (month) {
         const m = month.getBoundingClientRect();
+        // Stopping just short of an end leaves a stub of bar past the outline,
+        // which reads as the bar bleeding through it.
+        for (const [gap, end] of [[m.left - track.left, 'left'], [track.right - m.right, 'right']])
+          if (gap > 1.5 && gap < track.width * 0.03)
+            bad.push([id, 'the month outline stops ' + gap.toFixed(0) + 'px short of the ' + end + ' end']);
         if (m.bottom > track.bottom + track.height || m.top < track.top - track.height)
           bad.push([id, 'the month outline is ' + m.height.toFixed(0) + 'px tall round a ' +
                         track.height.toFixed(0) + 'px bar']);
@@ -544,7 +549,7 @@ console.log = (...args) => {
     const jobs = [];
     for (const [w, h] of [[1920, 1080], [1280, 1024], [414, 896]])
       for (const slots of [SIX, null])
-        for (const where of ['lo', 'mid', 'hi', 'month-is-everything']) jobs.push([w, h, slots, where]);
+        for (const where of ['lo', 'mid', 'hi', 'month-is-everything', 'month-a-degree-short']) jobs.push([w, h, slots, where]);
     // Side by side, six at a time: two dozen page loads in a row is a minute
     // and a half of a suite that is meant to be run before every push.
     for (let i = 0; i < jobs.length; i += 6)
@@ -555,6 +560,11 @@ console.log = (...args) => {
           const all = s.records.all;
           s.obs.temp_c = where === 'lo' ? all.lo[0] : where === 'hi' ? all.hi[0]
                        : (all.lo[0] + all.hi[0]) / 2;
+          if (where === 'month-a-degree-short') {     // what the owner's card showed
+            const span = all.hi[0] - all.lo[0];
+            s.records.month = Object.assign({}, s.records.month,
+              {lo: [all.lo[0] + span * 0.015, all.lo[1]], hi: [all.hi[0] - span * 0.018, all.hi[1]]});
+          }
           if (where === 'month-is-everything')       // a station in its first month
             s.records.month = s.records.year = Object.assign({}, all);
           await page.route('**/api/state', route => route.fulfill({

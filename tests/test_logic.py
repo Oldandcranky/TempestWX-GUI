@@ -929,5 +929,206 @@ class Almanac(unittest.TestCase):
         self.assertEqual(len(self.h.temp_days), 10)
 
 
+class KeepingTheRecordSafe(unittest.TestCase):
+    """The daily record is years of data in one small file. These are the ways
+    it could be lost without anyone noticing, each one closed."""
+
+    def filled(self):
+        h = blank_history()
+        for i in range(40):
+            day = (datetime.date(2026, 6, 1) + datetime.timedelta(days=i)).isoformat()
+            h.temp_days[day] = {"lo": 10.0, "hi": 20.0 + i / 10.0}
+            h.days[day] = {"gust": 5.0 + i / 10.0, "mins": 1440.0}
+        return h
+
+    def test_it_has_a_file_of_its_own(self):
+        import json
+        h = self.filled()
+        h.save(force=True)
+        self.assertEqual(list(json.load(open(h.path))), ["samples"])
+        self.assertEqual(len(json.load(open(h.days_path))["days"]), 40)
+        self.assertEqual(len(core.History(h.path).days), 40)
+
+    def test_a_record_kept_in_the_old_place_is_still_found(self):
+        import json
+        h = blank_history()
+        with open(h.path, "w") as f:
+            json.dump({"samples": [], "rain_days": {"2026-06-01": 4.0},
+                       "temp_days": {"2026-06-01": {"lo": 1, "hi": 9}},
+                       "days": {"2026-06-01": {"gust": 7.0}}}, f)
+        again = core.History(h.path)
+        self.assertEqual(again.days["2026-06-01"]["gust"], 7.0)
+        again.save(force=True)
+        self.assertTrue(os.path.exists(again.days_path))
+
+    def test_a_damaged_file_is_set_aside_and_the_backup_used(self):
+        h = self.filled()
+        h.save(force=True)                           # also makes today's backup
+        with open(h.days_path, "w") as f:
+            f.write('{"days": {"2026-06-')            # a write cut short
+        again = core.History(h.path)
+        self.assertEqual(len(again.days), 40)
+        kept = [n for n in os.listdir(os.path.dirname(h.path)) if ".damaged-" in n]
+        self.assertEqual(len(kept), 1)
+        self.assertTrue(any("restored from the backup" in n for n in again.notices))
+
+    def test_a_file_that_cannot_be_moved_is_never_written_over(self):
+        h = self.filled()
+        h.save(force=True)
+        with open(h.days_path, "w") as f:
+            f.write("not json")
+        real = core.History._set_aside
+        core.History._set_aside = lambda self, path: None
+        try:
+            again = core.History(h.path)
+        finally:
+            core.History._set_aside = real
+        again.save(force=True)
+        self.assertEqual(open(h.days_path).read(), "not json")
+        self.assertTrue(again.storage_status()["locked"])
+
+    def test_a_failed_save_is_said_and_then_unsaid(self):
+        h = self.filled()
+        folder = os.path.dirname(h.path)
+        os.chmod(folder, 0o555)
+        try:
+            h.save(force=True)
+            status = h.storage_status()
+            self.assertFalse(status["ok"])
+            self.assertIn("Cannot save", status["error"])
+            self.assertIsNotNone(status["failing_since"])
+        finally:
+            os.chmod(folder, 0o755)
+        h.save(force=True)
+        self.assertTrue(h.storage_status()["ok"])
+        self.assertIsNone(h.storage_status()["failing_since"])
+
+    def test_one_backup_a_day(self):
+        h = self.filled()
+        h.save(force=True)
+        h.save(force=True)
+        self.assertEqual(h.storage_status()["backups"], 1)
+
+    def test_thirty_kept_and_the_first_of_each_month_for_good(self):
+        h = self.filled()
+        start = datetime.date(2026, 1, 1)
+        for i in range(100):
+            h._backup_day = None
+            h._backup_if_due(start + datetime.timedelta(days=i))
+        days = [d for d, _p in h._backups()]
+        firsts = [d for d in days if d.endswith("-01")]
+        self.assertEqual(firsts, ["2026-04-01", "2026-03-01", "2026-02-01", "2026-01-01"])
+        self.assertEqual(len(days) - len(firsts), core.BACKUPS_KEPT)
+        self.assertEqual(days[0], "2026-04-10")
+
+    def test_a_collapsed_record_is_not_copied_over_the_good_backups(self):
+        h = self.filled()
+        h._backup_if_due(datetime.date(2026, 7, 1))
+        h.days.clear(); h.temp_days.clear()
+        h.temp_days["2026-07-02"] = {"lo": 1.0, "hi": 2.0}
+        h._backup_day = None
+        self.assertFalse(h._backup_if_due(datetime.date(2026, 7, 2)))
+        self.assertEqual([d for d, _p in h._backups()], ["2026-07-01"])
+        self.assertTrue(any("shrunk" in n for n in h.notices))
+
+
+class ImpossibleReadings(unittest.TestCase):
+    """One bad number from the sensor would otherwise be a record for years."""
+
+    def setUp(self):
+        self.st = core.StationState(history=blank_history())
+        self.today = datetime.date.today().isoformat()
+
+    def test_a_reading_outside_what_the_sensor_can_mean_is_dropped(self):
+        self.st.handle(obs_st(temp=21.0, gust=6.0))
+        self.st.handle(obs_st(temp=21.5, gust=140.0))
+        self.assertEqual(self.st.data["wind_gust_ms"], 6.0)
+        self.assertEqual(self.st.history.days[self.today]["gust"], 6.0)
+        self.assertEqual(self.st.rejected_today, 1)
+
+    def test_a_glitch_is_dropped_and_the_card_keeps_the_last_good_value(self):
+        self.st.handle(obs_st(temp=21.0))
+        self.st.handle(obs_st(temp=48.0))
+        self.assertEqual(self.st.data["temp_c"], 21.0)
+        self.assertEqual(self.st.history.temp_days[self.today]["hi"], 21.0)
+
+    def test_three_in_a_row_and_it_is_believed(self):
+        self.st.handle(obs_st(pres=1000.0))
+        for _ in range(3):
+            self.st.handle(obs_st(pres=985.0))
+        self.assertEqual(self.st.data["pres_mb"], 985.0)
+
+    def test_an_ordinary_change_is_not_a_glitch(self):
+        self.st.handle(obs_st(temp=21.0))
+        self.st.handle(obs_st(temp=17.5))            # a gust front
+        self.assertEqual(self.st.data["temp_c"], 17.5)
+        self.assertEqual(self.st.rejected_today, 0)
+
+    def test_the_backfill_is_screened_the_same_way(self):
+        day = {}
+        core.History.fold(day, 0, 5.0, gust_ms=300.0, pres_mb=20.0, temp_c=15.0)
+        self.assertNotIn("gust", day)
+        self.assertNotIn("pmin", day)
+        self.assertEqual(day["tmean"], 15.0)
+
+
+class StrikingARecord(unittest.TestCase):
+    """A record that was a sensor fault, marked rather than deleted: deleted,
+    the backfill would only put it back."""
+
+    TODAY = datetime.date(2026, 9, 21)
+
+    def setUp(self):
+        h = self.h = blank_history()
+        h.temp_days.update({"2026-07-01": {"lo": 12.0, "hi": 44.0},
+                            "2026-07-02": {"lo": 14.0, "hi": 33.0}})
+        h.days.update({"2026-07-01": {"gust": 61.0}, "2026-07-02": {"gust": 18.0}})
+        h.rain_days.update({"2026-07-01": 90.0, "2026-07-02": 12.0})
+
+    def test_the_next_best_takes_its_place(self):
+        self.assertIsNone(self.h.strike("2026-07-01", "gust"))
+        rec = self.h.station_records(today=self.TODAY)["all"]
+        self.assertEqual(rec["gust"], {"v": 18.0, "date": "2026-07-02"})
+
+    def test_hottest_and_the_rain_totals_honour_it_too(self):
+        self.h.strike("2026-07-01", "hi")
+        self.h.strike("2026-07-01", "rain")
+        self.assertEqual(self.h.temp_record("all", self.TODAY)["hi"], (33.0, "2026-07-02"))
+        self.assertEqual(self.h.temp_record("all", self.TODAY)["lo"], (12.0, "2026-07-01"))
+        self.assertEqual(self.h.rain_year(self.TODAY), 12.0)
+
+    def test_it_can_be_put_back(self):
+        self.h.strike("2026-07-01", "gust")
+        self.h.strike("2026-07-01", "gust", restore=True)
+        self.assertEqual(self.h.station_records(today=self.TODAY)["all"]["gust"]["v"], 61.0)
+        self.assertEqual(self.h.struck, {})
+
+    def test_the_mark_survives_a_restart_and_the_number_is_kept(self):
+        self.h.strike("2026-07-01", "gust")
+        again = core.History(self.h.path)
+        self.assertTrue(again.is_struck("2026-07-01", "gust"))
+        self.assertEqual(again.days["2026-07-01"]["gust"], 61.0)
+
+    def test_nonsense_is_refused(self):
+        self.assertIn("Unknown", self.h.strike("2026-07-01", "mood"))
+        self.assertIn("Not a date", self.h.strike("last tuesday", "gust"))
+
+    def test_the_export_keeps_the_number_and_says_it_was_struck(self):
+        self.h.strike("2026-07-01", "gust")
+        lines = self.h.csv(temp="°F", wind="mph", pres="inHg", rain="in").split("\r\n")
+        self.assertTrue(lines[0].startswith("date,high_F,low_F,mean_temp_F,rain_in,peak_gust_mph"))
+        first = dict(zip(lines[0].split(","), lines[1].split(",")))
+        self.assertEqual(first["date"], "2026-07-01")
+        self.assertEqual(first["high_F"], "111.2")
+        self.assertEqual(first["rain_in"], "3.54")
+        self.assertEqual(first["peak_gust_mph"], "136.5")
+        self.assertEqual(first["struck_as_not_real"], "gust")
+
+    def test_units_asked_for_in_a_url(self):
+        class Args: temp_unit, wind_unit, pres_unit, rain_unit = "°F", "mph", "inHg", "in"
+        units = server.Handler._units("temp=C&wind=km%2Fh&pres=banana", Args)
+        self.assertEqual(units, {"temp": "°C", "wind": "km/h", "pres": "inHg", "rain": "in"})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

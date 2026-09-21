@@ -261,9 +261,11 @@ and sunshine — back to the day the station was installed.
 | `/api/state` | Everything, in canonical units (°C, mb, m/s, mm, km) |
 | `/api/wind` | Just the live wind — a few dozen bytes, polled often |
 | `/api/series` | The slow half of the state: the 24-hour series and the forecaster's words |
+| `/api/days.csv` | The whole daily record, one row a day. `?temp=F&wind=mph&pres=inHg&rain=in` choose the units |
+| `/api/record` | The all-time records, what has been struck from them, and whether the record is being saved |
 | `/api/almanac` | Streaks, season marks, records, a row per month and a year of daily rows. `?warm=&hot=&frost=` set the thresholds, in °C |
 | `/api/config` | The card layout, and whether a token is set (never the token) |
-| `/healthz` | `{"ok": true, "health": "live"}` |
+| `/healthz` | `{"ok": true, "health": "live", "saving": true}` — `saving` is false when history cannot be written |
 
 `/api/state` is a stable shape. If you want to feed this into Home Assistant,
 Grafana or a script of your own, poll that.
@@ -323,13 +325,16 @@ Samples are prefixed `PREVIEW` so they cannot be mistaken for live warnings.
 
 ## Files it writes
 
-All live in `--data-dir` and are safe to delete — they are rebuilt. The
-daily record is the exception worth knowing: with a WeatherFlow token it is
-rebuilt from their archive, and without one it is the only copy.
+All live in `--data-dir`. Everything but the daily record is safe to delete
+and is rebuilt. The daily record is rebuilt from WeatherFlow's archive if you
+have given a token, and otherwise `backups/` holds the only other copies —
+include the data directory in whatever backs up the NAS.
 
 | File | Contents |
 |---|---|
-| `tempest_history.json` | 48 hours of samples, plus the daily record: each day's rainfall, high and low, peak gust, pressure range, strikes and sunshine, kept for about eleven years |
+| `tempest_history.json` | 48 hours of samples. Disposable |
+| `tempest_days.json` | **The daily record**: each day's rainfall, high and low, peak gust, pressure range, strikes and sunshine. About 300 bytes a day, kept for a century |
+| `backups/tempest_days-YYYY-MM-DD.json` | A dated copy of the daily record: thirty days of them, and the first of every month for good |
 | `tempest_config.json` | Card layout and the WeatherFlow token (`0600`) |
 | `tempest_server_state.json` | Today's strike count and the last observation |
 | `tempest_forecast.json` | The last forecast, so a restart does not re-hit the API |
@@ -353,6 +358,41 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The daily record is looked after.** It is years of data at three hundred
+  bytes a day, and there were four ways to lose it without being told.
+  - It shared a file with the 48 hours of samples, rewritten whole every five
+    minutes with nothing flushed. It has its own file now,
+    `tempest_days.json`, flushed to the disk before it replaces the old one.
+  - A file that failed to parse was treated as no file, and overwritten with
+    an empty one at the next save. A file that cannot be read is set aside
+    under a dated name, the record is restored from a backup, and the page
+    says so. If it cannot even be moved, it is never written to.
+  - A failed save failed in silence, so a full disk meant cards that looked
+    healthy for days while nothing was kept. It is on the banner, on the
+    Station card, and in `/healthz` as `saving`. Less than 500 MB free where
+    the history lives is said before it becomes a failure.
+  - There was one copy. A dated copy is made every day in `data/backups`:
+    thirty kept, and the first of each month for good. A record that has
+    collapsed is not copied, or thirty empty backups would push out every
+    real one.
+- **One bad reading is no longer a record for years.** A reading outside what
+  the sensor can mean at all is dropped, and so is a jump no real air makes
+  in a minute — unless the next readings agree, in which case it was the
+  truth and is believed at the third. The card keeps the last good value.
+  The backfill is screened the same way. The Station card says how many were
+  dropped today.
+- **A record that was never real can be struck** (Settings → Daily record).
+  Each all-time record is listed with its date and a "Not real" button; the
+  next best takes its place, on the cards, the almanac and the totals. The
+  number is marked rather than deleted — deleted, the backfill would only put
+  it back — and can be put back.
+- **The daily record as a spreadsheet**: `/api/days.csv`, from the almanac or
+  the settings page, in the units of whoever asks, with the unit in every
+  column header. Every figure is as recorded; a struck reading is still there
+  and named in the last column, since an export that quietly dropped numbers
+  could not be checked against anything.
+- The daily record keeps a century rather than eleven years. At this size
+  there was no reason for it to forget.
 - The Records card's "this month" outline takes the end of the bar when the
   month's range comes within a few percent of it. A month whose high was one
   degree under the record left a stub of red past the outline, which was true

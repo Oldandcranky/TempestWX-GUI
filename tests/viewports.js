@@ -584,6 +584,108 @@ console.log = (...args) => {
     for (const why of bad) console.log('         ' + why);
   });
 
+  // ── the daily record: a failed save is said, and a record can be struck ─
+  section("the daily record: warnings, settings and the way out", async () => {
+    const bad = [];
+    const RECORD = {
+      records: STATE.records.station ? [
+        {field: 'hi', label: 'Hottest', v: 42.3, date: '2024-08-27'},
+        {field: 'gust', label: 'Strongest gust', v: 38.9, date: '2024-12-15'},
+        {field: 'rain', label: 'Wettest day', v: 131.06, date: '2025-09-27'},
+        {field: 'pmin', label: 'Lowest pressure', v: 961.7, date: '2024-11-30'}] : [],
+      struck: [{date: '2025-03-11', field: 'swing', label: 'Widest swing'}],
+      storage: Object.assign({}, STATE.storage, {
+        ok: false, error: 'Cannot save tempest_days.json — No space left on device',
+        notices: ['tempest_days.json was damaged (not valid JSON); kept as tempest_days.json.damaged-20260921-151741']}),
+    };
+    await abreast([[1920, 1080], [414, 896]], async ([w, h]) => {
+      const at = w + 'x' + h;
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      const errs = [], posts = [];
+      page.on('pageerror', e => errs.push(e.message));
+      const s = freshen();
+      s.storage = Object.assign({}, s.storage, {ok: false, failing_since: s.now - 7200,
+        error: 'Cannot save tempest_days.json — No space left on device'});
+      s.hardware.rejected_today = 3;
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(s) }));
+      await page.route('**/api/record', route => {
+        if (route.request().method() === 'POST') {
+          posts.push({body: route.request().postDataJSON(), header: route.request().headers()['x-tempest-config']});
+          return route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify(Object.assign({ok: true, error: ''}, RECORD,
+              {records: RECORD.records.filter(r => r.field !== 'gust'),
+               struck: RECORD.struck.concat([{date: '2024-12-15', field: 'gust', label: 'Strongest gust'}])})) });
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(RECORD) });
+      });
+      try {
+        await page.goto(BASE, { waitUntil: 'networkidle' });
+        await page.waitForTimeout(SETTLE_MS);
+        const seen = await page.evaluate(() => ({
+          banner: document.getElementById('banner').classList.contains('show')
+                  ? document.getElementById('banner').textContent : '',
+          station: (document.querySelector('#card-hardware') || {textContent: ''}).textContent,
+          sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth }));
+        if (!/not being saved/.test(seen.banner) || !/No space left/.test(seen.banner))
+          bad.push(at + ': a failed save is not on the banner: "' + seen.banner + '"');
+        if (!/2h/.test(seen.banner)) bad.push(at + ': the banner does not say for how long');
+        if (!/History is not being saved/.test(seen.station))
+          bad.push(at + ': the Station card does not say history is not being saved');
+        if (seen.sideways > 1) bad.push(at + ': the banner pushes the page ' + seen.sideways + 'px wide');
+        for (const [id, why] of await page.evaluate(measure, '#grid'))
+          if (id === 'hardware') bad.push(at + ': station card ' + why);
+
+        await page.$eval('#setBtn', el => el.click());
+        await page.waitForTimeout(1500);
+        const sec = await page.evaluate(() => {
+          const el = document.getElementById('recordsec');
+          const link = el && el.querySelector('a.linkbtn');
+          return { text: el ? el.textContent : '', rows: el ? el.querySelectorAll('.recrow').length : 0,
+                   href: link ? link.getAttribute('href') : '',
+                   wide: el ? [...el.querySelectorAll('.recrow')].filter(r => r.scrollWidth > r.clientWidth + 1).length : 0 };
+        });
+        if (sec.rows !== 5) bad.push(at + ': ' + sec.rows + ' record rows in settings, expected 5');
+        for (const want of ['1213 days kept', '34 backups', 'Not being saved', 'damaged', 'Marked as not real'])
+          if (!sec.text.includes(want)) bad.push(at + ': settings does not say "' + want + '"');
+        if (!/api\/days\.csv\?temp=F&wind=mph&pres=inHg&rain=in/.test(sec.href))
+          bad.push(at + ': the CSV link is "' + sec.href + '"');
+        if (sec.wide) bad.push(at + ': ' + sec.wide + ' record row(s) too wide for the sheet');
+        // Striking the gust record: the right request, with the header, and the list redrawn.
+        await page.$$eval('#recordsec .recrow', rows => rows.find(r => /Strongest gust/.test(r.textContent))
+          .querySelector('button').click());
+        await page.waitForTimeout(1200);
+        const p0 = posts[0] || {};
+        if (!p0.body || !p0.body.strike || p0.body.strike.date !== '2024-12-15' || p0.body.strike.field !== 'gust')
+          bad.push(at + ': striking sent ' + JSON.stringify(p0.body));
+        if (p0.header !== '1') bad.push(at + ': the write went without its header');
+        const after = await page.evaluate(() => [...document.querySelectorAll('#recordsec .recrow')]
+          .map(r => r.textContent));
+        if (!after.some(t => /Strongest gust/.test(t) && /Put back/.test(t)))
+          bad.push(at + ': the struck gust is not offered back');
+      } catch (e) { bad.push(at + ': ' + e.message.split('\n')[0]); }
+      for (const m of errs) bad.push(at + ': pageerror: ' + m);
+      await page.close();
+    });
+    // And the real thing, from the real server: a CSV with a header and rows.
+    try {
+      const r = await fetch(BASE + '/api/days.csv?temp=C&wind=km%2Fh');
+      const text = await r.text();
+      const lines = text.trim().split('\r\n');
+      if (!/text\/csv/.test(r.headers.get('content-type') || '')) bad.push('the CSV is served as ' + r.headers.get('content-type'));
+      if (!/attachment; filename="tempest-daily-record-/.test(r.headers.get('content-disposition') || ''))
+        bad.push('the CSV is not a download');
+      if (!lines[0].startsWith('date,high_C,low_C,') || !lines[0].includes('peak_gust_kmh'))
+        bad.push('the CSV header is "' + lines[0].slice(0, 60) + '"');
+      if (lines.length < 300) bad.push('the demo year exported only ' + lines.length + ' lines');
+      const cols = lines[0].split(',').length;
+      if (lines.some(l => l.split(',').length !== cols)) bad.push('a CSV row has the wrong number of columns');
+    } catch (e) { bad.push('CSV: ' + e.message); }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL daily record' : '  ok   daily record');
+    for (const why of bad) console.log('         ' + why);
+  });
+
   // ── the almanac page ──────────────────────────────────────────────────
   // Three records of a station's life: a full and violent year, which is the
   // case for width; a station three days old, which is the case for every
@@ -1411,12 +1513,17 @@ console.log = (...args) => {
   // Longest first, or the whole run waits on whichever long section happened
   // to be queued last. These are the ones the clock says are long.
   const LONG = /rain and snow|almanac|lightning|testall|Internet page/;
-  const queue = sections.filter(s => !s.solo)
+  // TEST_ONLY=almanac runs just the sections whose name contains that, for
+  // checking one fix without waiting for everything else.
+  const ONLY = (process.env.TEST_ONLY || '').toLowerCase();
+  const wanted = sections.filter(s => !ONLY || s.name.toLowerCase().includes(ONLY));
+  if (ONLY) say('  only: ' + (wanted.map(s => s.name).join('; ') || 'nothing matches "' + ONLY + '"'));
+  const queue = wanted.filter(s => !s.solo)
     .sort((a, b) => LONG.test(b.name) - LONG.test(a.name));
   await Promise.all(Array.from({length: LANES}, async () => {
     while (queue.length) await runOne(queue.shift());
   }));
-  for (const s of sections.filter(s => s.solo)) await runOne(s);
+  for (const s of wanted.filter(s => s.solo)) await runOne(s);
 
   await browser.close();
   console.log(failures

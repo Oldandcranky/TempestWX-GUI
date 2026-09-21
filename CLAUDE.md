@@ -95,6 +95,19 @@ the WeatherFlow sweep both write it through `History.fold`, and
 `merge_day` reconciles them; it must stay idempotent, because the sweep
 redoes the last week every run.
 
+It lives in `data/tempest_days.json`, not with the samples, and
+`History._write_json` is the only way anything is written: temporary file,
+fsync, swap. **Never catch a save error and drop it** — a full disk once
+failed silently; failures go in `_save_errors`, which is what the banner, the
+Station card and `/healthz` read. A file that will not parse is set aside
+(`.damaged-<when>`) and the record restored from `data/backups/`; never add a
+code path that treats an unreadable file as an empty one. Readings are
+screened in `StationState._screen` (live) and `History.fold` (backfill); a
+record judged not real is marked in `History.struck`, never deleted.
+
+`deploy.sh` still never touches `data/`. The NAS volume was 98% full on
+2026-09-21 (383 GB free), which is the realistic way saves start failing.
+
 **If the sweep learns to keep a new field, raise `Backfill.SWEEP_KEEPS`.**
 That is what makes an already-swept archive get walked again; without it the
 new field only ever starts from the day it was deployed.

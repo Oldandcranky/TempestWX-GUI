@@ -18,3 +18,8 @@ tempest_forecast.json
 
 # Per-session browser-preview launcher (points at a scratch dir)
 .claude/launch.json
+
+# The daily record and its dated copies, when run from the checkout
+tempest_days.json
+backups/
+*.damaged-*

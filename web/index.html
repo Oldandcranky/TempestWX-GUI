@@ -925,6 +925,14 @@ body.show-settings #settings{display:block}
 .cardrow .nm{flex:1;text-transform:capitalize}
 .cardrow input{width:1.05em;height:1.05em;accent-color:var(--accent)}
 .sheet .row{display:flex;gap:.6em;align-items:center;flex-wrap:wrap}
+.sheet .recrow{display:grid;grid-template-columns:minmax(8em,1.4fr) 1fr 1fr auto;gap:.8em;
+               align-items:center;padding:.35em 0;border-top:1px solid var(--rule);
+               font-size:clamp(12px,1vw,15px)}
+.sheet .recrow .what{color:var(--label)}
+.sheet .recrow .val{font-weight:600;font-variant-numeric:tabular-nums}
+.sheet .recrow .when{color:var(--label)}
+.sheet .recordsec .tools{margin:.2em 0 .6em}
+.sheet .recordsec .linkbtn{display:inline-block;align-self:auto;margin:.2em 0 .8em;font-size:clamp(11px,1vw,14px)}
 .sheet input[type=password],.sheet input[type=text]{
   flex:1;min-width:220px;background:var(--inset);color:var(--text);
   border:1px solid var(--inset-edge);border-radius:var(--inset-radius);
@@ -2972,16 +2980,22 @@ function buildHardware(s){
   ]));
 
   const faults = h.faults || [];
-  const sensors = caption(
-    faults.length ? faults.join(" · ")
-    : (st.sensor_status == null ? "Sensor status not reported yet"
-                                : "All sensors reporting"),
-    faults.length ? "red" : "green");
+  const store = s.storage || {};
+  const dropped = h.rejected_today || 0;
+  // One line, and it goes to whatever most needs saying: history not being
+  // kept, then a sensor fault, then readings thrown out as impossible.
+  const news = store.ok === false ? ["History is not being saved", "red"]
+    : faults.length ? [faults.join(" · "), "red"]
+    : dropped ? [dropped + (dropped === 1 ? " reading" : " readings") +
+                 " dropped as impossible today", "accent"]
+    : [st.sensor_status == null ? "Sensor status not reported yet"
+                                : "All sensors reporting", "green"];
+  const sensors = caption(news[0], news[1]);
   // Thirteen cards on a short display leaves this one about 160 pixels, and
   // the fit pass bottoms out still overflowing. The line that goes first is
   // the one that only says nothing is wrong. A fault keeps its line at any
   // size — that is the whole point of it.
-  if (!faults.length) sensors.classList.add("whenroom");
+  if (news[1] === "green") sensors.classList.add("whenroom");
   b.appendChild(sensors);
   return c;
 }
@@ -3475,6 +3489,111 @@ async function saveConfig(patch, statusEl){
   }
 }
 
+/* The daily record: is it safe, a way to take it away, and a way to say that
+   a record was never real. A sensor glitch that sets an all-time record sets
+   it for good otherwise — the backfill would only put a deleted number back —
+   so a reading is marked, not removed, and the mark can be lifted. */
+let recordInfo = null;
+
+async function loadRecord(){
+  try {
+    const r = await fetch("api/record", {cache: "no-store"});
+    recordInfo = await r.json();
+  } catch (e) {
+    recordInfo = {error: "Could not reach the dashboard server"};
+  }
+  const live = document.getElementById("recordsec");
+  if (live) live.replaceWith(recordSection());
+}
+
+async function strikeRecord(item, restore, statusEl){
+  try {
+    const r = await fetch("api/record", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Tempest-Config": "1"},
+      body: JSON.stringify({[restore ? "restore" : "strike"]: {date: item.date, field: item.field}}),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok || body.ok === false) throw new Error(body.error || ("HTTP " + r.status));
+    recordInfo = body;
+    almanac = null;                       // the almanac was built on the old record
+    document.getElementById("recordsec").replaceWith(recordSection());
+    poll();
+  } catch (e) {
+    statusEl.className = "state bad";
+    statusEl.textContent = "Could not save — " + e.message;
+  }
+}
+
+function recordValue(item){
+  const v = item.v;
+  switch (item.field) {
+    case "hi": case "lo": return fg(temp(v)) + " " + prefs.temp;
+    case "swing": return fg(tempDelta(v), 0) + " " + (prefs.temp === "K" ? "K" : prefs.temp);
+    case "gust": return fg(wind(v)) + " " + prefs.wind;
+    case "rain": return fx(rain(v), rainDp()) + " " + prefs.rain;
+    case "pmin": case "pmax": return fx(pres(v), presDp()) + " " + prefs.pres;
+    case "sun": return fx(v / 1000, 1) + " kWh/m²";
+    default: return String(Math.round(v));
+  }
+}
+
+function recordSection(){
+  const wrap = el("div", "recordsec");
+  wrap.id = "recordsec";
+  wrap.innerHTML = '<h2>Daily record</h2>';
+  const info = recordInfo;
+  if (!info) {
+    wrap.appendChild(el("p", "note", "Loading…"));
+    loadRecord();
+    return wrap;
+  }
+  if (info.error) { wrap.appendChild(el("div", "state bad", esc(info.error))); return wrap; }
+  const st = info.storage || {};
+  const kb = st.days_bytes == null ? null : Math.max(1, Math.round(st.days_bytes / 1024));
+  const facts = [daysWord(st.days || 0) + " kept" + (kb ? ", " + kb + " KB" : "")];
+  facts.push(st.last_backup ? st.backups + (st.backups === 1 ? " backup" : " backups") +
+                              ", the newest from " + niceDay(st.last_backup)
+                            : "no backup yet — the first is made within five minutes");
+  if (st.saved_at) facts.push("last saved " + clock(st.saved_at));
+  wrap.appendChild(el("p", "note", esc(facts.join(" · ")) +
+    '<br>A dated copy is kept every day for thirty days, and the first of each month for good, ' +
+    'in <code>data/backups</code>. A file that cannot be read is set aside, never written over.'));
+  if (st.ok === false)
+    wrap.appendChild(el("div", "state bad", esc("Not being saved — " + st.error)));
+  for (const n of st.notices || []) wrap.appendChild(el("div", "state bad", esc(n)));
+
+  const tools = el("div", "tools");
+  tools.appendChild(csvLink("Download as CSV"));
+  wrap.appendChild(tools);
+
+  const status = el("div", "state");
+  const line = (item, restore) => {
+    const row = el("div", "recrow");
+    row.innerHTML = '<span class="what">' + esc(item.label) + '</span>' +
+      '<span class="val">' + (restore ? "" : esc(recordValue(item))) + '</span>' +
+      '<span class="when">' + esc(niceDay(item.date)) + '</span>';
+    const btn = el("button", "", restore ? "Put back" : "Not real");
+    btn.type = "button";
+    btn.title = restore ? "Count this reading again"
+      : "Leave this reading out of the records; the next best takes its place";
+    btn.addEventListener("click", () => strikeRecord(item, restore, status));
+    row.appendChild(btn);
+    return row;
+  };
+  if ((info.records || []).length) {
+    wrap.appendChild(el("p", "note", "The records as they stand. If one was a sensor fault " +
+      "rather than weather, mark it and the next best takes its place. Nothing is deleted."));
+    for (const item of info.records) wrap.appendChild(line(item, false));
+  }
+  if ((info.struck || []).length) {
+    wrap.appendChild(el("p", "note", "Marked as not real:"));
+    for (const item of info.struck) wrap.appendChild(line(item, true));
+  }
+  wrap.appendChild(status);
+  return wrap;
+}
+
 function renderSettings(){
   const host = document.getElementById("settings");
   const all = (cfg && cfg.cards) || [];
@@ -3638,6 +3757,8 @@ function renderSettings(){
       '<code>TEMPEST_SPEEDTEST_URL</code>; only the token lives here, ' +
       'handled exactly like the two above.',
   }));
+
+  sheet.appendChild(recordSection());
 
   if (cfg && cfg.backfill && cfg.backfill.status && cfg.backfill.status !== "off") {
     const b = cfg.backfill;
@@ -4289,8 +4410,29 @@ function renderAlmanac(){
   if (a.backfill === "ok") bits.push("filled in from WeatherFlow");
   if (s.rain_monthly_in) bits.push("% is rain against normal");
   b.appendChild(caption(bits.join(" · "), "faint"));
+  b.appendChild(csvLink("Download the daily record (CSV)"));
   host.replaceChildren(c);
   fitCards();                // render() skips its own pass while this is up
+}
+
+/* The daily record as a spreadsheet, in the units this reader uses. A degree
+   sign in a URL is a nuisance, so temperature travels as a bare letter. */
+function csvHref(){
+  const t = {"°F": "F", "°C": "C"}[prefs.temp] || prefs.temp || "";
+  return "api/days.csv?temp=" + encodeURIComponent(t) +
+    "&wind=" + encodeURIComponent(prefs.wind || "") +
+    "&pres=" + encodeURIComponent(prefs.pres || "") +
+    "&rain=" + encodeURIComponent(prefs.rain || "");
+}
+function csvLink(text){
+  const a = el("a", "linkbtn");
+  a.href = csvHref();
+  a.setAttribute("download", "");
+  a.textContent = text;
+  a.draggable = false;
+  // The almanac closes on a tap anywhere; this keeps its own.
+  a.addEventListener("click", (e) => e.stopPropagation());
+  return a;
 }
 
 function shiftIso(iso, days){
@@ -4591,7 +4733,14 @@ function updateFooter(s){
   document.getElementById("meta").textContent = meta.join("   ·   ");
 
   const banner = document.getElementById("banner");
-  if (s.source_error) {
+  const store = s.storage || {};
+  if (store.ok === false) {
+    // The cards would look perfectly healthy for days while nothing was
+    // being kept. A full disk is the usual cause and it fails in silence.
+    banner.textContent = "History is not being saved — " + (store.error || "unknown error") +
+      (store.failing_since ? " (for " + ago(s.now - store.failing_since) + ")" : "");
+    banner.classList.add("show");
+  } else if (s.source_error) {
     banner.textContent = s.source_error;
     banner.classList.add("show");
   } else if (s.source_alive === false) {
@@ -4840,7 +4989,7 @@ function toggleSettings(force){
     if (on) document.body.classList.remove("show-map", "show-outlook");
     document.getElementById("settings").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("setBtn").setAttribute("aria-pressed", on ? "true" : "false");
-    if (on) renderSettings();
+    if (on) { recordInfo = null; renderSettings(); }   // records move; ask again
   };
   pageTurn(swap);
 }

@@ -37,7 +37,10 @@ HISTORY_FILE  = os.path.join(_HERE, "tempest_history.json")
 HISTORY_MAX      = 2880        # 48 h at one sample a minute
 HISTORY_MIN_GAP  = 55          # seconds between retained samples
 HISTORY_SAVE_SEC = 300         # flush to disk every 5 min
-DAYS_MAX         = 4000        # days of daily record kept: about eleven years
+DAYS_MAX         = 36500       # days of daily record kept: a century, 10 MB
+DAYS_FILE_NAME   = "tempest_days.json"
+BACKUPS_KEPT     = 30          # dated copies of the daily record, one a day
+LOW_SPACE_BYTES  = 500 * 1024 * 1024
 DAY_FULL_MIN     = 1200        # minutes of coverage that make a day "whole"
 
 STALE_AFTER   = 120            # seconds without a packet → amber
@@ -60,6 +63,40 @@ BEAUFORT = [
     (13.9, "Strong breeze"), (17.2, "Near gale"), (20.8, "Gale"),
     (24.5, "Severe gale"), (28.5, "Storm"), (32.7, "Violent storm"),
 ]
+
+# ─────────────────────────────────────────────── Is this reading real? ─────
+#
+# A record is kept for years, so one bad number from the sensor is a bad
+# record for years. These are not forecasts of the weather, only the edges of
+# what the instrument can mean: outside them the reading is a fault, and it is
+# dropped rather than remembered. Pressure is station pressure, so the floor
+# has to leave room for a station up a mountain.
+BOUNDS = {
+    "temp_c": (-60.0, 60.0), "rh": (0.0, 100.0), "pres_mb": (500.0, 1100.0),
+    "wind_lull_ms": (0.0, 75.0), "wind_avg_ms": (0.0, 75.0),
+    "wind_gust_ms": (0.0, 75.0), "uv": (0.0, 20.0), "solar": (0.0, 1600.0),
+    "lux": (0.0, 200000.0),
+    "rain_mm": (0.0, 15.0),          # in one minute; the world record is 31
+}
+# The most a reading may move between two observations a few minutes apart.
+# Air does not warm eight degrees in a minute; a sensor that says so is
+# glitching. Three in a row, though, and it is the world that changed.
+JUMPS = {"temp_c": 8.0, "pres_mb": 10.0, "rh": 40.0}
+JUMP_WINDOW_S = 600
+JUMP_PERSISTS = 3
+
+
+def plausible(key, value):
+    """True unless `value` is outside what `key`'s sensor can mean."""
+    limits = BOUNDS.get(key)
+    if limits is None or value is None:
+        return True
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(v) and limits[0] <= v <= limits[1]
+
 
 # ────────────────────────────────────────────────── Unit conversions ───────
 
@@ -386,6 +423,9 @@ class History:
     DAY_MINS = ("pmin", "rhmin")
     DAY_NUMBERS = DAY_MAXES + DAY_MINS + ("gust_t", "sun", "strikes", "tmean",
                                           "tn", "wind", "wn", "mins")
+    # Readings that can be struck from the record as not real.
+    STRIKABLE = ("hi", "lo", "swing", "rain", "gust", "pmin", "pmax",
+                 "strikes", "sun")
 
     def __init__(self, path=None):
         self.path = path or HISTORY_FILE
@@ -393,26 +433,76 @@ class History:
         self.rain_days = {}        # "YYYY-MM-DD" → mm
         self.temp_days = {}        # "YYYY-MM-DD" → {"lo": °C, "hi": °C}
         self.days = {}             # "YYYY-MM-DD" → the day's summary, above
+        self.struck = {}           # "YYYY-MM-DD" → readings judged not real
         self.meta = {}             # bookkeeping, e.g. when rain was swept
+        self.notices = []          # what storage had to do, for the page
+        self.saved_at = None
+        self.save_failing_since = None
+        self._save_errors = {}     # file name → why it would not save
+        self._days_locked = False  # never write over a file we cannot read
+        self._backup_day = None
+        self._backup_count = None
         self._last_saved = 0.0
         self._last_obs_t = None    # for the minutes between live readings
         self.load()
 
     # ── persistence ───────────────────────────────────────────────────────
 
-    def load(self):
+    # The daily record is the part of this worth protecting: years of it, a
+    # few hundred bytes a day, and without a WeatherFlow token the only copy.
+    # It used to share a file with the 48 hours of samples, rewritten whole
+    # every five minutes with nothing flushed; a file that failed to parse
+    # was treated as no file, and overwritten with an empty one at the next
+    # save; and a save that failed — a full disk — failed in silence. So: its
+    # own file, flushed before it replaces the old one; a damaged file is set
+    # aside and the record restored from a dated backup; and every failure is
+    # kept where the page can show it.
+
+    @property
+    def days_path(self):
+        return os.path.join(os.path.dirname(self.path), DAYS_FILE_NAME)
+
+    @property
+    def backups_dir(self):
+        return os.path.join(os.path.dirname(self.path), "backups")
+
+    @staticmethod
+    def _read_json(path):
+        """(data, problem): problem is None, "missing", or why it failed."""
+        # Only an ordinary file can be damaged. Anything else — no file, a
+        # directory, /dev/null standing in for "keep nothing" — is simply not
+        # a record, and must never be renamed out of the way.
+        if not os.path.isfile(path):
+            return None, "missing"
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-        except (OSError, ValueError):
-            return
-        cutoff = time.time() - 48 * 3600
-        for s in raw.get("samples", []):
-            try:
-                if float(s["t"]) >= cutoff:
-                    self.samples.append(s)
-            except (TypeError, ValueError, KeyError):
-                continue
+        except OSError as e:
+            return None, "unreadable (%s)" % (e.strerror or e.__class__.__name__)
+        except ValueError:
+            return None, "damaged (not valid JSON)"
+        if not isinstance(raw, dict):
+            return None, "damaged (not a record)"
+        return raw, None
+
+    def _set_aside(self, path):
+        """Move a file we could not read out of the way, under a name that
+        says when. None if even that failed."""
+        aside = "%s.damaged-%s" % (path, time.strftime("%Y%m%d-%H%M%S"))
+        try:
+            os.replace(path, aside)
+            return aside
+        except OSError:
+            return None
+
+    def _note(self, text):
+        self.notices.append(text)
+        del self.notices[:-5]
+        print("  storage  : " + text, flush=True)
+
+    def _load_tables(self, raw):
+        """The daily tables out of a parsed file. True if it held any."""
+        found = False
         meta = raw.get("meta")
         if isinstance(meta, dict):
             self.meta.update(meta)
@@ -423,6 +513,7 @@ class History:
                     try:
                         self.temp_days[str(k)] = {"lo": float(v["lo"]),
                                                   "hi": float(v["hi"])}
+                        found = True
                     except (TypeError, ValueError):
                         continue
         days = raw.get("rain_days")
@@ -430,6 +521,7 @@ class History:
             for k, v in days.items():
                 try:
                     self.rain_days[str(k)] = float(v)
+                    found = True
                 except (TypeError, ValueError):
                     continue
             self._trim_rain_days()
@@ -447,7 +539,65 @@ class History:
                         continue
                 if rec:
                     self.days[str(k)] = rec
+                    found = True
             self._trim(self.days)
+        struck = raw.get("struck")
+        if isinstance(struck, dict):
+            for k, fields in struck.items():
+                if isinstance(fields, list):
+                    keep = sorted({str(f) for f in fields if f in self.STRIKABLE})
+                    if keep:
+                        self.struck[str(k)] = keep
+        return found
+
+    def load(self):
+        raw, problem = self._read_json(self.path)
+        if problem and problem != "missing":
+            aside = self._set_aside(self.path)
+            self._note("%s was %s; %s" % (
+                os.path.basename(self.path), problem,
+                "kept as " + os.path.basename(aside) if aside
+                else "it could not be moved aside"))
+            raw = None
+        raw = raw or {}
+        cutoff = time.time() - 48 * 3600
+        for smp in raw.get("samples", []):
+            try:
+                if float(smp["t"]) >= cutoff:
+                    self.samples.append(smp)
+            except (TypeError, ValueError, KeyError):
+                continue
+
+        days, problem = self._read_json(self.days_path)
+        if days is not None:
+            self._load_tables(days)
+        elif problem == "missing":
+            # Before the daily record had a file of its own it lived in the
+            # samples file. Take it from there, once; the next save moves it.
+            self._load_tables(raw)
+        else:
+            aside = self._set_aside(self.days_path)
+            if aside is None:
+                # Cannot read it and cannot move it. Writing over it is the
+                # one thing that would make this worse.
+                self._days_locked = True
+                self._note("%s is %s and could not be moved aside. It will "
+                           "not be written to until that is fixed."
+                           % (DAYS_FILE_NAME, problem))
+            else:
+                self._note("%s was %s; kept as %s" % (
+                    DAYS_FILE_NAME, problem, os.path.basename(aside)))
+            restored = self._restore_from_backup()
+            if restored:
+                self._note("The daily record was restored from the backup of "
+                           + restored)
+            elif self._load_tables(raw):
+                self._note("The daily record was restored from the copy in "
+                           + os.path.basename(self.path))
+            else:
+                self._note("No backup of the daily record could be read. "
+                           "With a WeatherFlow token it will be rebuilt.")
+                self.meta.pop("sweep_keeps", None)     # walk the archive again
 
     @staticmethod
     def _trim(table):
@@ -460,22 +610,168 @@ class History:
     def _trim_rain_days(self):
         self._trim(self.rain_days)
 
+    def _write_json(self, path, payload):
+        """Write a file so that a crash or a power cut leaves either the old
+        one or the new one, never half of each: a temporary file, flushed to
+        the disk, then swapped in. The failure, if any, is kept."""
+        name = os.path.basename(path)
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+            try:                              # and the rename itself
+                fd = os.open(os.path.dirname(path) or ".", os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            except OSError:
+                pass                          # not every filesystem allows it
+        except (OSError, ValueError) as e:
+            first = name not in self._save_errors
+            self._save_errors[name] = "Cannot save %s — %s" % (
+                name, getattr(e, "strerror", None) or e)
+            if self.save_failing_since is None:
+                self.save_failing_since = time.time()
+            if first:
+                print("  storage  : " + self._save_errors[name], flush=True)
+            return False
+        if self._save_errors.pop(name, None):
+            print("  storage  : saving %s again" % name, flush=True)
+        if not self._save_errors:
+            self.save_failing_since = None
+        return True
+
+    def _days_payload(self):
+        return {"version": 1, "saved_at": time.time(),
+                "rain_days": self.rain_days, "temp_days": self.temp_days,
+                "days": self.days, "struck": self.struck, "meta": self.meta}
+
+    def day_count(self):
+        return len(set(self.days) | set(self.rain_days) | set(self.temp_days))
+
     def save(self, force=False):
         now = time.time()
         if not force and now - self._last_saved < HISTORY_SAVE_SEC:
             return
+        if os.path.exists(self.path) and not os.path.isfile(self.path):
+            return                     # pointed at /dev/null: keep nothing
         self._last_saved = now
+        kept = False
+        if not self._days_locked:
+            kept = self._write_json(self.days_path, self._days_payload())
+        samples = {"samples": list(self.samples)}
+        if not kept:
+            # The daily record could not go to its own file, so it rides
+            # along here as it used to. Two chances are better than none.
+            samples.update(rain_days=self.rain_days, temp_days=self.temp_days,
+                           days=self.days, struck=self.struck, meta=self.meta)
+        if self._write_json(self.path, samples) or kept:
+            self.saved_at = now
+        if kept:
+            self._backup_if_due()
+
+    # ── backups ───────────────────────────────────────────────────────────
+
+    def _backups(self):
+        """[(date_iso, path)] of the dated copies, newest first."""
         try:
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"samples": list(self.samples),
-                           "rain_days": self.rain_days,
-                           "temp_days": self.temp_days,
-                           "days": self.days,
-                           "meta": self.meta}, f)
-            os.replace(tmp, self.path)
+            names = os.listdir(self.backups_dir)
+        except OSError:
+            return []
+        out = []
+        for name in names:
+            if name.startswith("tempest_days-") and name.endswith(".json"):
+                day = name[len("tempest_days-"):-len(".json")]
+                try:
+                    date.fromisoformat(day)
+                except ValueError:
+                    continue
+                out.append((day, os.path.join(self.backups_dir, name)))
+        return sorted(out, reverse=True)
+
+    def _backup_if_due(self, today=None):
+        """One dated copy of the daily record a day; thirty kept, and the
+        first of every month kept for good. They are a kilobyte a day."""
+        today = (today or date.today()).isoformat()
+        if self._backup_day == today:
+            return False
+        have = self._backups()
+        if have and have[0][0] == today:
+            self._backup_day = today
+            return False
+        # A record that has collapsed must not be copied over the month of
+        # good ones: thirty days of empty backups would push every real one
+        # out. Measure against the newest backup before adding to them.
+        count = self.day_count()
+        if have and self._backup_count is None:
+            prior, _why = self._read_json(have[0][1])
+            if prior:
+                self._backup_count = len(set(prior.get("days") or {})
+                                         | set(prior.get("rain_days") or {})
+                                         | set(prior.get("temp_days") or {}))
+        if self._backup_count and self._backup_count >= 20 \
+                and count < self._backup_count * 0.5:
+            self._backup_day = today
+            self._note("The daily record has shrunk from %d days to %d, so "
+                       "today's backup was skipped and the older ones kept."
+                       % (self._backup_count, count))
+            return False
+        if not count:
+            return False
+        try:
+            os.makedirs(self.backups_dir, exist_ok=True)
         except OSError:
             pass
+        path = os.path.join(self.backups_dir, "tempest_days-%s.json" % today)
+        if not self._write_json(path, self._days_payload()):
+            return False
+        self._backup_day = today
+        self._backup_count = count
+        dailies = [b for b in self._backups() if not b[0].endswith("-01")]
+        for _day, old in dailies[BACKUPS_KEPT:]:
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+        return True
+
+    def _restore_from_backup(self):
+        """Load the newest backup that can be read. Its date, or None."""
+        for day, path in self._backups():
+            raw, problem = self._read_json(path)
+            if raw is not None and self._load_tables(raw):
+                return day
+        return None
+
+    def storage_status(self):
+        """What the page needs to say whether the record is safe."""
+        backups = self._backups()
+        try:
+            size = os.path.getsize(self.days_path)
+        except OSError:
+            size = None
+        free = None
+        try:
+            import shutil
+            free = shutil.disk_usage(os.path.dirname(self.path) or ".").free
+        except OSError:
+            pass
+        errors = list(self._save_errors.values())
+        low = free is not None and free < LOW_SPACE_BYTES
+        if low and not errors:
+            errors.append("Only %d MB free where the history is kept"
+                          % (free // (1024 * 1024)))
+        return {"ok": not errors, "error": " · ".join(errors),
+                "failing_since": self.save_failing_since,
+                "saved_at": self.saved_at, "notices": list(self.notices),
+                "locked": self._days_locked, "days": self.day_count(),
+                "days_bytes": size, "free_bytes": free,
+                "backups": len(backups),
+                "last_backup": backups[0][0] if backups else None}
 
     # ── writing ───────────────────────────────────────────────────────────
 
@@ -520,10 +816,12 @@ class History:
         else:
             keep = lambda d: True
         rows = [(d, v) for d, v in self.temp_days.items() if keep(d)]
-        if not rows:
+        his = [r for r in rows if not self.is_struck(r[0], "hi")]
+        los = [r for r in rows if not self.is_struck(r[0], "lo")]
+        if not his or not los:
             return None
-        hi = max(rows, key=lambda r: r[1]["hi"])
-        lo = min(rows, key=lambda r: r[1]["lo"])
+        hi = max(his, key=lambda r: r[1]["hi"])
+        lo = min(los, key=lambda r: r[1]["lo"])
         return {"hi": (hi[1]["hi"], hi[0]), "lo": (lo[1]["lo"], lo[0]),
                 "days": len(rows)}
 
@@ -541,15 +839,20 @@ class History:
         """Fold one reading, standing for `minutes` of the day, into a day's
         summary. The live feed and the backfill both come through here, so a
         day means the same thing whichever of them wrote it."""
-        def num(v):
+        def num(v, key=None):
             try:
                 v = float(v)
             except (TypeError, ValueError):
                 return None
-            return v if math.isfinite(v) else None
+            if not math.isfinite(v) or (key and not plausible(key, v)):
+                return None
+            return v
 
         minutes = max(0.0, num(minutes) or 0.0)
-        gust = num(gust_ms)
+        temp_c, pres_mb = num(temp_c, "temp_c"), num(pres_mb, "pres_mb")
+        wind_ms, rh = num(wind_ms, "wind_avg_ms"), num(rh, "rh")
+        uv, solar = num(uv, "uv"), num(solar, "solar")
+        gust = num(gust_ms, "wind_gust_ms")
         if gust is not None and gust > rec.get("gust", -1.0):
             rec["gust"] = round(gust, 2)
             if ts is not None:
@@ -627,9 +930,40 @@ class History:
         self._trim(self.days)
         return rec != before
 
-    def day_rows(self, since=None, until=None):
+    def is_struck(self, day_iso, field):
+        return field in self.struck.get(day_iso, ())
+
+    def strike(self, day_iso, field, restore=False):
+        """Mark one reading on one day as not real — or take the mark off.
+
+        The number is kept, not deleted: the backfill would only put it back,
+        and a mark can be lifted if it turns out the gust was real after all.
+        A struck reading is left out of records, the almanac and the totals.
+        Returns an error string, or None.
+        """
+        if field not in self.STRIKABLE:
+            return "Unknown reading: %s" % field
+        try:
+            date.fromisoformat(str(day_iso))
+        except ValueError:
+            return "Not a date: %s" % day_iso
+        fields = set(self.struck.get(day_iso, ()))
+        if restore:
+            fields.discard(field)
+        else:
+            fields.add(field)
+        if fields:
+            self.struck[day_iso] = sorted(fields)
+        else:
+            self.struck.pop(day_iso, None)
+        self._records_held = None
+        self.save(force=True)
+        return None
+
+    def day_rows(self, since=None, until=None, raw=False):
         """Every day anything is known about, oldest first, as one flat dict
-        each: the summary, plus the rain and temperature tables' figures."""
+        each: the summary, plus the rain and temperature tables' figures.
+        Readings struck from the record are left out, unless `raw`."""
         keys = set(self.days) | set(self.rain_days) | set(self.temp_days)
         rows = []
         for day in sorted(keys):
@@ -643,8 +977,65 @@ class History:
             # A day the station was up and measured nothing is a dry day; a
             # day missing from every table is not a day we know about.
             row["rain"] = self.rain_days.get(day, 0.0)
+            struck = self.struck.get(day)
+            if struck and raw:
+                row["struck"] = list(struck)
+            elif struck:
+                for field in struck:
+                    if field == "rain":
+                        row["rain"] = 0.0          # it did not rain, then
+                    elif field == "gust":
+                        row.pop("gust", None)
+                        row.pop("gust_t", None)
+                    elif field == "swing":
+                        row["no_swing"] = True
+                    else:
+                        row.pop(field, None)
             rows.append(row)
         return rows
+
+    def csv(self, temp="°C", wind="m/s", pres="hPa", rain="mm"):
+        """The whole daily record as CSV text, one row a day, oldest first.
+
+        The way out: years of a station's days belong in a spreadsheet as
+        well as on a wall. Every figure is as recorded — a reading struck from
+        the record is still here, and named in the last column, because an
+        export that quietly dropped numbers could not be checked against
+        anything. The header says the unit of every column.
+        """
+        tag = lambda u: u.replace("°", "").replace("/", "")
+        t, w, p, r = tag(temp), tag(wind), tag(pres), tag(rain)
+        head = ["date", "high_" + t, "low_" + t, "mean_temp_" + t, "rain_" + r,
+                "peak_gust_" + w, "peak_gust_time", "mean_wind_" + w,
+                "pressure_min_" + p, "pressure_max_" + p,
+                "humidity_min_pct", "humidity_max_pct", "uv_max",
+                "solar_peak_wm2", "sun_kwh_m2", "lightning_strikes",
+                "minutes_observed", "struck_as_not_real"]
+        cell = lambda v, dp=None: "" if v is None else (
+            str(v) if dp is None else ("%.*f" % (dp, v)))
+        lines = [",".join(head)]
+        for row in self.day_rows(raw=True):
+            when = ""
+            if row.get("gust_t"):
+                when = datetime.fromtimestamp(row["gust_t"]).strftime("%H:%M")
+            lines.append(",".join([
+                row["date"],
+                cell(convert_temp(row.get("hi"), temp)),
+                cell(convert_temp(row.get("lo"), temp)),
+                cell(convert_temp(row.get("tmean"), temp)),
+                cell(convert_rain(row.get("rain"), rain), rain_decimals(rain)),
+                cell(convert_wind(row.get("gust"), wind)), when,
+                cell(convert_wind(row.get("wind"), wind)),
+                cell(convert_pres(row.get("pmin"), pres), pres_decimals(pres)),
+                cell(convert_pres(row.get("pmax"), pres), pres_decimals(pres)),
+                cell(row.get("rhmin")), cell(row.get("rhmax")),
+                cell(row.get("uv")), cell(row.get("solar")),
+                cell(None if row.get("sun") is None else row["sun"] / 1000.0, 2),
+                cell(None if row.get("strikes") is None else int(row["strikes"])),
+                cell(None if row.get("mins") is None else int(round(row["mins"]))),
+                " ".join(row.get("struck", [])),
+            ]))
+        return "\r\n".join(lines) + "\r\n"
 
     # What counts as rain. A Tempest reports dew and drizzle as hundredths of
     # a millimetre; a "wet day" that nobody got wet on spoils a dry streak.
@@ -669,7 +1060,8 @@ class History:
             return {"v": r[key], "date": r["date"]}
 
         for r in rows:
-            if r.get("hi") is not None and r.get("lo") is not None:
+            if r.get("hi") is not None and r.get("lo") is not None \
+                    and not r.get("no_swing"):
                 r["swing"] = round(r["hi"] - r["lo"], 2)
 
         out = {}
@@ -924,18 +1316,21 @@ class History:
         total = 0.0
         for i in range(days):
             key = (today - timedelta(days=i)).isoformat()
-            total += self.rain_days.get(key, 0.0)
+            if not self.is_struck(key, "rain"):
+                total += self.rain_days.get(key, 0.0)
         return total
 
     def rain_month(self, today=None):
         today = today or date.today()
         prefix = today.strftime("%Y-%m-")
-        return sum(v for k, v in self.rain_days.items() if k.startswith(prefix))
+        return sum(v for k, v in self.rain_days.items()
+                   if k.startswith(prefix) and not self.is_struck(k, "rain"))
 
     def rain_year(self, today=None):
         today = today or date.today()
         prefix = today.strftime("%Y-")
-        return sum(v for k, v in self.rain_days.items() if k.startswith(prefix))
+        return sum(v for k, v in self.rain_days.items()
+                   if k.startswith(prefix) and not self.is_struck(k, "rain"))
 
 
 # ─────────────────────────────────────────────────────────── Demo model ────
@@ -989,6 +1384,10 @@ class StationState:
         self.strikes_today = 0
         self._strikes_heard = 0          # evt_strike since the last obs
         self._strikes_carried = 0        # heard, but not yet in any obs
+        self._accepted = {}              # key → (last believed value, when)
+        self._jumping = {}               # key → readings in a row that jumped
+        self.rejected_today = 0
+        self.last_rejected = None
         self.last_precip_time = None
         self.device_status = {}     # firmware, uptime, signal, sensor health
         self.hub_status = {}
@@ -1064,6 +1463,7 @@ class StationState:
         with self.lock:
             self.day = today
             self.strikes_today = 0
+            self.rejected_today = 0
         return True
 
     # ── ingest ────────────────────────────────────────────────────────────
@@ -1104,7 +1504,7 @@ class StationState:
         if mtype == "obs_st":
             obs = self._first_obs(msg)
             if len(obs) >= 17:
-                self.data.update({
+                seen = self._screen({
                     "wind_lull_ms": obs[1], "wind_avg_ms": obs[2],
                     "wind_gust_ms": obs[3], "wind_dir": obs[4],
                     "pres_mb": obs[6], "temp_c": obs[7], "rh": obs[8],
@@ -1113,30 +1513,33 @@ class StationState:
                     "strike_dist_km": obs[14], "strike_count": obs[15],
                     "battery": obs[16],
                 })
-                self._accumulate(obs[12], obs[15])
+                self.data.update(seen)
+                self._accumulate(seen.get("rain_mm"), seen.get("strike_count"))
                 self._record_history()
 
         elif mtype == "obs_air":
             obs = self._first_obs(msg)
             if len(obs) >= 7:
-                self.data.update({
+                seen = self._screen({
                     "pres_mb": obs[1], "temp_c": obs[2], "rh": obs[3],
                     "strike_count": obs[4], "strike_dist_km": obs[5],
                     "battery": obs[6],
                 })
-                self._accumulate(None, obs[4])
+                self.data.update(seen)
+                self._accumulate(None, seen.get("strike_count"))
                 self._record_history()
 
         elif mtype == "obs_sky":
             obs = self._first_obs(msg)
             if len(obs) >= 13:
-                self.data.update({
+                seen = self._screen({
                     "lux": obs[1], "uv": obs[2], "rain_mm": obs[3],
                     "wind_lull_ms": obs[4], "wind_avg_ms": obs[5],
                     "wind_gust_ms": obs[6], "wind_dir": obs[7],
                     "battery": obs[8], "solar": obs[10], "precip_type": obs[12],
                 })
-                self._accumulate(obs[3], None)
+                self.data.update(seen)
+                self._accumulate(seen.get("rain_mm"), None)
                 self._record_history()
 
         elif mtype == "rapid_wind":
@@ -1193,6 +1596,47 @@ class StationState:
             self.last_packet = time.time()
             self.last_packet_type = mtype or ""
         return known
+
+    def _screen(self, reading):
+        """An observation with its impossible values taken out.
+
+        Two tests. Outside what the sensor can mean at all — a temperature of
+        300, a negative wind — is a fault. And a jump no real air makes in a
+        minute is a glitch, unless the next readings agree with it, in which
+        case the first was the truth and we were the ones wrong: after three
+        in a row it is believed. What is dropped is simply absent, so the card
+        keeps the last good value rather than showing a bad one.
+        """
+        now = time.time()
+        out = {}
+        for key, value in reading.items():
+            if value is None:
+                continue
+            if not plausible(key, value):
+                self._reject(key, value, "outside what the sensor can read")
+                continue
+            limit = JUMPS.get(key)
+            last = self._accepted.get(key)
+            if limit is not None and last is not None \
+                    and now - last[1] <= JUMP_WINDOW_S \
+                    and abs(float(value) - last[0]) > limit:
+                run = self._jumping.get(key, 0) + 1
+                if run < JUMP_PERSISTS:
+                    self._jumping[key] = run
+                    self._reject(key, value, "jumped %.1f from %.1f"
+                                 % (float(value) - last[0], last[0]))
+                    continue
+            self._jumping.pop(key, None)
+            if key in JUMPS:
+                self._accepted[key] = (float(value), now)
+            out[key] = value
+        return out
+
+    def _reject(self, key, value, why):
+        self.rejected_today += 1
+        self.last_rejected = {"key": key, "value": value, "why": why,
+                              "ts": time.time()}
+        print("  sensor   : dropped %s=%s (%s)" % (key, value, why), flush=True)
 
     def _count_strikes(self, n):
         self.strikes_today += n
@@ -1397,7 +1841,10 @@ class StationState:
                 "station_uptime": format_uptime(dev.get("uptime")),
                 "hub_uptime": format_uptime(hub.get("uptime")),
                 "report_interval_s": d.get("report_interval"),
+                "rejected_today": self.rejected_today,
+                "last_rejected": self.last_rejected,
             },
+            "storage": hist.storage_status(),
             "records": {
                 "month": hist.temp_record("month"),
                 "year": hist.temp_record("year"),

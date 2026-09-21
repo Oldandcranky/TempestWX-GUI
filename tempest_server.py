@@ -1854,6 +1854,38 @@ class Dashboard:
                             if self.backfill else "off")
         return body
 
+    RECORD_LABELS = (("hi", "Hottest"), ("lo", "Coldest"),
+                     ("gust", "Strongest gust"), ("rain", "Wettest day"),
+                     ("pmin", "Lowest pressure"), ("pmax", "Highest pressure"),
+                     ("strikes", "Most strikes"), ("sun", "Sunniest day"),
+                     ("swing", "Widest swing"))
+
+    def record(self):
+        """The all-time records, each with the day it was set, so that one
+        which was never real can be struck; what has been struck already; and
+        the state of the file all of it lives in."""
+        with self.state.lock:
+            temps = self.history.temp_record("all") or {}
+            station = self.history.station_records()["all"]
+            struck = [{"date": d, "field": f}
+                      for d, fields in sorted(self.history.struck.items())
+                      for f in fields]
+            storage = self.history.storage_status()
+        names = dict(self.RECORD_LABELS)
+        rows = []
+        for field, label in self.RECORD_LABELS:
+            if field in ("hi", "lo"):
+                got = temps.get(field)
+                got = None if not got else {"v": got[0], "date": got[1]}
+            else:
+                got = station.get(field)
+            if got:
+                rows.append({"field": field, "label": label,
+                             "v": got["v"], "date": got["date"]})
+        for item in struck:
+            item["label"] = names.get(item["field"], item["field"])
+        return {"records": rows, "struck": struck, "storage": storage}
+
     def shutdown(self):
         self.stop.set()
         if hasattr(self.source, "close"):
@@ -1892,7 +1924,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if path != "/api/config":
+        if path not in ("/api/config", "/api/record"):
             self._send(404, "Not found\n", "text/plain; charset=utf-8")
             return
         # There is no login on this dashboard, so require a header a plain
@@ -1926,6 +1958,24 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         dash = self.server.dashboard
+        if path == "/api/record":
+            # {"strike": {"date": ..., "field": ...}} or {"restore": {...}}
+            if not isinstance(patch, dict):
+                patch = {}
+            what = patch.get("strike") or patch.get("restore")
+            if not isinstance(what, dict):
+                self._send(400, json.dumps({"ok": False, "error": "Nothing to do"}),
+                           "application/json; charset=utf-8")
+                return
+            with dash.state.lock:
+                err = dash.history.strike(str(what.get("date") or ""),
+                                          str(what.get("field") or ""),
+                                          restore="restore" in patch)
+            body = dash.record()
+            body["ok"], body["error"] = not err, err or ""
+            self._send(400 if err else 200, json.dumps(body, allow_nan=False),
+                       "application/json; charset=utf-8")
+            return
         changed, err = dash.config.apply(patch)
         if err:
             self._send(400, json.dumps({"ok": False, "error": err}),
@@ -1950,6 +2000,25 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             return 7
         return max(1, min(31, n))
+
+    @staticmethod
+    def _units(query, args):
+        """?temp=&wind=&pres=&rain= for the CSV, each checked against the
+        units the dashboard knows; anything else falls back to the server's
+        own. The page passes its reader's choices, which live in the browser."""
+        got = urllib.parse.parse_qs(query or "")
+        out = {}
+        for name, known, fallback in (
+                ("temp", core.TEMP_UNITS, args.temp_unit),
+                ("wind", core.WIND_UNITS, args.wind_unit),
+                ("pres", core.PRES_UNITS, args.pres_unit),
+                ("rain", core.RAIN_UNITS, args.rain_unit)):
+            asked = got.get(name, [""])[0]
+            # "F" and "C" as well as "°F": a degree sign in a URL is a nuisance.
+            asked = {"F": "°F", "C": "°C"}.get(asked, asked)
+            out[name] = asked if asked in known else (
+                fallback if fallback in known else known[0])
+        return out
 
     @staticmethod
     def _thresholds(query):
@@ -2018,6 +2087,19 @@ class Handler(BaseHTTPRequestHandler):
                 body = dash.almanac(**self._thresholds(query))
                 self._send(200, json.dumps(body, allow_nan=False),
                            "application/json; charset=utf-8")
+            elif path == "/api/record":
+                # The records as they stand, what has been struck from them,
+                # and whether the file they live in is safe. For settings.
+                self._send(200, json.dumps(self.server.dashboard.record(),
+                                           allow_nan=False),
+                           "application/json; charset=utf-8")
+            elif path == "/api/days.csv":
+                dash = self.server.dashboard
+                with dash.state.lock:
+                    text = dash.history.csv(**self._units(query, dash.args))
+                name = "tempest-daily-record-%s.csv" % date.today().isoformat()
+                self._send(200, text, "text/csv; charset=utf-8", extra={
+                    "Content-Disposition": 'attachment; filename="%s"' % name})
             elif path == "/api/wind":
                 # Tiny payload, so the compass can be polled far more often
                 # than the full snapshot without wasting bandwidth.
@@ -2042,8 +2124,15 @@ class Handler(BaseHTTPRequestHandler):
                            "application/json; charset=utf-8")
             elif path == "/healthz":
                 state = self.server.dashboard.state
+                # "ok" still means the server is up, which is what the
+                # container's healthcheck asks: restarting it would not free
+                # a full disk. "saving" is the honest answer to the other
+                # question, for anything that wants to alert on it.
+                storage = self.server.dashboard.history.storage_status()
                 self._send(200, json.dumps({"ok": True,
                                             "health": state.health(),
+                                            "saving": storage["ok"],
+                                            "storage_error": storage["error"],
                                             "version": core.VERSION}),
                            "application/json")
             elif path.startswith("/fonts/") or path in ICON_PATHS:

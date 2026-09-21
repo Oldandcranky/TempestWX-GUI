@@ -121,6 +121,18 @@ When running it from a Claude session, stream it — `Monitor` with a `grep
 through `tail`, which shows nothing until the end. The owner watched a silent
 eight-minute run and reasonably concluded it had hung.
 
+**A run that goes silent past both cut-offs means the Mac slept.** Sleep
+freezes the suite and both of its timers together, so neither fires and
+nothing is printed. It happened on 2026-09-21, on battery at 18%, a minute
+into a run. Check before debugging the tests:
+
+```bash
+pmset -g log | grep -E "Entering Sleep|DarkWake" | tail
+```
+
+The timers deliberately count elapsed running time, not the wall clock: a
+wall-clock deadline would kill a healthy run every time the lid closed.
+
 Sections run four at a time (`TEST_LANES`), and independent page loads inside
 a section go through `abreast()`. Each page spends three seconds settling, so
 a new test that loads pages one after another adds its whole length to the

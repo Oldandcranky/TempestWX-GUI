@@ -106,8 +106,26 @@ The page supplies only the normals and the reader's round numbers.
 ## Tests
 
 `tests/run.sh` — unit tests plus a headless-browser geometry pass. Run it
-before pushing anything that touches the page or the card logic; it takes
-about twenty seconds and it has already caught a real overflow.
+before pushing anything that touches the page or the card logic. **It takes
+about two minutes and prints nothing while a section is running**, so a slow
+run and a hung one look the same from outside. Two things deal with that:
+
+- Every result line carries how long its section took, and the last line is
+  the total against the budget (`113s of a 240s budget`).
+- It kills itself at `TEST_BUDGET_S` seconds (default 240), naming the
+  sections still running, and `run.sh` kills it outright twenty seconds later
+  if it could not. Raise the budget only when the suite has honestly grown.
+
+When running it from a Claude session, stream it — `Monitor` with a `grep
+--line-buffered` on `ok  |FAIL|budget|out of time` — rather than piping it
+through `tail`, which shows nothing until the end. The owner watched a silent
+eight-minute run and reasonably concluded it had hung.
+
+Sections run four at a time (`TEST_LANES`), and independent page loads inside
+a section go through `abreast()`. Each page spends three seconds settling, so
+a new test that loads pages one after another adds its whole length to the
+run; in a row, the suite had reached eight minutes. The one `solo` section
+times a held press and runs alone so a busy machine cannot blur it.
 
 `tests/state.json` is a captured dashboard state, deliberately hostile: the
 longest ISP name, the widest pollen word, every card switched on. The

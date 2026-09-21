@@ -353,6 +353,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The test suite has a clock and a kill switch.** It had grown to eight
+  minutes, one page load after another, printing nothing while a section
+  ran — indistinguishable from a hang, and twice taken for one. Sections now
+  run four at a time and their page loads side by side, which brings it under
+  two minutes; every result line says how long its section took; and past
+  `TEST_BUDGET_S` (240 seconds) the run stops itself and names what was still
+  going, with `run.sh` killing it outright if it cannot.
 - **The scale bands' labels sit under the bar, on every card size.** Records,
   Air quality and Station each draw a coloured bar with figures beneath it.
   The figures were placed at 1.15 em of their own font size, under a bar

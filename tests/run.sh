@@ -70,7 +70,22 @@ else
     sed 's/^/    /' "$tmp/server.log" | tail -20
     fails=$((fails + 1))
   else
-    node tests/viewports.js "http://localhost:$PORT" || fails=$((fails + 1))
+    # Two cut-offs. The suite keeps its own clock and stops itself at
+    # TEST_BUDGET_S, saying which sections were still running. This one is
+    # for the case where it cannot: a wedged browser can hold the node
+    # process past its own timer, and then nothing would ever end the run.
+    budget="${TEST_BUDGET_S:-240}"
+    TEST_BUDGET_S="$budget" node tests/viewports.js "http://localhost:$PORT" &
+    suite=$!
+    ( sleep $((budget + 20)); kill -9 "$suite" 2>/dev/null ) >/dev/null 2>&1 &
+    guard=$!
+    wait "$suite"; rc=$?
+    # wait on the guard as well, or bash reports its death as "Terminated"
+    { pkill -P "$guard"; kill "$guard"; wait "$guard"; } 2>/dev/null
+    if [ "$rc" -eq 137 ]; then
+      printf "  ${R}killed: still running %ss after a %ss budget${Z}\n" 20 "$budget"
+    fi
+    [ "$rc" -eq 0 ] || fails=$((fails + 1))
   fi
 fi
 

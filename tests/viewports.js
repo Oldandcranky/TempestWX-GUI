@@ -240,11 +240,60 @@ const measureOutlook = () => {
   return [...new Map(bad.map(x => [x.join('|'), x])).values()];
 };
 
+/* A budget, and a clock on every line.
+
+   The suite prints nothing while a section runs, so from outside a slow run
+   and a hung one look the same — and a hung headless browser will sit there
+   until someone notices. TEST_BUDGET_S is the most this may take; past it
+   the run says which section it was in, shuts the browser and exits 3. Each
+   result line carries how long its section took, so when the budget does go
+   it is obvious which section ate it. */
+const BUDGET_S = Number(process.env.TEST_BUDGET_S) || 240;
+const LANES = Math.max(1, Number(process.env.TEST_LANES) || 4);
+const T0 = Date.now();
+const { AsyncLocalStorage } = require('async_hooks');
+const clock = new AsyncLocalStorage();      // which section a line came from
+const running = new Set();
+const say = console.log.bind(console);
+console.log = (...args) => {
+  const line = String(args[0] == null ? '' : args[0]);
+  const mine = clock.getStore();
+  if (mine && /^  (ok  |FAIL) /.test(line))
+    return say(line.padEnd(44) + '  ' + ((Date.now() - mine.start) / 1000).toFixed(0).padStart(3) + 's');
+  return say(...args);
+};
+
 (async () => {
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
   let failures = 0, checked = 0;
+  setTimeout(() => {
+    say('\n  FAIL out of time: ' + BUDGET_S + 's spent. Still running: ' + [...running].join('; '));
+    say('       raise TEST_BUDGET_S if the suite has honestly grown; otherwise something hung');
+    // Straight out. Closing the browser politely first made every section
+    // still waiting fail on a closed browser, and buried this message under
+    // their complaints. Playwright takes its browser down with the process.
+    process.exit(3);
+  }, BUDGET_S * 1000);
 
-  for (const [width, height, label] of VIEWPORTS) {
+  /* Sections are independent — each opens its own pages and answers its own
+     requests — and nearly all of their time is spent waiting for a page to
+     settle, not computing. One after another they took eight minutes, which
+     is not a suite anyone runs before a push. They go LANES at a time. A
+     section's result and its reasons are printed in one breath, so lanes
+     cannot interleave them. The one marked solo runs alone at the end: it
+     measures how long a press was held, and a busy machine would blur it. */
+  const sections = [];
+  const section = (name, fn, solo) => sections.push({name, fn, solo});
+  // The same idea inside a section: a list of pages that do not depend on
+  // each other, a few at a time rather than in a row.
+  const abreast = async (items, fn, n = 5) => {
+    const todo = items.slice();
+    await Promise.all(Array.from({length: n}, async () => {
+      while (todo.length) await fn(todo.shift());
+    }));
+  };
+
+  for (const [width, height, label] of VIEWPORTS) section(label.trim() + ' cards', async () => {
     const page = await browser.newPage({ viewport: { width, height } });
     const noise = [];
     page.on('pageerror', e => noise.push('pageerror: ' + e.message));
@@ -296,10 +345,10 @@ const measureOutlook = () => {
       console.log('  FAIL ' + label + '  ' + e.message.split('\n')[0]);
     }
     await page.close();
-  }
+  });
 
   // ── the manifest, and that every icon it names is served at its size ──
-  {
+  section("the manifest, and that every icon it names is served at its size", async () => {
     const page = await browser.newPage();
     const bad = [];
     try {
@@ -336,10 +385,10 @@ const measureOutlook = () => {
     console.log(bad.length ? '  FAIL manifest and icons' : '  ok   manifest and icons');
     for (const why of bad) console.log('         ' + why);
     await page.close();
-  }
+  });
 
   // ── the Internet card's way out to Speedtest Tracker ──────────────────
-  {
+  section("the Internet card's way out to Speedtest Tracker", async () => {
     const bad = [];
     for (const [w, h, tv] of [[1920, 1080, false], [414, 896, false], [1920, 1080, true]]) {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
@@ -389,10 +438,10 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL internet link' : '  ok   internet link');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── the Internet page: a week of tests, fetched when it is opened ─────
-  {
+  section("the Internet page: a week of tests, fetched when it is opened", async () => {
     const bad = [];
     const week = (() => {                     // a week of hourly tests
       const now = Date.now() / 1000, pts = [];
@@ -484,12 +533,12 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL internet page' : '  ok   internet page');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── the Records band, with today at each end of it and in the middle ──
   // On a wall of six large cards as well as the crowded thirteen: the large
   // card is where the labels came adrift, and no other test draws one.
-  {
+  section("the Records band, with today at each end of it and in the middle", async () => {
     const bad = [];
     const SIX = ['temperature', 'wind', 'records', 'air', 'hardware', 'forecast'];
     const jobs = [];
@@ -523,13 +572,13 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL records band' : '  ok   records band');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── the almanac page ──────────────────────────────────────────────────
   // Three records of a station's life: a full and violent year, which is the
   // case for width; a station three days old, which is the case for every
   // "none yet"; and nothing at all.
-  {
+  section("the almanac page", async () => {
     const bad = [];
     const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
                        String(d.getDate()).padStart(2, '0');
@@ -583,7 +632,8 @@ const measureOutlook = () => {
     const CASES = [['a full year', HOSTILE, [[1920, 1080], [1400, 860], [1920, 720], [1024, 768], [414, 896]]],
                    ['three days old', YOUNG, [[1920, 720], [414, 896]]],
                    ['nothing yet', {available: false, days: 0, plot: [], months: []}, [[1024, 768]]]];
-    for (const [name, payload, sizes] of CASES) for (const [w, h] of sizes) {
+    await abreast(CASES.flatMap(([name, payload, sizes]) => sizes.map(([w, h]) => [name, payload, w, h])),
+                  async ([name, payload, w, h]) => {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
       const errs = [];
       let asked = 0, query = '';
@@ -693,7 +743,7 @@ const measureOutlook = () => {
       } catch (e) { bad.push(at + ': ' + e.message.split('\n')[0]); }
       for (const m of errs) bad.push(at + ': pageerror: ' + m);
       await page.close();
-    }
+    });
     // A Celsius reader's round numbers are not a Fahrenheit reader's.
     {
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -729,10 +779,10 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL almanac page' : '  ok   almanac page');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── the lightning card's storm, in each of its states ─────────────────
-  {
+  section("the lightning card's storm, in each of its states", async () => {
     const bad = [];
     const SPEC = {
       overhead: {words: 'Overhead', sheet: true, kite: false},
@@ -802,10 +852,10 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL lightning storm' : '  ok   lightning storm');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── the slow half: series and Internet history come every 30 s, not 2 ─
-  {
+  section("the slow half: series and Internet history come every 30 s, not 2", async () => {
     const bad = [];
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     let states = 0, slows = 0;
@@ -846,10 +896,10 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL slow half' : '  ok   slow half');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── the wind tree in a gale, which must stay inside its card ──────────
-  {
+  section("the wind tree in a gale, which must stay inside its card", async () => {
     const bad = [];
     for (const [w, h] of [[1920, 720], [1920, 1080], [1024, 768], [414, 896], [2560, 1080]]) {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
@@ -874,10 +924,10 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL wind tree' : '  ok   wind tree');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── the pollen card's in-season list, which used to be cut off ────────
-  {
+  section("the pollen card's in-season list, which used to be cut off", async () => {
     const bad = [];
     for (const [w, h] of [[1920, 720], [1920, 1080], [1024, 768], [414, 896], [2560, 1080]]) {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
@@ -906,10 +956,10 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL pollen in season' : '  ok   pollen in season');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── /testall: every step shows what it says, and nothing is saved ──────
-  {
+  section("/testall: every step shows what it says, and nothing is saved", async () => {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const bad = [], errs = [];
     let posted = 0;
@@ -991,10 +1041,10 @@ const measureOutlook = () => {
     console.log(bad.length ? '  FAIL /testall' : '  ok   /testall');
     for (const why of bad) console.log('         ' + why);
     await page.close();
-  }
+  });
 
   // ── rain and snow behind the Rainfall card ────────────────────────────
-  {
+  section("rain and snow behind the Rainfall card", async () => {
     const bad = [];
     // What each preview must draw. img: a moving picture (an <img>, so it can
     // leave the card and be clipped); svg: a fixed one inside the card.
@@ -1048,7 +1098,7 @@ const measureOutlook = () => {
       return { page, errs };
     };
 
-    for (const [tier, w, h] of cases) {
+    await abreast(cases, async ([tier, w, h]) => {
       const { page, errs } = await open(w, h, tier ? '/?testrain=' + tier : '/');
       const where = (tier || 'dry') + ' at ' + w + 'x' + h;
       for (const [id, why] of await page.evaluate(measure, '#grid'))
@@ -1074,7 +1124,7 @@ const measureOutlook = () => {
       }
       for (const m of errs) bad.push(where + ': pageerror: ' + m);
       await page.close();
-    }
+    });
 
     // The rules, on real data rather than previews. The nearest NWS station
     // says what is falling; it is only believed when it is cold here.
@@ -1102,17 +1152,17 @@ const measureOutlook = () => {
         { forecast: Object.assign(freshen().forecast, { current: Object.assign({}, freshen().forecast.current, { code: 73 }) }) }),
         null, null],
     ];
-    for (const [what, state, tier, words] of rules) {
+    await abreast(rules, async ([what, state, tier, words]) => {
       const { page, errs } = await open(1920, 1080, '/', state);
       const r = await look(page);
       if (r.tier !== tier) bad.push(what + ': drew ' + r.tier + ', expected ' + tier);
       if (words && !r.caption.includes(words)) bad.push(what + ': caption says "' + r.caption + '"');
       for (const m of errs) bad.push(what + ': pageerror: ' + m);
       await page.close();
-    }
+    });
 
     // Reduced motion: no falling drops, and the scene holds still.
-    for (const tier of ['violent', 'heavysnow', 'blizzard', 'freezing']) {
+    await abreast(['violent', 'heavysnow', 'blizzard', 'freezing'], async (tier) => {
       const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce' });
       await page.route('**/api/state', route => route.fulfill({
         status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
@@ -1132,15 +1182,15 @@ const measureOutlook = () => {
       if (still.moving) bad.push('reduced motion (' + tier + '): the scene still moves');
       if (!still.dressed) bad.push('reduced motion (' + tier + '): the snowman is undressed');
       await page.close();
-    }
+    });
 
     failures += bad.length;
     console.log(bad.length ? '  FAIL rain and snow' : '  ok   rain and snow');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── the alert banner: centred, and the end time never cut off ─────────
-  {
+  section("the alert banner: centred, and the end time never cut off", async () => {
     const soon = (h) => new Date(Date.now() + h * 36e5).toISOString();
     const alerts = { checked: true, error: '', alerts: [
       { event: 'Tornado Warning', severity: 'Extreme', rank: 4, ends: soon(1),
@@ -1214,10 +1264,10 @@ const measureOutlook = () => {
     failures += bad.length;
     console.log(bad.length ? '  FAIL alert banner' : '  ok   alert banner');
     for (const why of bad) console.log('         ' + why);
-  }
+  });
 
   // ── ways back from the outlook, once, in TV mode ──────────────────────
-  {
+  section("ways back from the outlook, once, in TV mode", async () => {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
     const errs = [];
     page.on('pageerror', e => errs.push(e.message));
@@ -1340,11 +1390,28 @@ const measureOutlook = () => {
     console.log(bad.length ? '  FAIL ways back from the outlook' : '  ok   ways back from the outlook');
     for (const why of bad) console.log('         ' + why);
     await page.close();
-  }
+  }, true);
+
+  const runOne = (s) => clock.run({start: Date.now()}, async () => {
+    running.add(s.name);
+    try { await s.fn(); }
+    catch (e) { failures++; console.log('  FAIL ' + s.name + ': ' + e.message.split('\n')[0]); }
+    running.delete(s.name);
+  });
+  // Longest first, or the whole run waits on whichever long section happened
+  // to be queued last. These are the ones the clock says are long.
+  const LONG = /rain and snow|almanac|lightning|testall|Internet page/;
+  const queue = sections.filter(s => !s.solo)
+    .sort((a, b) => LONG.test(b.name) - LONG.test(a.name));
+  await Promise.all(Array.from({length: LANES}, async () => {
+    while (queue.length) await runOne(queue.shift());
+  }));
+  for (const s of sections.filter(s => s.solo)) await runOne(s);
 
   await browser.close();
   console.log(failures
     ? '\n  ' + failures + ' problem(s) across ' + checked + ' renders'
     : '\n  ' + checked + ' renders, all clean');
+  say('  ' + ((Date.now() - T0) / 1000).toFixed(0) + 's of a ' + BUDGET_S + 's budget');
   process.exit(failures ? 1 : 0);
 })();

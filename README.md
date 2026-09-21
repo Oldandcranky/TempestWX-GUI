@@ -61,7 +61,7 @@ the grid rearranges itself for however many you choose.
 | **Rainfall** | Current rate, today and yesterday, month and year to date |
 | **Astronomy** | Sunrise, sunset, time to the next, a daylight arc with the sun on it, UV with its WHO band, brightness, solar radiation, moonrise, moonset, phase and the next new and full moon |
 | **Forecast** | Current conditions, today's high, low and precipitation chance, and a three-day strip |
-| **Records** | Hottest and coldest with dates, for the month, the year and all time, over a band showing the station's whole range |
+| **Records** | Hottest and coldest with dates, for the month, the year and all time, over a band showing the station's whole range, with the year's strongest gust and wettest day. A tap opens the almanac |
 | **Lightning** | Strikes today, nearest, last strike, last hour and last three hours |
 | **Radar** | Live radar for your location |
 | **Air quality** | US AQI on a banded scale, with PM2.5, PM10 and ozone (Open-Meteo, no key) |
@@ -69,11 +69,17 @@ the grid rearranges itself for however many you choose.
 | **Internet** | Download and upload from a self-hosted Speedtest Tracker, with a health word driven by packet loss, jitter and latency under load rather than by speed. Turns over to a plot of the last day's tests |
 | **Station** | Battery voltage and charge, station and hub firmware, uptime, signal strength, and any sensor faults |
 
-Three more pages, each behind an icon in the footer:
+Four more pages, each behind an icon in the footer:
 
 - **Ten-day outlook** (`d`) — the full forecast, each day's range drawn against
   the ten-day span so a warm spell or a cold snap reads at a glance.
 - **Radar** (`w`) — full-screen weather map.
+- **Almanac** (`a`, or a tap on the Records card) — where today stands in the
+  station's own record: today against the normal and against this day last
+  year, the year drawn as a band of daily highs and lows over the normal
+  range with the rain standing on the floor, the dry streak, the warmest day
+  since, first and last frost, the station's records for gust, rain, pressure,
+  lightning, sun and temperature swing, and a column for each month.
 - **Settings** (`s`) — choose and reorder cards, and set the optional
   WeatherFlow token.
 
@@ -244,8 +250,9 @@ coverage it simply returns nothing.
 **WeatherFlow**, optionally, to backfill history. The hub only broadcasts what
 is happening now, so without this the 24-hour figures and the monthly and
 yearly totals only count from when the dashboard started. Give it a personal
-access token and it fills in your station's real record — daily rainfall and
-daily highs and lows, back to the day the station was installed.
+access token and it fills in your station's real record — daily rainfall,
+daily highs and lows, and each day's peak gust, pressure range, strike count
+and sunshine — back to the day the station was installed.
 
 ### Endpoints
 
@@ -253,6 +260,8 @@ daily highs and lows, back to the day the station was installed.
 |---|---|
 | `/api/state` | Everything, in canonical units (°C, mb, m/s, mm, km) |
 | `/api/wind` | Just the live wind — a few dozen bytes, polled often |
+| `/api/series` | The slow half of the state: the 24-hour series and the forecaster's words |
+| `/api/almanac` | Streaks, season marks, records, a row per month and a year of daily rows. `?warm=&hot=&frost=` set the thresholds, in °C |
 | `/api/config` | The card layout, and whether a token is set (never the token) |
 | `/healthz` | `{"ok": true, "health": "live"}` |
 
@@ -314,11 +323,13 @@ Samples are prefixed `PREVIEW` so they cannot be mistaken for live warnings.
 
 ## Files it writes
 
-All live in `--data-dir` and are safe to delete — they are rebuilt.
+All live in `--data-dir` and are safe to delete — they are rebuilt. The
+daily record is the exception worth knowing: with a WeatherFlow token it is
+rebuilt from their archive, and without one it is the only copy.
 
 | File | Contents |
 |---|---|
-| `tempest_history.json` | 48 hours of samples, plus per-day rainfall and per-day temperature extremes |
+| `tempest_history.json` | 48 hours of samples, plus the daily record: each day's rainfall, high and low, peak gust, pressure range, strikes and sunshine, kept for about eleven years |
 | `tempest_config.json` | Card layout and the WeatherFlow token (`0600`) |
 | `tempest_server_state.json` | Today's strike count and the last observation |
 | `tempest_forecast.json` | The last forecast, so a restart does not re-hit the API |
@@ -342,6 +353,50 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The station remembers its days.** History was 48 hours of samples plus
+  each day's rain and its high and low; everything else about a day — its
+  strongest gust, how low the pressure fell, how many strikes, how much sun —
+  was gone on the third morning. Each day now leaves a summary behind, kept
+  for about eleven years, built from the live feed as it arrives. With a
+  WeatherFlow token the sweep fills in every day back to the install date: it
+  walks the archive once more, by itself, the first time this version runs.
+  Where both saw a day, extremes are a union — the higher gust is the day's
+  gust whoever measured it — and totals come from whichever watched more of
+  it, so a day the server was restarted halfway through is made whole.
+- **An Almanac page** (`a`, the book in the footer, or a tap anywhere on the
+  Records card): today against the normal and against this day last year;
+  the year as a band of daily highs and lows over the normal range, with the
+  rain as bars on the floor and a gap where a day is missing rather than a
+  guess; the dry or wet streak; "warmest day since…", said only when it has
+  been a week or more; first frost, or last frost in the first half of the
+  year; the station's records for gust, rain, pressure, lightning, sunshine
+  and the widest swing in a day; and a column a month with its average high
+  and low and its rain against normal. The arithmetic is the server's, under
+  unit tests, since it is exactly the kind that is wrong by one. The round
+  numbers are the reader's: a Fahrenheit screen asks about 80° and 90° days,
+  a Celsius one about 25° and 30°. Fetched when opened, like the Internet
+  page, and a TV left on it walks back to the cards by itself.
+- The Records card carries the year's peak gust and wettest day. A short card
+  cannot hold four rows at a readable size, so it sheds them by height: those
+  two first, the almanac having them a tap away, then the month once there is
+  an all-time row to stand in for it.
+- **Every storm was counted twice.** A strike reaches the dashboard as an
+  event the moment it happens and again inside the next observation's count
+  for the minute, and both were added to "strikes today". Events still count
+  at once, so the card is not a minute behind the flash; the observation now
+  adds only what the events missed, and a strike heard on the edge of the
+  minute is carried to the next observation once.
+- On a phone the Internet page opened a screen below where anyone was
+  looking. The outlook's phone styles set `display` on the bare element,
+  which outranked the rule hiding it, so an empty screen-high outlook sat
+  under the cards and above every other page. The geometry tests now check
+  that a page opens at the top and that a hidden one takes no room.
+- Changing page while another page change was still animating logged an
+  "Uncaught (in promise)" each time; the skipped transition's promises are
+  now caught. The page changed correctly either way.
+- The rain record was capped at 800 days, so "all time" would have started
+  forgetting in the station's third summer. It keeps the same eleven years as
+  the rest of the daily record.
 - **The forecaster's own words on the outlook.** The ten-day page was
   numbers and icons; it now carries the National Weather Service's written
   forecast for the station's grid square — "Tonight: showers and

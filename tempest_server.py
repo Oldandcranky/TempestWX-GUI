@@ -1268,6 +1268,48 @@ class Backfill(threading.Thread):
         self.history.save(force=True)
         return len(merged)
 
+    # What the sweep keeps of each day. Raise it when the sweep learns to
+    # keep something new, and the archive is walked again to collect it.
+    SWEEP_KEEPS = 2
+
+    @staticmethod
+    def bucket_minutes(rows):
+        """How many minutes each row of a window stands for.
+
+        WeatherFlow answers a window of more than a day with buckets — five
+        minutes for a few days, longer beyond — so a row is not always a
+        minute. The smallest gap between neighbours is the bucket; a hole in
+        the record is a larger gap and does not confuse it.
+        """
+        stamps = []
+        for obs in rows:
+            try:
+                stamps.append(float(obs[0]))
+            except (TypeError, ValueError, IndexError):
+                continue
+        stamps.sort()
+        gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b - a >= 30]
+        if not gaps:
+            return 1.0
+        return max(1.0, min(180.0, min(gaps) / 60.0))
+
+    @staticmethod
+    def fold_obs(summary, obs, minutes):
+        """One row of WeatherFlow's device record into a day's summary."""
+        at = lambda i: obs[i] if len(obs) > i else None
+        try:
+            ts = float(obs[0])
+        except (TypeError, ValueError):
+            return
+        core.History.fold(summary, ts, minutes, temp_c=at(7), pres_mb=at(6),
+                          wind_ms=at(2), gust_ms=at(3), rh=at(8), uv=at(10),
+                          solar=at(11))
+        try:
+            if at(15):
+                summary["strikes"] = summary.get("strikes", 0.0) + float(at(15))
+        except (TypeError, ValueError):
+            pass
+
     def sweep_daily(self, device, days=4000, chunk_days=4,
                     max_requests=500):
         """Walk back through the year building daily rain totals and daily
@@ -1283,6 +1325,12 @@ class Backfill(threading.Thread):
         from_key = "swept_from"
         already = self.history.meta.get(done_key)
         reached = self.history.meta.get(from_key)
+        # The sweep used to keep rain and temperature only. A record swept
+        # before it learned to keep the rest of the day — gusts, pressure,
+        # strikes, sun — has to be walked again from the top, once, or those
+        # would only ever start from the day this version was installed.
+        if self.history.meta.get("sweep_keeps") != self.SWEEP_KEEPS:
+            already = reached = None
         if already and time.time() - already < 20 * 3600 and reached:
             return 0                       # swept recently; nothing to do
 
@@ -1299,8 +1347,10 @@ class Backfill(threading.Thread):
         floor = today - timedelta(days=days)
         totals = {}
         temps = {}
+        summaries = {}
         requests = 0
         empty_runs = 0
+        cut_short = False
         # forwards over the recent tail, then backwards into the archive
         windows = []
         cursor = oldest
@@ -1315,6 +1365,7 @@ class Backfill(threading.Thread):
         reached_back = oldest
         for cursor in windows:
             if self.stop_event.is_set() or requests >= max_requests:
+                cut_short = True
                 break
             end = min(cursor + timedelta(days=chunk_days), today + timedelta(days=1))
             try:
@@ -1324,6 +1375,7 @@ class Backfill(threading.Thread):
                 })
             except Exception:
                 continue                   # a gap is better than giving up
+            step = self.bucket_minutes(raw.get("obs") or [])
             for obs in (raw.get("obs") or []):
                 if not isinstance(obs, list) or len(obs) < 13:
                     continue
@@ -1331,6 +1383,7 @@ class Backfill(threading.Thread):
                     day = datetime.fromtimestamp(float(obs[0])).date().isoformat()
                 except (TypeError, ValueError, OSError):
                     continue
+                self.fold_obs(summaries.setdefault(day, {}), obs, step)
                 if obs[12]:
                     try:
                         totals[day] = totals.get(day, 0.0) + float(obs[12])
@@ -1373,12 +1426,22 @@ class Backfill(threading.Thread):
             self.history.temp_days[day] = {"lo": round(mm["lo"], 2),
                                            "hi": round(mm["hi"], 2)}
             warm += 1
+        # Today is merged too. Its extremes are a union, so the live record
+        # loses nothing, and a day the server was restarted halfway through
+        # gets back the gust it was not running to see.
+        filled = 0
+        with self.state.lock:
+            for day, summary in summaries.items():
+                if self.history.merge_day(day, summary):
+                    filled += 1
         self.history.meta[done_key] = time.time()
         self.history.meta[from_key] = reached_back.isoformat()
+        if not cut_short:
+            self.history.meta["sweep_keeps"] = self.SWEEP_KEEPS
         self.history.save(force=True)
         print("  backfill : swept back to %s in %d requests — %d rain days, "
-              "%d temperature days" % (reached_back.isoformat(), requests,
-                                       added, warm))
+              "%d temperature days, %d daily summaries"
+              % (reached_back.isoformat(), requests, added, warm, filled))
         sys.stdout.flush()
         return added
 
@@ -1780,6 +1843,17 @@ class Dashboard:
                                            else "Set --lat and --lon"})
         return snap
 
+    def almanac(self, **thresholds):
+        """Where today stands in the station's record, for the Almanac page.
+        Under the state's lock, since the listener writes to the same tables
+        and a dictionary that grows at midnight cannot be walked meanwhile."""
+        with self.state.lock:
+            body = self.history.almanac(**thresholds)
+        body["available"] = bool(body.get("days"))
+        body["backfill"] = (self.backfill.snapshot()["status"]
+                            if self.backfill else "off")
+        return body
+
     def shutdown(self):
         self.stop.set()
         if hasattr(self.source, "close"):
@@ -1877,6 +1951,25 @@ class Handler(BaseHTTPRequestHandler):
             return 7
         return max(1, min(31, n))
 
+    @staticmethod
+    def _thresholds(query):
+        """?warm=&hot=&frost= in °C, for the almanac's "last warm day" and its
+        kin. The page sends them because the round number depends on the unit
+        its reader thinks in — 80 °F is not a round number in Celsius — and
+        that choice lives in the browser. Anything unreadable or absurd falls
+        back to the default rather than failing the page."""
+        got = urllib.parse.parse_qs(query or "")
+        out = {}
+        for name, key in (("warm", "warm_c"), ("hot", "hot_c"),
+                          ("frost", "frost_c")):
+            try:
+                value = float(got.get(name, [""])[0])
+            except (TypeError, ValueError):
+                continue
+            if -60.0 <= value <= 60.0:
+                out[key] = value
+        return out
+
     def do_GET(self):
         raw, _, query = self.path.partition("?")
         path = raw.rstrip("/") or "/"
@@ -1917,6 +2010,14 @@ class Handler(BaseHTTPRequestHandler):
                         body = {"available": False,
                                 "error": dash.speedtest.describe(e)}
                 self._send(200, json.dumps(body), "application/json; charset=utf-8")
+            elif path == "/api/almanac":
+                # Fetched when the Almanac page is opened: a year of daily
+                # rows is no more use in the two-second snapshot than a week
+                # of speedtests was.
+                dash = self.server.dashboard
+                body = dash.almanac(**self._thresholds(query))
+                self._send(200, json.dumps(body, allow_nan=False),
+                           "application/json; charset=utf-8")
             elif path == "/api/wind":
                 # Tiny payload, so the compass can be polled far more often
                 # than the full snapshot without wasting bandwidth.

@@ -28,7 +28,7 @@
  "derived": {
   "beaufort": 1,
   "beaufort_name": "Light air",
-  "comfort": "Hot · Comfortable",
+  "comfort": "Hot \u00b7 Comfortable",
   "dew_c": 13.60838684344022,
   "feels_c": 28.125517526949515,
   "feels_model": "Heat index",
@@ -47,7 +47,7 @@
    "t": 1789517161.2146175,
    "v": 1019.64
   },
-  "pres_outlook": "Slow decline — watch for cloud",
+  "pres_outlook": "Slow decline \u2014 watch for cloud",
   "pres_trend": "Falling slowly",
   "rain_from": "2026-09-04",
   "rain_month_mm": 4.3,
@@ -427,7 +427,7 @@
   "ping": 9.2,
   "plan_down": 1000,
   "plan_up": 330,
-  "server": "Chicago, IL — a long server name",
+  "server": "Chicago, IL \u2014 a long server name",
   "status": "degraded",
   "tests": 25,
   "up": 209.1,
@@ -612,36 +612,100 @@
  },
  "records": {
   "all": {
-   "days": 1,
+   "days": 1213,
    "hi": [
-    28.5,
-    "2026-09-16"
+    42.3,
+    "2024-08-27"
    ],
    "lo": [
-    28.5,
-    "2026-09-16"
+    -31.6,
+    "2025-01-21"
    ]
   },
   "month": {
-   "days": 1,
+   "days": 21,
    "hi": [
-    28.5,
-    "2026-09-16"
+    38.4,
+    "2026-09-05"
    ],
    "lo": [
-    28.5,
-    "2026-09-16"
+    -11.2,
+    "2026-09-19"
    ]
   },
+  "station": {
+   "all": {
+    "days": 1213,
+    "gust": {
+     "date": "2024-12-15",
+     "v": 38.9
+    },
+    "pmax": {
+     "date": "2025-02-18",
+     "v": 1044.8
+    },
+    "pmin": {
+     "date": "2024-11-30",
+     "v": 961.7
+    },
+    "rain": {
+     "date": "2025-09-27",
+     "v": 131.06
+    },
+    "strikes": {
+     "date": "2025-06-29",
+     "v": 2210.0
+    },
+    "sun": {
+     "date": "2025-06-20",
+     "v": 9120.0
+    },
+    "swing": {
+     "date": "2025-03-11",
+     "v": 31.2
+    }
+   },
+   "year": {
+    "days": 264,
+    "gust": {
+     "date": "2026-07-16",
+     "v": 31.74
+    },
+    "pmax": {
+     "date": "2026-01-24",
+     "v": 1041.2
+    },
+    "pmin": {
+     "date": "2026-03-13",
+     "v": 968.3
+    },
+    "rain": {
+     "date": "2026-07-16",
+     "v": 112.27
+    },
+    "strikes": {
+     "date": "2026-07-16",
+     "v": 1874.0
+    },
+    "sun": {
+     "date": "2026-06-21",
+     "v": 8912.4
+    },
+    "swing": {
+     "date": "2026-04-02",
+     "v": 27.8
+    }
+   }
+  },
   "year": {
-   "days": 1,
+   "days": 264,
    "hi": [
-    28.5,
-    "2026-09-16"
+    41.7,
+    "2026-07-24"
    ],
    "lo": [
-    28.5,
-    "2026-09-16"
+    -28.9,
+    "2026-01-23"
    ]
   }
  },
@@ -1796,7 +1860,7 @@
   "dist": "mi",
   "pres": "inHg",
   "rain": "in",
-  "temp": "°F",
+  "temp": "\u00b0F",
   "wind": "mph"
  },
  "uptime_s": 7.941199541091919,

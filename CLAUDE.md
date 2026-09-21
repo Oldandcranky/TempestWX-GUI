@@ -87,6 +87,22 @@ in `web/fonts/`. Edit it directly.
 - **`.dockerignore` patterns match the whole path from the context root**, so
   `._*` catches the top level only and `**/._*` is needed for nested files.
 
+## The daily record
+
+`History.days` holds one summary per day — gust, pressure range, strikes,
+sunshine — beside the older `rain_days` and `temp_days`. The live feed and
+the WeatherFlow sweep both write it through `History.fold`, and
+`merge_day` reconciles them; it must stay idempotent, because the sweep
+redoes the last week every run.
+
+**If the sweep learns to keep a new field, raise `Backfill.SWEEP_KEEPS`.**
+That is what makes an already-swept archive get walked again; without it the
+new field only ever starts from the day it was deployed.
+
+The almanac's date arithmetic lives in `History.almanac`, takes `today=`, and
+is unit-tested against made-up years. Keep it there rather than in the page.
+The page supplies only the normals and the reader's round numbers.
+
 ## Tests
 
 `tests/run.sh` — unit tests plus a headless-browser geometry pass. Run it

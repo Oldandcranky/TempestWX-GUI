@@ -412,6 +412,7 @@ const measureOutlook = () => {
           return Math.max(card.top - b.top, b.bottom - card.bottom,
                           card.left - b.left, b.right - card.right); });
         return {open: document.body.classList.contains('show-net'),
+                top: host.getBoundingClientRect().top,
                 overflow: body.scrollHeight - body.clientHeight,
                 sideways: body.scrollWidth - body.clientWidth,
                 plots: plots.length, rows: rows.length,
@@ -421,6 +422,7 @@ const measureOutlook = () => {
                 caption: host.textContent.includes('173') || host.textContent.includes('168')};
       });
       if (!r.open) bad.push(at + ': the page did not open');
+      if (r.top > 80) bad.push(at + ': the page starts ' + Math.round(r.top) + 'px down the screen');
       if (r.plots !== 2) bad.push(at + ': ' + r.plots + ' plots, expected 2');
       // The charts are the page: between them, at least a third of the card.
       const share = await page.evaluate(() => {
@@ -451,6 +453,212 @@ const measureOutlook = () => {
     }
     failures += bad.length;
     console.log(bad.length ? '  FAIL internet page' : '  ok   internet page');
+    for (const why of bad) console.log('         ' + why);
+  }
+
+  // ── the almanac page ──────────────────────────────────────────────────
+  // Three records of a station's life: a full and violent year, which is the
+  // case for width; a station three days old, which is the case for every
+  // "none yet"; and nothing at all.
+  {
+    const bad = [];
+    const iso = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                       String(d.getDate()).padStart(2, '0');
+    const back = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return iso(d); };
+    const year = (days) => {
+      const plot = [], months = new Map();
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        const season = Math.cos(2 * Math.PI * ((d - new Date(d.getFullYear(), 0, 0)) / 864e5 - 201) / 365);
+        const mean = 7 + 27 * season + 6 * Math.sin(i * 1.7);
+        const wet = i % 3 === 0 ? 8 + (i % 41) * 2.9 : 0;
+        if (i % 97 === 50) { plot.push([iso(d), null, null, 0, null]); continue; }   // a day lost
+        plot.push([iso(d), +(mean - 9).toFixed(2), +(mean + 9).toFixed(2), wet, 9 + (i % 23)]);
+        const key = iso(d).slice(0, 7);
+        const m = months.get(key) || {month: key, days: 0, rain: 0, wet_days: 0, strikes: 0,
+                                       gust: 31.7, hi: 41.7, lo: -28.9, hi_avg: 0, lo_avg: 0};
+        m.days++; m.rain += wet; m.hi_avg = +(mean + 9).toFixed(2); m.lo_avg = +(mean - 9).toFixed(2);
+        months.set(key, m);
+      }
+      return {plot, months: [...months.values()].slice(-12)};
+    };
+    const full = year(366);
+    const HOSTILE = Object.assign({
+      available: true, backfill: 'ok', date: back(0), from: '2023-05-27', days: 1213,
+      today: {date: back(0), hi: 39.6, lo: -24.8, rain: 112.27, gust: 31.74,
+              gust_t: Date.now() / 1000 - 3600},
+      year_ago: {date: back(365), hi: 38.2, lo: -23.4, rain: 104.9, gust: 28.0},
+      warmest_since: {date: null, days: 1212, record: true},
+      coldest_since: {date: '2025-01-21', days: 608, record: false},
+      gustiest_since: {date: '2024-12-15', days: 645, record: false},
+      dry_days: 0, wet_days: 17,
+      last_rain: {date: back(0), days: 0, mm: 112.27},
+      first_frost: {date: back(12), days: 12, lo: -11.2, hi: 3.0},
+      last_frost: {date: '2026-05-27', days: 117, lo: -0.4, hi: 12.0},
+      frost_days: 11, last_warm: {date: back(0), days: 0, lo: 20, hi: 39.6},
+      warm_days: 148, hot_days: 112,
+      thresholds: {warm_c: 26.67, hot_c: 32.22, frost_c: 0},
+      records: {all: STATE.records.station.all, year: STATE.records.station.year},
+    }, full);
+    const young = year(3);
+    const YOUNG = {
+      available: true, backfill: 'off', date: back(0), from: back(2), days: 3,
+      today: {date: back(0), hi: 21.0, lo: 12.0, rain: 0},
+      year_ago: null, warmest_since: null, coldest_since: null, gustiest_since: null,
+      dry_days: 3, wet_days: 0, last_rain: null, first_frost: null, last_frost: null,
+      frost_days: 0, last_warm: null, warm_days: 0, hot_days: 0,
+      thresholds: {warm_c: 26.67, hot_c: 32.22, frost_c: 0},
+      records: {all: {days: 3}, year: {days: 3}},
+      plot: young.plot.map(r => [r[0], r[1], r[2], 0, null]), months: young.months,
+    };
+    const CASES = [['a full year', HOSTILE, [[1920, 1080], [1400, 860], [1920, 720], [1024, 768], [414, 896]]],
+                   ['three days old', YOUNG, [[1920, 720], [414, 896]]],
+                   ['nothing yet', {available: false, days: 0, plot: [], months: []}, [[1024, 768]]]];
+    for (const [name, payload, sizes] of CASES) for (const [w, h] of sizes) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      const errs = [];
+      let asked = 0, query = '';
+      page.on('pageerror', e => errs.push(e.message));
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+      }));
+      await page.route('**/api/almanac*', route => {
+        asked++; query = route.request().url().split('?')[1] || '';
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8',
+                               body: JSON.stringify(payload) });
+      });
+      const at = name + ' at ' + w + 'x' + h;
+      try {
+        await page.goto(BASE, { waitUntil: 'networkidle' });
+        await page.waitForTimeout(SETTLE_MS);
+        if (asked) bad.push(at + ': the almanac was fetched before the page was opened');
+        // In by a tap anywhere on the Records card, as on the TV.
+        await page.$eval('#card-records .card-body', el => el.click());
+        await page.waitForTimeout(2200);
+        if (!asked) bad.push(at + ': opening the page fetched nothing');
+        if (!/warm=26\.67/.test(query) || !/hot=32\.22/.test(query))
+          bad.push(at + ': a Fahrenheit reader asked for "' + query + '"');
+        const r = await page.evaluate(() => {
+          const host = document.getElementById('almanac');
+          const card = host.querySelector('.card');
+          const body = host.querySelector('.card-body');
+          const frame = card.getBoundingClientRect();
+          const plot = host.querySelector('.yearplot');
+          const svg = host.querySelector('.yearplot svg');
+          const b = svg ? svg.getBoundingClientRect() : null;
+          // Anything that holds text and is narrower than the text it holds.
+          const clipped = [...host.querySelectorAll('.k,.v,.sub,.fc-hl,.fc-pop,.caption,.ax,.tag')]
+            .filter(n => n.scrollWidth > n.clientWidth + 1 && n.clientWidth > 0)
+            .map(n => n.textContent.trim().slice(0, 28));
+          const kids = [...body.children].filter(k => k.getBoundingClientRect().height > 0);
+          let overlap = 0;
+          for (let i = 1; i < kids.length; i++)
+            overlap = Math.max(overlap, kids[i - 1].getBoundingClientRect().bottom -
+                                        kids[i].getBoundingClientRect().top);
+          const labels = [...host.querySelectorAll('.yearplot .ax, .yearplot .tag')]
+            .map(n => n.getBoundingClientRect());
+          const p = plot ? plot.getBoundingClientRect() : null;
+          return {open: document.body.classList.contains('show-almanac'),
+                  overflow: body.scrollHeight - body.clientHeight,
+                  sideways: body.scrollWidth - body.clientWidth,
+                  pageSideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                  fit: parseFloat(getComputedStyle(card).getPropertyValue('--fit')) || 1,
+                  share: p ? p.height / frame.height : 0,
+                  paths: svg ? svg.querySelectorAll('path').length : 0,
+                  bars: svg ? svg.querySelectorAll('rect').length : 0,
+                  spill: b ? Math.max(frame.top - b.top, b.bottom - frame.bottom,
+                                      frame.left - b.left, b.right - frame.right) : 0,
+                  stray: p ? labels.filter(l => l.left < p.left - 1 || l.right > p.right + 1).length : 0,
+                  top: host.getBoundingClientRect().top,
+                  ghosts: ['outlook', 'netpage', 'map', 'settings'].filter(id =>
+                    document.getElementById(id).getBoundingClientRect().height > 0),
+                  months: host.querySelectorAll('.months .fc-day').length,
+                  cells: host.querySelectorAll('.cell').length,
+                  clipped, overlap, text: host.textContent};
+        });
+        if (!r.open) bad.push(at + ': a tap on the Records card did not open it');
+        // A phone once kept an empty, screen-high outlook above every other
+        // page, so this one opened a screen below where anyone was looking.
+        if (r.top > 80) bad.push(at + ': the page starts ' + Math.round(r.top) + 'px down the screen');
+        if (r.ghosts.length) bad.push(at + ': hidden but taking room: ' + r.ghosts.join(', '));
+        if (r.sideways > 1) bad.push(at + ': overflows sideways by ' + r.sideways + 'px');
+        if (r.pageSideways > 1) bad.push(at + ': the page scrolls sideways by ' + r.pageSideways + 'px');
+        if (w > 720 && r.overflow > 1) bad.push(at + ': overflows down by ' + r.overflow + 'px');
+        if (r.overlap > 1) bad.push(at + ': two rows overlap by ' + r.overlap.toFixed(0) + 'px');
+        if (r.fit < 0.6) bad.push(at + ': type shrunk to ' + r.fit.toFixed(2));
+        if (r.clipped.length) bad.push(at + ': cut off: ' + r.clipped.join(' | '));
+        if (r.spill > 1) bad.push(at + ': the plot paints ' + r.spill.toFixed(0) + 'px outside the card');
+        if (r.stray) bad.push(at + ': ' + r.stray + ' plot label(s) outside the plot');
+        if (payload.available === false) {
+          if (!/Collecting/.test(r.text)) bad.push(at + ': an empty record does not say so');
+        } else {
+          if (r.cells !== 14) bad.push(at + ': ' + r.cells + ' cells, expected 14');
+          if (r.months !== payload.months.length) bad.push(at + ': ' + r.months + ' month columns');
+          if (w > 720 && r.share < 0.25)
+            bad.push(at + ': the year gets only ' + Math.round(r.share * 100) + '% of the card');
+          if (r.paths < 3) bad.push(at + ': the plot drew almost nothing (' + r.paths + ' paths)');
+        }
+        if (payload === HOSTILE) {
+          if (!r.bars) bad.push(at + ': no rain on the plot');
+          for (const want of ['Wet streak', 'Records began', 'First frost', 'last year', 'normal'])
+            if (!r.text.includes(want)) bad.push(at + ': does not say "' + want + '"');
+        }
+        if (payload === YOUNG)
+          for (const want of ['Dry streak', 'None yet', 'Not yet', 'no rain on record'])
+            if (!r.text.includes(want)) bad.push(at + ': does not say "' + want + '"');
+        // Held for a few minutes: opening it again must not fetch again.
+        const before = asked;
+        await page.$eval('#almanac .card-body', el => el.click());     // a tap anywhere is the way back
+        await page.waitForTimeout(900);
+        if (await page.evaluate(() => document.body.classList.contains('show-almanac')))
+          bad.push(at + ': a tap on the page did not close it');
+        await page.keyboard.press('a');
+        await page.waitForTimeout(1200);
+        if (asked > before) bad.push(at + ': reopening fetched it again');
+        await page.goBack();
+        await page.waitForTimeout(900);
+        if (await page.evaluate(() => document.body.classList.contains('show-almanac')))
+          bad.push(at + ': Back did not close the page');
+        if (!await page.evaluate(() => document.querySelectorAll('#grid .card[id]').length))
+          bad.push(at + ': the cards did not come back');
+      } catch (e) { bad.push(at + ': ' + e.message.split('\n')[0]); }
+      for (const m of errs) bad.push(at + ': pageerror: ' + m);
+      await page.close();
+    }
+    // A Celsius reader's round numbers are not a Fahrenheit reader's.
+    {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      let query = '';
+      await page.addInitScript(() => { try { localStorage.setItem('unit.temp', '°C'); } catch (e) {} });
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()),
+      }));
+      await page.route('**/api/almanac*', route => {
+        query = route.request().url().split('?')[1] || '';
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8',
+                               body: JSON.stringify(HOSTILE) });
+      });
+      await page.goto(BASE, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      await page.$eval('#almBtn', el => el.click());
+      await page.waitForTimeout(1500);
+      if (!/warm=25\.00/.test(query) || !/hot=30\.00/.test(query))
+        bad.push('in Celsius it asked for "' + query + '"');
+      const text = await page.evaluate(() => document.getElementById('almanac').textContent);
+      if (!text.includes('30° days')) bad.push('in Celsius the hot days are not named for 30°');
+      // After a deploy the page reloads itself where it stood. Restored, it is
+      // drawn before the first state arrives, and has to catch up when one does.
+      await page.reload({ waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const again = await page.evaluate(() => ({
+        open: document.body.classList.contains('show-almanac'),
+        text: document.getElementById('almanac').textContent }));
+      if (!again.open) bad.push('a reload did not put the almanac back');
+      else if (!again.text.includes('normal')) bad.push('restored by a reload, it never got its normals');
+      await page.close();
+    }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL almanac page' : '  ok   almanac page');
     for (const why of bad) console.log('         ' + why);
   }
 
@@ -672,7 +880,7 @@ const measureOutlook = () => {
             label: st.label, tag: document.getElementById('testtag').textContent,
             want: { rain: st.rain || null, alerts: st.alerts ? Math.min(3, st.alerts.length) : 0,
                     pollen: st.pollen, wind: st.wind, flip: /Internet/.test(st.label),
-                    outlook: /outlook/.test(st.label) },
+                    outlook: /outlook/.test(st.label), almanac: /Almanac/.test(st.label) },
             rain: sky ? sky.dataset.tier : null,
             hail: !!document.querySelector('#card-rain .drop.hail'),
             alerts: document.querySelectorAll('#alerts .alert').length,
@@ -682,6 +890,7 @@ const measureOutlook = () => {
                     .style.getPropertyValue('--lean'),
             flipped: !!document.querySelector('#card-internet.flipped'),
             outlook: document.body.classList.contains('show-outlook'),
+            almanac: document.body.classList.contains('show-almanac'),
             cards: [...document.querySelectorAll('#grid .card[id]')].map(c => c.draggable),
           };
         });
@@ -695,6 +904,7 @@ const measureOutlook = () => {
         if (w.wind != null) { if (!r.lean) bad.push(at + ': no tree'); else leans.push(parseFloat(r.lean)); }
         if (w.flip !== r.flipped) bad.push(at + ': Internet card ' + (r.flipped ? 'turned' : 'not turned'));
         if (w.outlook !== r.outlook) bad.push(at + ': outlook ' + (r.outlook ? 'open' : 'closed'));
+        if (w.almanac !== r.almanac) bad.push(at + ': almanac ' + (r.almanac ? 'open' : 'closed'));
         if (r.cards.some(Boolean)) bad.push(at + ': cards are draggable on the test page');
       }
       // One more click wraps to the start; the left arrow goes back to the end.

@@ -37,6 +37,8 @@ HISTORY_FILE  = os.path.join(_HERE, "tempest_history.json")
 HISTORY_MAX      = 2880        # 48 h at one sample a minute
 HISTORY_MIN_GAP  = 55          # seconds between retained samples
 HISTORY_SAVE_SEC = 300         # flush to disk every 5 min
+DAYS_MAX         = 4000        # days of daily record kept: about eleven years
+DAY_FULL_MIN     = 1200        # minutes of coverage that make a day "whole"
 
 STALE_AFTER   = 120            # seconds without a packet → amber
 OFFLINE_AFTER = 360            # → red
@@ -357,17 +359,43 @@ def moon_state(now=None):
 
 class History:
     """Rolling 48 h of samples, thinned to one a minute and saved to disk so
-    trends and 24-hour extremes survive a restart."""
+    trends and 24-hour extremes survive a restart — and, beside them, one
+    small summary per day that is kept for years.
+
+    The samples answer "what has the last day been like"; they are gone after
+    two. The daily record is what is left of a day once it is over: its peak
+    gust, its pressure range, how much sun it had, how many strikes. Without
+    it the strongest gust the station ever measured is forgotten on the third
+    morning.
+    """
 
     KEYS = ("temp_c", "pres_mb", "wind_ms", "gust_ms", "rh", "dir", "battery")
+
+    # What a day's summary may hold, all in canonical units. Rain and the
+    # temperature high and low predate this and keep their own tables.
+    #   gust, gust_t   peak gust in m/s, and when
+    #   pmin, pmax     station pressure, mb
+    #   rhmin, rhmax   humidity, %
+    #   uv, solar      peak UV index and peak W/m²
+    #   sun            solar energy over the day, Wh/m²
+    #   strikes        lightning strikes counted
+    #   tmean, tn      mean temperature, and the readings behind it
+    #   wind, wn       mean wind speed, likewise
+    #   mins           minutes of the day actually observed
+    DAY_MAXES = ("gust", "pmax", "rhmax", "uv", "solar")
+    DAY_MINS = ("pmin", "rhmin")
+    DAY_NUMBERS = DAY_MAXES + DAY_MINS + ("gust_t", "sun", "strikes", "tmean",
+                                          "tn", "wind", "wn", "mins")
 
     def __init__(self, path=None):
         self.path = path or HISTORY_FILE
         self.samples = deque(maxlen=HISTORY_MAX)
         self.rain_days = {}        # "YYYY-MM-DD" → mm
         self.temp_days = {}        # "YYYY-MM-DD" → {"lo": °C, "hi": °C}
+        self.days = {}             # "YYYY-MM-DD" → the day's summary, above
         self.meta = {}             # bookkeeping, e.g. when rain was swept
         self._last_saved = 0.0
+        self._last_obs_t = None    # for the minutes between live readings
         self.load()
 
     # ── persistence ───────────────────────────────────────────────────────
@@ -405,11 +433,32 @@ class History:
                 except (TypeError, ValueError):
                     continue
             self._trim_rain_days()
+        summaries = raw.get("days")
+        if isinstance(summaries, dict):
+            for k, v in summaries.items():
+                if not isinstance(v, dict):
+                    continue
+                rec = {}
+                for key in self.DAY_NUMBERS:
+                    try:
+                        if v.get(key) is not None and math.isfinite(float(v[key])):
+                            rec[key] = float(v[key])
+                    except (TypeError, ValueError):
+                        continue
+                if rec:
+                    self.days[str(k)] = rec
+            self._trim(self.days)
 
+    @staticmethod
+    def _trim(table):
+        if len(table) > DAYS_MAX:
+            for key in sorted(table)[:-DAYS_MAX]:
+                del table[key]
+
+    # The rain table was capped at 800 days, which is two years and a bit:
+    # "all time" would have started forgetting in the station's third summer.
     def _trim_rain_days(self):
-        if len(self.rain_days) > 800:
-            for key in sorted(self.rain_days)[:-800]:
-                del self.rain_days[key]
+        self._trim(self.rain_days)
 
     def save(self, force=False):
         now = time.time()
@@ -422,6 +471,7 @@ class History:
                 json.dump({"samples": list(self.samples),
                            "rain_days": self.rain_days,
                            "temp_days": self.temp_days,
+                           "days": self.days,
                            "meta": self.meta}, f)
             os.replace(tmp, self.path)
         except OSError:
@@ -482,6 +532,302 @@ class History:
             return
         self.rain_days[day_iso] = self.rain_days.get(day_iso, 0.0) + float(mm)
         self._trim_rain_days()
+
+    # ── the daily record ──────────────────────────────────────────────────
+
+    @classmethod
+    def fold(cls, rec, ts, minutes, temp_c=None, pres_mb=None, wind_ms=None,
+             gust_ms=None, rh=None, uv=None, solar=None):
+        """Fold one reading, standing for `minutes` of the day, into a day's
+        summary. The live feed and the backfill both come through here, so a
+        day means the same thing whichever of them wrote it."""
+        def num(v):
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                return None
+            return v if math.isfinite(v) else None
+
+        minutes = max(0.0, num(minutes) or 0.0)
+        gust = num(gust_ms)
+        if gust is not None and gust > rec.get("gust", -1.0):
+            rec["gust"] = round(gust, 2)
+            if ts is not None:
+                rec["gust_t"] = float(int(ts))
+        for key, value in (("pmin", pres_mb), ("rhmin", rh)):
+            value = num(value)
+            if value is not None and value < rec.get(key, float("inf")):
+                rec[key] = round(value, 2)
+        for key, value in (("pmax", pres_mb), ("rhmax", rh), ("uv", uv),
+                           ("solar", solar)):
+            value = num(value)
+            if value is not None and value > rec.get(key, float("-inf")):
+                rec[key] = round(value, 2)
+        for key, count, value in (("tmean", "tn", temp_c),
+                                  ("wind", "wn", wind_ms)):
+            value = num(value)
+            if value is None:
+                continue
+            n = rec.get(count, 0.0)
+            rec[key] = round((rec.get(key, 0.0) * n + value) / (n + 1.0), 3)
+            rec[count] = n + 1.0
+        sun = num(solar)
+        if sun is not None and minutes:
+            rec["sun"] = round(rec.get("sun", 0.0) + sun * minutes / 60.0, 2)
+        rec["mins"] = round(rec.get("mins", 0.0) + minutes, 2)
+        return rec
+
+    def note_obs(self, day_iso, ts, **reading):
+        """A live reading. The minutes it stands for are however long it has
+        been since the last one — capped, so a morning the server spent
+        switched off is not credited to the first reading after it."""
+        ts = float(ts if ts is not None else time.time())
+        gap = 60.0 if self._last_obs_t is None else ts - self._last_obs_t
+        self._last_obs_t = ts
+        minutes = min(max(gap, 0.0), 300.0) / 60.0
+        self.fold(self.days.setdefault(day_iso, {}), ts, minutes, **reading)
+        self._trim(self.days)
+
+    def note_strikes(self, day_iso, count):
+        if not count:
+            return
+        rec = self.days.setdefault(day_iso, {})
+        rec["strikes"] = rec.get("strikes", 0.0) + float(count)
+
+    def merge_day(self, day_iso, other):
+        """Fold a summary built elsewhere — the backfill — into ours.
+
+        Extremes are a union: both are the station's own measurements, so the
+        higher gust is the day's gust whoever saw it. Totals and means cannot
+        be combined that way, so they are taken whole from whichever side
+        watched more of the day. Running it twice changes nothing.
+        """
+        if not other:
+            return False
+        rec = self.days.get(day_iso)
+        before = dict(rec) if rec else None
+        if rec is None:
+            rec = self.days[day_iso] = {}
+        if other.get("gust") is not None and other["gust"] > rec.get("gust", -1.0):
+            rec["gust"] = other["gust"]
+            if other.get("gust_t") is not None:
+                rec["gust_t"] = other["gust_t"]
+        for key in self.DAY_MINS:
+            if other.get(key) is not None:
+                rec[key] = min(rec.get(key, other[key]), other[key])
+        for key in self.DAY_MAXES:
+            if key != "gust" and other.get(key) is not None:
+                rec[key] = max(rec.get(key, other[key]), other[key])
+        if other.get("strikes"):
+            rec["strikes"] = max(rec.get("strikes", 0.0), other["strikes"])
+        if other.get("mins", 0.0) > rec.get("mins", 0.0) + 30.0:
+            for key in ("tmean", "tn", "wind", "wn", "sun", "mins"):
+                if other.get(key) is not None:
+                    rec[key] = other[key]
+        self._trim(self.days)
+        return rec != before
+
+    def day_rows(self, since=None, until=None):
+        """Every day anything is known about, oldest first, as one flat dict
+        each: the summary, plus the rain and temperature tables' figures."""
+        keys = set(self.days) | set(self.rain_days) | set(self.temp_days)
+        rows = []
+        for day in sorted(keys):
+            if (since and day < since) or (until and day > until):
+                continue
+            row = {"date": day}
+            row.update(self.days.get(day) or {})
+            t = self.temp_days.get(day)
+            if t:
+                row["lo"], row["hi"] = t["lo"], t["hi"]
+            # A day the station was up and measured nothing is a dry day; a
+            # day missing from every table is not a day we know about.
+            row["rain"] = self.rain_days.get(day, 0.0)
+            rows.append(row)
+        return rows
+
+    # What counts as rain. A Tempest reports dew and drizzle as hundredths of
+    # a millimetre; a "wet day" that nobody got wet on spoils a dry streak.
+    WET_MM = 0.25
+
+    def station_records(self, today=None):
+        """The station's records beyond hot and cold, each as
+        {"v": value, "date": "YYYY-MM-DD"} or None, for the year and for the
+        whole record: strongest gust, wettest day, lowest and highest
+        pressure, most strikes, sunniest day, and the widest swing between a
+        day's low and high."""
+        today = today or date.today()
+        rows = self.day_rows(until=today.isoformat())
+        year = today.strftime("%Y-")
+
+        def best(pool, key, pick, floor=None):
+            have = [r for r in pool if r.get(key) is not None
+                    and (floor is None or r[key] > floor)]
+            if not have:
+                return None
+            r = pick(have, key=lambda row: row[key])
+            return {"v": r[key], "date": r["date"]}
+
+        for r in rows:
+            if r.get("hi") is not None and r.get("lo") is not None:
+                r["swing"] = round(r["hi"] - r["lo"], 2)
+
+        out = {}
+        for scope, pool in (("year", [r for r in rows
+                                      if r["date"].startswith(year)]),
+                            ("all", rows)):
+            out[scope] = {
+                "gust": best(pool, "gust", max, 0.0),
+                "rain": best(pool, "rain", max, self.WET_MM),
+                "pmin": best(pool, "pmin", min),
+                "pmax": best(pool, "pmax", max),
+                "strikes": best(pool, "strikes", max, 0.0),
+                "sun": best(pool, "sun", max, 0.0),
+                "swing": best(pool, "swing", max),
+                "days": len(pool),
+            }
+        return out
+
+    def station_records_cached(self, ttl=60.0):
+        """The same, worked out at most once a minute. Every screen asks for a
+        snapshot every two seconds, and a record does not fall that often."""
+        now = time.time()
+        held = getattr(self, "_records_held", None)
+        if held is None or now - held[0] > ttl or held[1] != date.today():
+            held = (now, date.today(), self.station_records())
+            self._records_held = held
+        return held[2]
+
+    def almanac(self, today=None, warm_c=26.67, hot_c=32.22, frost_c=0.0,
+                plot_days=366):
+        """Where today stands in the station's own record.
+
+        Everything here is arithmetic on the daily tables, given the date, so
+        it can be tested against a made-up year. Normals are not applied
+        here: the page has them, and the unit the reader thinks in.
+        """
+        today = today or date.today()
+        iso = today.isoformat()
+        rows = self.day_rows(until=iso)
+        by_day = {r["date"]: r for r in rows}
+        this = by_day.get(iso, {"date": iso})
+        past = [r for r in rows if r["date"] < iso]           # oldest first
+
+        def ago(day):
+            return (today - date.fromisoformat(day)).days
+
+        # "The warmest since…": walk back until a day beat today. With
+        # nothing beating it, today is the warmest the record holds.
+        def since(key, beats):
+            if this.get(key) is None:
+                return None
+            span = 0
+            for r in reversed(past):
+                if r.get(key) is None:
+                    continue
+                if beats(r[key], this[key]):
+                    return {"date": r["date"], "days": ago(r["date"]),
+                            "record": False}
+                span += 1
+            return {"date": None, "days": span, "record": True} if span else None
+
+        # Streaks end at today. A dry streak survives a dry today; a day with
+        # no entry at all breaks either, since nothing is known about it.
+        wet = lambda r: r.get("rain", 0.0) >= self.WET_MM
+        dry_run = wet_run = 0
+        cursor = today
+        while cursor.isoformat() in by_day and not wet(by_day[cursor.isoformat()]):
+            dry_run += 1
+            cursor -= timedelta(days=1)
+        cursor = today
+        while cursor.isoformat() in by_day and wet(by_day[cursor.isoformat()]):
+            wet_run += 1
+            cursor -= timedelta(days=1)
+        last_wet = next((r for r in reversed(rows) if wet(r)), None)
+
+        # The cold season runs July to June, so an October frost and the
+        # April one that follows belong to the same winter.
+        season_year = today.year if today.month >= 7 else today.year - 1
+        season_from = "%d-07-01" % season_year
+        year_from = "%d-01-01" % today.year
+        frosty = lambda r: r.get("lo") is not None and r["lo"] <= frost_c
+        in_season = [r for r in rows if r["date"] >= season_from]
+        in_year = [r for r in rows if r["date"] >= year_from]
+        frosts = [r for r in in_season if frosty(r)]
+        spring = [r for r in in_year if frosty(r) and r["date"][5:7] <= "06"]
+        warms = [r for r in in_year if r.get("hi") is not None
+                 and r["hi"] >= warm_c]
+        hots = [r for r in in_year if r.get("hi") is not None
+                and r["hi"] >= hot_c]
+        mark = lambda r: None if r is None else {
+            "date": r["date"], "days": ago(r["date"]),
+            "lo": r.get("lo"), "hi": r.get("hi")}
+
+        # A year ago today, or the nearest the calendar allows on 29 February.
+        try:
+            then = today.replace(year=today.year - 1)
+        except ValueError:
+            then = today - timedelta(days=365)
+        year_ago = by_day.get(then.isoformat())
+
+        months = {}
+        for r in rows:
+            m = months.setdefault(r["date"][:7], {
+                "month": r["date"][:7], "days": 0, "rain": 0.0, "wet_days": 0,
+                "his": [], "los": [], "gust": None, "hi": None, "lo": None,
+                "strikes": 0.0})
+            m["days"] += 1
+            m["rain"] += r.get("rain", 0.0)
+            m["wet_days"] += 1 if wet(r) else 0
+            m["strikes"] += r.get("strikes", 0.0)
+            if r.get("hi") is not None:
+                m["his"].append(r["hi"])
+                m["hi"] = r["hi"] if m["hi"] is None else max(m["hi"], r["hi"])
+            if r.get("lo") is not None:
+                m["los"].append(r["lo"])
+                m["lo"] = r["lo"] if m["lo"] is None else min(m["lo"], r["lo"])
+            if r.get("gust") is not None:
+                m["gust"] = (r["gust"] if m["gust"] is None
+                             else max(m["gust"], r["gust"]))
+        table = []
+        for key in sorted(months)[-12:]:
+            m = months[key]
+            his, los = m.pop("his"), m.pop("los")
+            m["hi_avg"] = round(sum(his) / len(his), 2) if his else None
+            m["lo_avg"] = round(sum(los) / len(los), 2) if los else None
+            m["rain"] = round(m["rain"], 2)
+            table.append(m)
+
+        plot_from = (today - timedelta(days=plot_days - 1)).isoformat()
+        return {
+            "date": iso,
+            "from": rows[0]["date"] if rows else None,
+            "days": len(rows),
+            "today": this,
+            "year_ago": year_ago,
+            "warmest_since": since("hi", lambda a, b: a >= b),
+            "coldest_since": since("lo", lambda a, b: a <= b),
+            "gustiest_since": since("gust", lambda a, b: a >= b),
+            "dry_days": dry_run,
+            "wet_days": wet_run,
+            "last_rain": None if last_wet is None else {
+                "date": last_wet["date"], "days": ago(last_wet["date"]),
+                "mm": last_wet["rain"]},
+            "first_frost": mark(frosts[0] if frosts else None),
+            "last_frost": mark(spring[-1] if spring else None),
+            "frost_days": len(frosts),
+            "last_warm": mark(warms[-1] if warms else None),
+            "warm_days": len(warms),
+            "hot_days": len(hots),
+            "thresholds": {"warm_c": warm_c, "hot_c": hot_c,
+                           "frost_c": frost_c},
+            "months": table,
+            # For the year's picture: [date, low, high, rain, gust] per day.
+            "plot": [[r["date"], r.get("lo"), r.get("hi"),
+                      round(r.get("rain", 0.0), 2), r.get("gust")]
+                     for r in rows if r["date"] >= plot_from],
+            "records": self.station_records(today),
+        }
 
     # ── reading ───────────────────────────────────────────────────────────
 
@@ -641,6 +987,8 @@ class StationState:
         self.last_rapid_wind = {}
         self.strike_events = []          # [{ts, dist_km, energy}]
         self.strikes_today = 0
+        self._strikes_heard = 0          # evt_strike since the last obs
+        self._strikes_carried = 0        # heard, but not yet in any obs
         self.last_precip_time = None
         self.device_status = {}     # firmware, uptime, signal, sensor health
         self.hub_status = {}
@@ -806,7 +1154,8 @@ class StationState:
                 self.strike_events.append({"ts": evt[0], "dist_km": evt[1],
                                            "energy": evt[2]})
                 del self.strike_events[:-200]
-                self.strikes_today += 1
+                self._count_strikes(1)
+                self._strikes_heard += 1
 
         elif mtype == "evt_precip":
             evt = msg.get("evt") or []
@@ -845,19 +1194,49 @@ class StationState:
             self.last_packet_type = mtype or ""
         return known
 
+    def _count_strikes(self, n):
+        self.strikes_today += n
+        self.history.note_strikes(date.today().isoformat(), n)
+
     def _accumulate(self, rain_mm_last_min, strike_count):
+        """Rain and strikes from an observation.
+
+        A strike reaches us twice: at once as an evt_strike, and again inside
+        the next observation's count for the minute. Adding both made every
+        storm twice as violent as it was. The observation's count is the one
+        WeatherFlow's own record keeps, so it is the authority — but waiting
+        for it would hold the card a minute behind the flash. So events count
+        as they arrive, and the observation only adds what they missed.
+
+        A strike on the edge of the minute can be heard before one
+        observation and counted in the next, so an event nobody has claimed
+        is carried forward once, and then let go.
+        """
         try:
             if rain_mm_last_min:
                 self.history.add_rain(date.today().isoformat(),
                                       float(rain_mm_last_min))
-            if strike_count:
-                self.strikes_today += int(strike_count)
+            if strike_count is not None:
+                count = max(0, int(strike_count))
+                from_carried = min(count, self._strikes_carried)
+                from_heard = min(count - from_carried, self._strikes_heard)
+                self._strikes_carried = self._strikes_heard - from_heard
+                self._strikes_heard = 0
+                missed = count - from_carried - from_heard
+                if missed > 0:
+                    self._count_strikes(missed)
         except (TypeError, ValueError):
             pass
 
     def _record_history(self):
         d = self.data
-        self.history.note_temp(date.today().isoformat(), d.get("temp_c"))
+        today = date.today().isoformat()
+        self.history.note_temp(today, d.get("temp_c"))
+        self.history.note_obs(
+            today, time.time(), temp_c=d.get("temp_c"),
+            pres_mb=d.get("pres_mb"), wind_ms=d.get("wind_avg_ms"),
+            gust_ms=d.get("wind_gust_ms"), rh=d.get("rh"), uv=d.get("uv"),
+            solar=d.get("solar"))
         self.history.add({
             "temp_c":  d.get("temp_c"),
             "pres_mb": d.get("pres_mb"),
@@ -897,6 +1276,7 @@ class StationState:
             last_type = self.last_packet_type
             health = self.health()
             hist = self.history
+            station_records = hist.station_records_cached()
 
         now = time.time()
         temp_c, rh = d.get("temp_c"), d.get("rh")
@@ -1022,6 +1402,7 @@ class StationState:
                 "month": hist.temp_record("month"),
                 "year": hist.temp_record("year"),
                 "all": hist.temp_record("all"),
+                "station": station_records,
             },
             "moon": {
                 "age_days": age, "illum": illum, "name": moon_name,
@@ -1169,6 +1550,52 @@ def seed_demo_history(history, hours=24, step_s=480):
     today = date.today()
     history.rain_days.setdefault((today - timedelta(days=1)).isoformat(), 3.0)
     history.rain_days.setdefault((today - timedelta(days=12)).isoformat(), 1.3)
+    seed_demo_days(history, today)
+
+
+def seed_demo_days(history, today=None, days=400):
+    """A made-up year of daily record, so the demo's almanac has a past.
+
+    Only into an empty record: pointed at a real data directory by mistake,
+    the demo must not write a year of fiction over a station's history. The
+    same date always gets the same weather, so a screenshot taken twice
+    matches itself.
+    """
+    import random
+    if len(history.temp_days) > 5 or len(history.days) > 5:
+        return 0
+    today = today or date.today()
+    for back in range(days, 0, -1):
+        day = today - timedelta(days=back)
+        rnd = random.Random(day.toordinal())
+        season = math.cos(2 * math.pi * (day.timetuple().tm_yday - 201) / 365.25)
+        mean = 9.5 + 14.5 * season + rnd.gauss(0, 3.2)
+        spread = 5.0 + 2.0 * rnd.random()
+        iso = day.isoformat()
+        history.temp_days.setdefault(iso, {"lo": round(mean - spread, 2),
+                                           "hi": round(mean + spread, 2)})
+        stormy = rnd.random() < 0.30
+        if stormy:
+            history.rain_days.setdefault(
+                iso, round(rnd.expovariate(1 / 6.0) + 0.3, 2))
+        summer = max(0.0, season)
+        gust = 4.0 + rnd.expovariate(1 / 3.0) + (5.0 if stormy else 0.0)
+        mid = 1001.0 + rnd.gauss(0, 6.0) - (5.0 if stormy else 0.0)
+        history.days.setdefault(iso, {
+            "gust": round(gust, 2),
+            "gust_t": float(int(time.mktime(day.timetuple())) + 15 * 3600),
+            "pmin": round(mid - 2.5, 2), "pmax": round(mid + 2.5, 2),
+            "rhmin": 38.0, "rhmax": 92.0,
+            "uv": round(1.0 + 8.0 * summer * (0.4 if stormy else 1.0), 2),
+            "solar": round(320 + 620 * (season + 1) / 2, 2),
+            "sun": round((1500 + 5200 * (season + 1) / 2)
+                         * (0.35 if stormy else 1.0), 2),
+            "strikes": float(int(rnd.expovariate(1 / 40.0)))
+                       if stormy and summer > 0.4 and rnd.random() < 0.5 else 0.0,
+            "tmean": round(mean, 3), "tn": 1440.0,
+            "wind": round(gust / 2.6, 3), "wn": 1440.0, "mins": 1440.0,
+        })
+    return days
 
 
 # ────────────────────────────────────────────── Moon position & phases ─────

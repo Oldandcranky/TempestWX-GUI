@@ -701,7 +701,7 @@ body.show-net #netpage{display:flex}
 #netpage .tests .row a:hover{color:var(--accent)}
 body.tv #netpage .tests .row a{display:none}
 @media (max-width:720px){
-  #netpage{display:block;flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
+  #netpage{flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
   body.show-net #netpage{display:block}
   #netpage .card{container-type:inline-size;min-height:100%;overflow:visible}
   #netpage .netplot{flex:0 0 auto;height:clamp(120px,22dvh,220px)}
@@ -758,7 +758,11 @@ body.tv #outlook .period{font-size:calc(var(--fs-label)*1.15)}
      cqw cap in every phone size keeps that from mattering. */
   /* flex:none, or flex-basis 0 in the auto-height phone #app lets the box
      size to its content and the whole page scrolls instead of the card. */
-  #outlook{display:block;flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
+  /* No display here: that belongs to body.show-outlook alone. Set on the bare
+     id it outranked the display:none above, and a phone carried an empty,
+     screen-high outlook under its cards — and above the other two pages,
+     which therefore opened a screen below where anyone was looking. */
+  #outlook{flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
   body.show-outlook #outlook{display:block}
   #outlook .card{container-type:inline-size;min-height:100%;overflow:visible}
   #outlook .card-body{justify-content:flex-start;gap:clamp(6px,1.4dvh,14px)}
@@ -782,6 +786,73 @@ body.tv #outlook .period{font-size:calc(var(--fs-label)*1.15)}
   #outlook .fc-pop{grid-area:1/4/3/5;font-size:var(--fs-label);text-align:right;
                    min-width:2.6em}
   #outlook .caption{padding-bottom:.4em}
+}
+/* ── Almanac ─────────────────────────────────────────────────────────────
+   The third page built as one card the size of the grid. Where the outlook
+   looks ten days forward, this looks back over everything the station has
+   kept: today against the record, the year as a picture, the streaks and
+   season marks, the records, and a column for each month. Like the Internet
+   page, its data is fetched when it is opened. */
+#almanac{display:none;flex:1;min-height:0}
+body.show-almanac #grid{display:none}
+body.show-almanac #almanac{display:flex}
+#almanac .card{flex:1;min-width:0;
+  /* A card's type is sized for a card with five things on it. This one is the
+     size of the screen and has thirty, so the ordinary scale came out at its
+     ceiling and the fit pass had to drag everything to its floor to get it
+     in. Its own scale, set against its own height, starts where it fits. */
+  --fs-value:calc(clamp(.85rem,min(4.2cqh,3cqw),2.2rem)*var(--fit));
+  --fs-value-sm:calc(clamp(.75rem,min(3.4cqh,2.4cqw),1.8rem)*var(--fit));
+  --fs-label:calc(clamp(.6rem,min(2.3cqh,1.6cqw),1.3rem)*var(--fit));
+}
+body:not(.tv) #almanac .card{cursor:pointer}
+body:not(.tv) #almanac .card:hover .flipbtn,
+body:not(.tv) #card-records:hover .flipbtn{color:var(--accent)}
+#almanac .card-body{justify-content:flex-start;gap:clamp(4px,1.3cqh,12px)}
+#almanac .card-body > .row,#almanac .recgrid > .row{flex:0 0 auto}
+/* The plot is the flex child that takes what is going spare. */
+#almanac .yearplot{position:relative;flex:1 1 0;min-height:26cqh}
+#almanac .yearplot .ax{position:absolute;font-size:var(--fs-label);color:var(--faint);
+                       line-height:1;white-space:nowrap;background:var(--card);
+                       padding:0 .3em;border-radius:3px}
+#almanac .yearplot .ax.hi{left:.4em;top:1.5em}
+#almanac .yearplot .ax.lo{left:.4em;bottom:.2em}
+#almanac .yearplot .ax.mon{top:.1em;transform:translateX(-50%);background:none;padding:0;
+                           letter-spacing:.06em;text-transform:uppercase}
+#almanac .yearplot .tag{position:absolute;right:.4em;bottom:.2em;background:var(--card);
+                        padding:0 .3em;border-radius:3px;font-size:var(--fs-label);
+                        letter-spacing:.06em;text-transform:uppercase;color:var(--label);
+                        white-space:nowrap}
+/* Six records: one row where there is the width, two of three where not. */
+#almanac .recgrid{display:flex;flex-direction:column;gap:inherit;flex:0 0 auto}
+@container (min-width: 1100px){ #almanac .recgrid{flex-direction:row;gap:var(--gap)}
+                                #almanac .recgrid > .row{flex:1 1 0;min-width:0} }
+#almanac .months{flex:0 0 auto}
+#almanac .months .fc-day{gap:.12em}
+#almanac .months .fc-hl{font-size:min(var(--fs-value-sm),1.65cqw)}
+#almanac .months .fc-pop{font-size:min(var(--fs-label),1.5cqw)}
+#almanac .months .sub{font-size:min(var(--fs-label),1.35cqw)}
+#almanac .months .fc-day.now{border-color:var(--accent);background:
+  color-mix(in srgb,var(--accent) 7%,var(--inset))}
+@media (max-width:720px){
+  /* The same trade the outlook makes on a phone: readable and scrolling,
+     rather than everything squeezed onto one screen. */
+  #almanac{flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
+  body.show-almanac #almanac{display:block}
+  #almanac .card{container-type:inline-size;min-height:100%;overflow:visible;
+    --fs-value:calc(1.35rem*var(--fit));--fs-value-sm:calc(1.1rem*var(--fit));
+    --fs-label:calc(.72rem*var(--fit))}
+  #almanac .card-body{gap:clamp(6px,1.4dvh,14px)}
+  #almanac .yearplot{flex:0 0 auto;height:clamp(140px,26dvh,240px)}
+  #almanac .row.n4{flex-wrap:wrap;row-gap:.5em}
+  #almanac .row.n4 .cell{flex:1 1 45%}
+  #almanac .row.n4 .cell:nth-child(3){border-left:0}
+  #almanac .months{flex-wrap:wrap}
+  #almanac .months .fc-day{flex:1 1 22%}
+  #almanac .months .fc-hl{font-size:var(--fs-value-sm)}
+  #almanac .months .fc-pop,#almanac .months .sub{font-size:var(--fs-label)}
+  #almanac .sub{white-space:normal}
+  #almanac .caption{white-space:normal;padding-bottom:.4em}
 }
 /* Records card: the whole span the station has ever seen, with this month
    and today marked on it. */
@@ -815,6 +886,13 @@ body.tv #outlook .period{font-size:calc(var(--fs-label)*1.15)}
   position:absolute;top:1.15em;font-size:var(--fs-label);color:var(--label);
 }
 .gauge-span .end.lo{left:0} .gauge-span .end.hi{right:0}
+/* Four rows and the band do not fit a short card at any readable size — at
+   thirteen cards on a 720-line screen the card is 157 pixels tall. So the
+   rows go in order of how much each would be missed: the gust and the
+   wettest day first, since the almanac has them a tap away; then the month,
+   once the station is old enough for an all-time row to take its place. */
+@container (max-height: 200px){ #card-records .rec-station{display:none} }
+@container (max-height: 380px){ #card-records .rec-month.has-all{display:none} }
 
 body.show-settings #grid{display:none}
 body.show-settings #settings{display:block}
@@ -958,7 +1036,7 @@ body.show-settings #settings{display:block}
   .mid.arc,#card-sky .mid.arc{flex:1 1 auto;min-height:clamp(56px,16cqh,150px)}
   .ribbon{height:3.4em}
   footer{position:sticky;bottom:0;background:var(--bg);z-index:5}
-  #map,#settings,#outlook{height:calc(100vh - var(--chrome) - var(--gap));
+  #map,#settings,#outlook,#netpage,#almanac{height:calc(100vh - var(--chrome) - var(--gap));
                           height:calc(100dvh - var(--chrome) - var(--gap));
                           min-height:320px}
   /* iOS 26 Safari draws its address bar over the top of the page, see-through,
@@ -993,6 +1071,7 @@ body.show-settings #settings{display:block}
   <div id="settings" aria-hidden="true"></div>
   <div id="outlook" aria-hidden="true"></div>
   <div id="netpage" aria-hidden="true"></div>
+  <div id="almanac" aria-hidden="true"></div>
   <footer>
     <span class="clock" id="clock">--:--:--</span>
     <span class="date" id="date"></span>
@@ -1025,6 +1104,13 @@ body.show-settings #settings{display:block}
           <path d="M7 14V6M7 6 4.5 8.5M7 6l2.5 2.5M17 10v8M17 18l2.5-2.5M17 18l-2.5-2.5"
                 stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
                 stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button id="almBtn" title="Almanac (a)" aria-pressed="false">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+             style="vertical-align:-.12em">
+          <path d="M12 6.5C10 5 7 4.5 3.5 5v13.5c3.5-.5 6.5 0 8.5 1.5 2-1.5 5-2 8.5-1.5V5C17 4.5 14 5 12 6.5ZM12 6.5V20"
+                stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
         </svg>
       </button>
       <button id="setBtn" title="Settings (s)" aria-pressed="false">⚙</button>
@@ -2590,6 +2676,7 @@ function buildRecords(s){
   const r = s.records || {};
   const {card:c, body:b} = card("records","Records","thermometer","red",s.health);
   const year = r.year, month = r.month, all = r.all;
+  headAction(c, "Open the almanac", () => toggleAlmanac(true));
 
   if (!year) {
     b.appendChild(el("div","mid"));
@@ -2636,21 +2723,42 @@ function buildRecords(s){
   g.innerHTML = inner;
   b.appendChild(g);
 
+  // Which rows a short card keeps is decided in CSS, by the card's height:
+  // the classes say what each row is, and what else is there to stand in.
+  const older = !!(all && all.days > (year.days || 0));
   if (month) {
-    b.appendChild(cells([
+    const row = cells([
       {k:"Month high", v:fg(temp(month.hi[0])), u:prefs.temp, tone:"red",
        small:true, sub:nice(month.hi[1])},
       {k:"Month low", v:fg(temp(month.lo[0])), u:prefs.temp, tone:"cold",
        small:true, sub:nice(month.lo[1])},
-    ]));
+    ]);
+    row.classList.add("rec-month");
+    if (older) row.classList.add("has-all");
+    b.appendChild(row);
   }
-  if (all && all.days > (year.days || 0)) {
+  if (older) {
     b.appendChild(cells([
       {k:"All-time high", v:fg(temp(all.hi[0])), u:prefs.temp, tone:"red",
        small:true, sub:nice(all.hi[1])},
       {k:"All-time low", v:fg(temp(all.lo[0])), u:prefs.temp, tone:"cold",
        small:true, sub:nice(all.lo[1])},
     ]));
+  }
+
+  // Not everything worth remembering is a temperature. The rest of the
+  // station's records are on the almanac, which a tap on this card opens.
+  const st = (r.station || {}).year || {};
+  if (st.gust || st.rain) {
+    const row = cells([
+      {k:"Peak gust", v:st.gust ? fg(wind(st.gust.v)) : DASH,
+       u:st.gust ? prefs.wind : "", small:true, sub:st.gust ? nice(st.gust.date) : ""},
+      {k:"Wettest day", v:st.rain ? fx(rain(st.rain.v), rainDp()) : DASH,
+       u:st.rain ? prefs.rain : "", small:true, tone:"cold",
+       sub:st.rain ? nice(st.rain.date) : ""},
+    ]);
+    row.classList.add("rec-station");
+    b.appendChild(row);
   }
 
   const onRecord = (all && all.days) || year.days || 0;
@@ -3946,6 +4054,17 @@ function netWeekPlot(pts, kind, n){
   return wrap;
 }
 
+/* A page change, animated where the browser can. Starting one transition
+   while another is still running skips the first, and a skipped transition
+   rejects its promises; nobody was listening, so each became an "Uncaught
+   (in promise)" in the console. The swap itself still runs either way. */
+function pageTurn(swap){
+  if (!document.startViewTransition) return swap();
+  const t = document.startViewTransition(swap);
+  for (const p of [t.ready, t.finished, t.updateCallbackDone])
+    if (p && p.catch) p.catch(() => {});
+}
+
 let leavingNet = false;
 
 function toggleNet(force, fromHistory){
@@ -3962,15 +4081,336 @@ function toggleNet(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-net", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings", "show-outlook");
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac");
       renderNetPage();
       loadNetWeek();
     }
     document.getElementById("netpage").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("netBtn").setAttribute("aria-pressed", on ? "true" : "false");
   };
-  if (document.startViewTransition) document.startViewTransition(swap);
-  else swap();
+  pageTurn(swap);
+}
+
+/* ── Almanac ─────────────────────────────────────────────────────────────
+   Where today stands in the station's own record. The server does the date
+   arithmetic, which is where the off-by-one errors live and where the unit
+   tests are; this draws it. Two things stay on this side: the normals, which
+   the page already holds, and the round numbers — "the last 80° day" is a
+   thought in Fahrenheit, and the reader's unit is known only here. */
+let almanac = null, almanacAt = 0, almanacBusy = false, almanacKey = "", almanacDrawn = 0;
+let almanacBlind = false;        // drawn before the first state arrived
+const ALMANAC_MS = 5 * 60 * 1000;
+
+function almanacMarks(){
+  const f = prefs.temp === "°F";
+  const c = (v) => f ? (v - 32) * 5 / 9 : v;
+  const warm = f ? 80 : 25, hot = f ? 90 : 30;
+  return {warm_c: c(warm), hot_c: c(hot),
+          warm: fg(temp(c(warm)), 0) + "°", hot: fg(temp(c(hot)), 0) + "°"};
+}
+
+async function loadAlmanac(force){
+  const m = almanacMarks();
+  const key = m.warm_c.toFixed(2) + "/" + m.hot_c.toFixed(2);
+  if (almanacBusy) return almanac;
+  if (!force && almanac && key === almanacKey && Date.now() - almanacAt < ALMANAC_MS)
+    return almanac;
+  almanacBusy = true;
+  try {
+    const r = await fetch("api/almanac?warm=" + m.warm_c.toFixed(2) +
+                          "&hot=" + m.hot_c.toFixed(2), {cache: "no-store"});
+    almanac = await r.json();
+    almanacAt = Date.now();
+    almanacKey = key;
+  } catch (e) {
+    if (!almanac) almanac = {available: false, error: "Could not reach the dashboard server"};
+  } finally {
+    almanacBusy = false;
+  }
+  if (document.body.classList.contains("show-almanac")) renderAlmanac();
+  return almanac;
+}
+
+const isoDate = (iso) => { const p = iso.split("-").map(Number);
+                           return new Date(p[0], p[1] - 1, p[2]); };
+/* "Sep 7", with the year only when it is not this one. */
+function niceDay(iso){
+  if (!iso) return "";
+  const d = isoDate(iso);
+  return d.toLocaleDateString([], d.getFullYear() === new Date().getFullYear()
+    ? {month:"short", day:"numeric"} : {month:"short", day:"numeric", year:"numeric"});
+}
+const daysWord = (n) => n + (n === 1 ? " day" : " days");
+
+function renderAlmanac(){
+  const host = document.getElementById("almanac");
+  const s = last || {};
+  const a = almanac || {};
+  almanacDrawn = Date.now();
+  almanacBlind = !last;
+  const {card:c, body:b} = card("almanac", "Almanac", "sunrise", "amber", s.health || "waiting");
+  headAction(c, "Back to the cards", () => toggleAlmanac(false));
+  if (!a.available) {
+    b.appendChild(el("div", "mid"));
+    b.appendChild(caption(a.error || (almanac ? "Collecting — the almanac builds as the days pass"
+                                              : "Loading the almanac…")));
+    b.appendChild(el("div", "mid"));
+    host.replaceChildren(c);
+    return;
+  }
+  const m = almanacMarks();
+  const t = a.today || {}, y = a.year_ago;
+  const deg = (v) => v == null ? DASH : fg(temp(v), 0) + "°";
+  const normal = s.temp_normal_c;
+  const today = isoDate(a.date);
+
+  // Today, against the normal for the date and against this day last year.
+  const versus = (key) => {
+    const bits = [];
+    if (normal) bits.push("normal " + deg(monthlyAt(normal[key], today)));
+    if (y && y[key] != null) bits.push("last year " + deg(y[key]));
+    return bits.join(" · ");
+  };
+  const since = a.gustiest_since;
+  b.appendChild(cells([
+    {k:"High today", v:fg(temp(t.hi)), u:t.hi == null ? "" : prefs.temp, tone:"red",
+     sub:versus("hi")},
+    {k:"Low today", v:fg(temp(t.lo)), u:t.lo == null ? "" : prefs.temp, tone:"cold",
+     sub:versus("lo")},
+    {k:"Rain today", v:fx(rain(t.rain || 0), rainDp()), u:prefs.rain,
+     sub:y ? "last year " + fx(rain(y.rain || 0), rainDp()) + " " + prefs.rain : ""},
+    {k:"Peak gust", v:fg(wind(t.gust)), u:t.gust == null ? "" : prefs.wind,
+     sub:since && (since.record || since.days >= 7)
+       ? (since.record ? "strongest on record" : "strongest since " + niceDay(since.date))
+       : (t.gust_t ? "at " + clock(t.gust_t) : "")},
+  ]));
+
+  b.appendChild(yearPlot(a.plot || [], normal, a.date));
+
+  // Streaks and the marks of the season.
+  const streak = a.wet_days >= 2
+    ? {k:"Wet streak", v:String(a.wet_days), u:a.wet_days === 1 ? "day" : "days", tone:"cold",
+       sub:"rain every day since " + niceDay(shiftIso(a.date, -(a.wet_days - 1)))}
+    : {k:"Dry streak", v:String(a.dry_days), u:a.dry_days === 1 ? "day" : "days",
+       sub:a.last_rain ? "last rain " + niceDay(a.last_rain.date) + " · " +
+                         fx(rain(a.last_rain.mm), rainDp()) + " " + prefs.rain
+                       : "no rain on record"};
+  const notable = (x) => x && (x.record || x.days >= 7);
+  const standing =
+    notable(a.warmest_since) ? {k:"Warmest day since", tone:"red",
+      v:a.warmest_since.record ? "Records began" : niceDay(a.warmest_since.date),
+      sub:daysWord(a.warmest_since.days)}
+  : notable(a.coldest_since) ? {k:"Coldest day since", tone:"cold",
+      v:a.coldest_since.record ? "Records began" : niceDay(a.coldest_since.date),
+      sub:daysWord(a.coldest_since.days)}
+  : {k:"Last " + m.warm + " day",
+     v:!a.last_warm ? "None yet" : a.last_warm.days === 0 ? "Today" : niceDay(a.last_warm.date),
+     sub:a.last_warm && a.last_warm.days ? daysWord(a.last_warm.days) + " ago" : ""};
+  const spring = today.getMonth() < 6;
+  const frost = spring
+    ? {k:"Last frost", v:a.last_frost ? niceDay(a.last_frost.date) : "None yet",
+       sub:a.last_frost ? daysWord(a.last_frost.days) + " ago · " + deg(a.last_frost.lo) : ""}
+    : {k:"First frost", v:a.first_frost ? niceDay(a.first_frost.date) : "Not yet",
+       tone:a.first_frost ? "cold" : "",
+       sub:a.first_frost ? daysWord(a.frost_days) + " so far"
+         : a.last_frost ? "spring's last " + niceDay(a.last_frost.date) : ""};
+  b.appendChild(cells([
+    Object.assign({small:true}, streak),
+    Object.assign({small:true}, standing),
+    Object.assign({small:true}, frost),
+    {k:m.hot + " days", v:String(a.hot_days), small:true, tone:a.hot_days ? "red" : "",
+     sub:a.warm_days + " reached " + m.warm},
+  ]));
+
+  // The station's records. All-time, which for a young station is this year.
+  const rec = (a.records || {}).all || {};
+  const recCell = (k, r, v, u, tone) => ({k, small:true, tone:r ? tone : "",
+    v:r ? v(r.v) : DASH, u:r ? u : "", sub:r ? niceDay(r.date) : ""});
+  const grid2 = el("div", "recgrid");
+  grid2.appendChild(cells([
+    recCell("Strongest gust", rec.gust, (x) => fg(wind(x)), prefs.wind, "accent"),
+    recCell("Wettest day", rec.rain, (x) => fx(rain(x), rainDp()), prefs.rain, "cold"),
+    recCell("Lowest pressure", rec.pmin, (x) => fx(pres(x), presDp()), prefs.pres, ""),
+  ]));
+  grid2.appendChild(cells([
+    recCell("Most strikes", rec.strikes, (x) => String(Math.round(x)), "", "yellow"),
+    recCell("Sunniest day", rec.sun, (x) => fx(x / 1000, 1), "kWh/m²", "amber"),
+    recCell("Widest swing", rec.swing, (x) => fg(tempDelta(x), 0), prefs.temp === "K" ? "K" : prefs.temp, ""),
+  ]));
+  b.appendChild(grid2);
+
+  // A column a month: average high and low, rain against the normal, gust.
+  const months = a.months || [];
+  if (months.length) {
+    const strip = el("div", "fc-strip months");
+    const rainNormal = s.rain_monthly_in;
+    for (const mo of months) {
+      const d = isoDate(mo.month + "-01");
+      const cell = el("div", "fc-day" + (mo.month === a.date.slice(0, 7) ? " now" : ""));
+      const norm = rainNormal ? rainNormal[d.getMonth()] * 25.4 : null;
+      // A month in progress is measured against the share of it that has passed.
+      const dim = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      const share = mo.month === a.date.slice(0, 7) ? today.getDate() / dim
+                  : Math.min(1, mo.days / dim);
+      const pct = norm ? Math.round(mo.rain / (norm * share) * 100) : null;
+      cell.innerHTML =
+        '<div class="k">' + esc(d.toLocaleDateString([], {month:"short"})) + '</div>' +
+        '<div class="fc-hl"><span class="red">' + esc(deg(mo.hi_avg)) +
+          '</span><span class="sep">/</span><span class="cold">' + esc(deg(mo.lo_avg)) + '</span></div>' +
+        '<div class="fc-pop">' + esc(fx(rain(mo.rain), rainDp()) + " " + prefs.rain) + '</div>' +
+        '<div class="sub">' + (pct == null ? "" : esc(pct + "%")) + '</div>';
+      cell.title = mo.days + " days on record" + (pct == null ? "" : " · rain " + pct + "% of normal");
+      strip.appendChild(cell);
+    }
+    b.appendChild(strip);
+  }
+
+  const bits = [daysWord(a.days) + " on record, since " + niceDay(a.from)];
+  if (a.backfill === "ok") bits.push("filled in from WeatherFlow");
+  if (s.rain_monthly_in) bits.push("% is rain against normal");
+  b.appendChild(caption(bits.join(" · "), "faint"));
+  host.replaceChildren(c);
+  fitCards();                // render() skips its own pass while this is up
+}
+
+function shiftIso(iso, days){
+  const d = isoDate(iso);
+  d.setDate(d.getDate() + days);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" +
+         String(d.getDate()).padStart(2, "0");
+}
+
+/* The year as a picture: each day's low to high as a band, the normal range
+   dashed behind it — the outlook's encoding, run backwards — and the rain as
+   bars standing on the floor. A day the station has nothing for is a gap in
+   the line, not a guess. */
+function yearPlot(rows, normal, todayIso){
+  const wrap = el("div", "yearplot");
+  const W = 100, H = 40, pad = 3;
+  const DAY = 86400000;
+  const end = isoDate(todayIso);
+  const have = rows.filter(r => r[1] != null || r[2] != null);
+  if (have.length < 2) { wrap.appendChild(caption("The picture starts with the second day")); return wrap; }
+  const first = isoDate(rows[0][0]);
+  const n = Math.max(30, Math.round((end - first) / DAY) + 1);
+  const start = new Date(end); start.setDate(start.getDate() - (n - 1));
+  const idx = (d) => Math.round((d - start) / DAY);
+  const x = (i) => (i + 0.5) / n * W;
+
+  let lo = Infinity, hi = -Infinity, wettest = 0;
+  for (const r of rows) {
+    if (r[1] != null) lo = Math.min(lo, r[1]);
+    if (r[2] != null) hi = Math.max(hi, r[2]);
+    wettest = Math.max(wettest, r[3] || 0);
+  }
+  let bHi = null, bLo = null;
+  if (normal) {
+    bHi = []; bLo = [];
+    for (let i = 0; i < n; i += 3) {             // a smooth curve needs no more
+      const d = new Date(start); d.setDate(d.getDate() + i);
+      bHi.push([i, monthlyAt(normal.hi, d)]); bLo.push([i, monthlyAt(normal.lo, d)]);
+    }
+    for (const [, v] of bHi) hi = Math.max(hi, v);
+    for (const [, v] of bLo) lo = Math.min(lo, v);
+  }
+  if (hi - lo < 3) { const mid = (hi + lo) / 2; lo = mid - 1.5; hi = mid + 1.5; }
+  const yv = (v) => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
+  const at = (i, v) => x(i).toFixed(2) + " " + yv(v).toFixed(2);
+
+  let art = "", labels = "";
+  // month rules, each named at its head
+  const tick = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+  for (let k = 0; tick <= end; tick.setMonth(tick.getMonth() + 1), k++) {
+    const rx = idx(tick) / n * W;
+    art += '<path d="M' + rx.toFixed(2) + ' 0 V' + H + '" stroke="var(--rule)" ' +
+           'stroke-dasharray="1 3" vector-effect="non-scaling-stroke"/>';
+    const width = new Date(tick.getFullYear(), tick.getMonth() + 1, 0).getDate() / n * 100;
+    const mid = rx + width / 2;
+    if (mid < 97)
+      labels += '<span class="ax mon" style="left:' + mid.toFixed(2) + '%">' +
+                esc(tick.toLocaleDateString([], {month:"short"})) + '</span>';
+  }
+  if (bHi) {
+    const top = bHi.map(([i, v]) => at(i, v)), bot = bLo.map(([i, v]) => at(i, v));
+    const edge = (pts) => '<path d="M' + pts.join("L") + '" fill="none" stroke="var(--label)" ' +
+      'stroke-width="1" stroke-dasharray="3 3" opacity=".55" vector-effect="non-scaling-stroke"/>';
+    art += '<path d="M' + top.join("L") + "L" + bot.slice().reverse().join("L") + 'Z" ' +
+           'fill="var(--label)" fill-opacity=".10" stroke="none"/>' + edge(top) + edge(bot);
+  }
+  // rain: the wettest day stands a third of the plot tall
+  if (wettest > 0) {
+    const bw = Math.max(0.12, W / n * 0.7);
+    for (const r of rows) {
+      if (!r[3]) continue;
+      const h = r[3] / wettest * H * 0.33;
+      art += '<rect x="' + (x(idx(isoDate(r[0]))) - bw / 2).toFixed(2) + '" y="' + (H - h).toFixed(2) +
+             '" width="' + bw.toFixed(2) + '" height="' + h.toFixed(2) +
+             '" fill="var(--cold)" fill-opacity=".45"/>';
+    }
+  }
+  // the band between low and high, in runs of consecutive days
+  const byIdx = new Map(rows.map(r => [idx(isoDate(r[0])), r]));
+  const line = (col, tone) => {
+    let d = "", pen = false;
+    for (let i = 0; i < n; i++) {
+      const r = byIdx.get(i);
+      if (!r || r[col] == null) { pen = false; continue; }
+      d += (pen ? "L" : "M") + at(i, r[col]);
+      pen = true;
+    }
+    return '<path d="' + d + '" fill="none" stroke="var(--' + tone + ')" stroke-width="1.5" ' +
+      'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+  };
+  let fill = "", run = [];
+  const flush = () => {
+    if (run.length > 1)
+      fill += '<path d="M' + run.map(i => at(i, byIdx.get(i)[2])).join("L") + "L" +
+              run.slice().reverse().map(i => at(i, byIdx.get(i)[1])).join("L") + 'Z" ' +
+              'fill="var(--amber)" fill-opacity=".16" stroke="none"/>';
+    run = [];
+  };
+  for (let i = 0; i < n; i++) {
+    const r = byIdx.get(i);
+    if (r && r[1] != null && r[2] != null) run.push(i); else flush();
+  }
+  flush();
+
+  wrap.innerHTML =
+    '<svg class="plot" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+      art + fill + line(2, "red") + line(1, "cold") + '</svg>' + labels +
+    '<span class="ax hi">' + esc(fg(temp(hi), 0)) + '°</span>' +
+    '<span class="ax lo">' + esc(fg(temp(lo), 0)) + '°</span>' +
+    '<span class="tag">High <b style="color:var(--red)">—</b> Low <b style="color:var(--cold)">—</b>' +
+      (wettest > 0 ? ' Rain <b style="color:var(--cold);opacity:.6">▮</b> tallest ' +
+        esc(fx(rain(wettest), rainDp()) + " " + prefs.rain) : '') + '</span>';
+  return wrap;
+}
+
+let leavingAlmanac = false;
+
+function toggleAlmanac(force, fromHistory){
+  const open = document.body.classList.contains("show-almanac");
+  const on = force != null ? force : !open;
+  if (!fromHistory) {
+    const ours = !!(history.state && history.state.almanac);
+    if (!on && ours) {
+      if (!leavingAlmanac) { leavingAlmanac = true; history.back(); }
+      return;                               // popstate does the closing
+    }
+    if (on && !ours) history.pushState({almanac: true}, "");
+  }
+  if (on) outlookSince = Date.now();
+  const swap = () => {
+    document.body.classList.toggle("show-almanac", on);
+    if (on) {
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-net");
+      renderAlmanac();
+      loadAlmanac();
+    }
+    document.getElementById("almanac").setAttribute("aria-hidden", on ? "false" : "true");
+    document.getElementById("almBtn").setAttribute("aria-pressed", on ? "true" : "false");
+  };
+  pageTurn(swap);
 }
 
 /* ── render loop ─────────────────────────────────────────────────────── */
@@ -4011,6 +4451,11 @@ const TESTALL_STEPS = [
   // step now lasts until the next click.
   {label: "Internet card, turned over",
    enter: () => { netFlip(true); clearTimeout(netFlipTimer); }, leave: () => netFlip(false)},
+  // Before the outlook, and without a history entry of its own. Leaving a
+  // page goes back through history, which lands a moment later; a page that
+  // pushed its own entry in that moment would be closed by the other's Back.
+  {label: "Almanac",
+   enter: () => toggleAlmanac(true, true), leave: () => toggleAlmanac(false, true)},
   {label: "Ten-day outlook",
    enter: () => toggleOutlook(true), leave: () => toggleOutlook(false)},
 ];
@@ -4057,7 +4502,19 @@ function render(s){
   if (document.body.classList.contains("show-map") ||
       document.body.classList.contains("show-settings") ||
       document.body.classList.contains("show-net") ||
+      document.body.classList.contains("show-almanac") ||
       document.body.classList.contains("show-outlook")) {
+    if (document.body.classList.contains("show-almanac")) {
+      // The same walk home as the outlook's, and a redraw once a minute: a
+      // year of days does not change every two seconds, and is a lot of SVG
+      // to rebuild for a television.
+      if (document.body.classList.contains("tv") &&
+          Date.now() - outlookSince > OUTLOOK_IDLE_MS && !TESTALL) toggleAlmanac(false);
+      // A page restored by a reload is drawn before there is a state to draw
+      // it from — no normals, no station health — so that one is redone now.
+      else if (almanacBlind) renderAlmanac();
+      else if (Date.now() - almanacDrawn > 60000) { renderAlmanac(); loadAlmanac(); }
+    }
     if (document.body.classList.contains("show-outlook")) {
       // A wall display left on the outlook goes back to the cards by itself.
       if (document.body.classList.contains("tv") &&
@@ -4347,8 +4804,7 @@ function toggleMap(force){
     document.getElementById("mapBtn").setAttribute("aria-pressed", on ? "true" : "false");
     if (on) ensureMap();
   };
-  if (document.startViewTransition) document.startViewTransition(swap);
-  else swap();
+  pageTurn(swap);
 }
 
 function toggleSettings(force){
@@ -4361,8 +4817,7 @@ function toggleSettings(force){
     document.getElementById("setBtn").setAttribute("aria-pressed", on ? "true" : "false");
     if (on) renderSettings();
   };
-  if (document.startViewTransition) document.startViewTransition(swap);
-  else swap();
+  pageTurn(swap);
 }
 
 /* The outlook is a page of its own as far as the browser is concerned: opening
@@ -4390,21 +4845,25 @@ function toggleOutlook(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-outlook", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings");
+      document.body.classList.remove("show-map", "show-settings", "show-almanac");
       renderOutlook();
     }
     document.getElementById("outlook").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("outBtn").setAttribute("aria-pressed", on ? "true" : "false");
   };
-  if (document.startViewTransition) document.startViewTransition(swap);
-  else swap();
+  pageTurn(swap);
 }
 document.getElementById("outBtn").addEventListener("click", () => toggleOutlook());
 document.getElementById("netBtn").addEventListener("click", () => toggleNet());
+document.getElementById("almBtn").addEventListener("click", () => toggleAlmanac());
 
 window.addEventListener("popstate", () => {
   leavingOutlook = false;
   leavingNet = false;
+  leavingAlmanac = false;
+  const alm = !!(history.state && history.state.almanac);
+  if (alm !== document.body.classList.contains("show-almanac"))
+    toggleAlmanac(alm, true);
   const outlook = !!(history.state && history.state.outlook);
   if (outlook !== document.body.classList.contains("show-outlook"))
     toggleOutlook(outlook, true);
@@ -4429,6 +4888,16 @@ document.getElementById("outlook").addEventListener("click", () => {
 document.getElementById("grid").addEventListener("click", (e) => {
   if (!e.target.closest("#card-fc")) return;
   toggleOutlook(true);
+});
+
+/* The Records card and the almanac are the same pair: the card is the way
+   in, and the whole page is the way back, since nothing on it is clickable. */
+document.getElementById("grid").addEventListener("click", (e) => {
+  if (!e.target.closest("#card-records")) return;
+  toggleAlmanac(true);
+});
+document.getElementById("almanac").addEventListener("click", () => {
+  toggleAlmanac(false);
 });
 
 /* A tap is not a grab. Cards act on a tap anywhere now, and a card is also
@@ -4477,6 +4946,9 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "w") toggleMap();
   if (e.key === "d") toggleOutlook();
   if (e.key === "n") toggleNet();
+  if (e.key === "a") toggleAlmanac();
+  if (e.key === "Escape" && document.body.classList.contains("show-almanac"))
+    toggleAlmanac(false);
   if (e.key === "Escape" && document.body.classList.contains("show-net"))
     toggleNet(false);
   if (e.key === "Escape" && document.body.classList.contains("show-outlook"))
@@ -4508,6 +4980,7 @@ document.addEventListener("keydown", (e) => {
   if (history.state && history.state.outlook) toggleOutlook(true, true);
   if (history.state && history.state.netpage) toggleNet(true, true);
   loadPrefs(null);
+  if (history.state && history.state.almanac) toggleAlmanac(true, true);
   tickClock();
   setInterval(tickClock, 1000);
   loadConfig();

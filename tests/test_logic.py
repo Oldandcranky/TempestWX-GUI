@@ -660,5 +660,274 @@ class StationHealth(unittest.TestCase):
         self.assertEqual(self.st.health(), "offline")
 
 
+def blank_history():
+    """A History that writes to a throwaway directory, not into the repo."""
+    import tempfile
+    return core.History(os.path.join(tempfile.mkdtemp(), "history.json"))
+
+
+def obs_st(strikes=0, gust=5.0, temp=20.0, pres=1000.0, solar=600):
+    return {"type": "obs_st", "serial_number": "ST-TEST",
+            "obs": [[0, 1.0, 2.0, gust, 180, 3, pres, temp, 50, 40000, 4.0,
+                     solar, 0.0, 0, 8, strikes, 2.6, 1]]}
+
+
+STRIKE = {"type": "evt_strike", "serial_number": "ST-TEST",
+          "evt": [0, 8, 4200]}
+
+
+class StrikeCounting(unittest.TestCase):
+    """A strike arrives twice — as an event, then inside the next
+    observation's count. Both were added, so every storm counted double."""
+
+    def setUp(self):
+        self.st = core.StationState(history=blank_history())
+
+    def test_an_event_and_its_observation_are_one_strike(self):
+        self.st.handle(STRIKE)
+        self.st.handle(obs_st(strikes=1))
+        self.assertEqual(self.st.strikes_today, 1)
+
+    def test_a_lost_event_is_made_up_from_the_observation(self):
+        self.st.handle(STRIKE)
+        self.st.handle(obs_st(strikes=3))
+        self.assertEqual(self.st.strikes_today, 3)
+
+    def test_it_counts_at_once_not_a_minute_later(self):
+        self.st.handle(STRIKE)
+        self.assertEqual(self.st.strikes_today, 1)
+
+    def test_a_strike_on_the_edge_of_the_minute(self):
+        # Heard before one observation, counted in the next.
+        self.st.handle(STRIKE)
+        self.st.handle(obs_st(strikes=0))
+        self.st.handle(obs_st(strikes=1))
+        self.assertEqual(self.st.strikes_today, 1)
+
+    def test_an_unclaimed_event_is_let_go_after_one_observation(self):
+        self.st.handle(STRIKE)
+        self.st.handle(obs_st(strikes=0))
+        self.st.handle(obs_st(strikes=0))
+        self.st.handle(obs_st(strikes=1))
+        self.assertEqual(self.st.strikes_today, 2)
+
+    def test_the_day_keeps_the_same_count(self):
+        self.st.handle(STRIKE)
+        self.st.handle(obs_st(strikes=2))
+        today = datetime.date.today().isoformat()
+        self.assertEqual(self.st.history.days[today]["strikes"], 2)
+
+
+class DailyRecord(unittest.TestCase):
+    """What is left of a day once its samples have aged out."""
+
+    def test_live_readings_build_the_day(self):
+        st = core.StationState(history=blank_history())
+        st.handle(obs_st(gust=5.0, pres=1002.0, temp=18.0))
+        st.handle(obs_st(gust=14.0, pres=998.0, temp=24.0))
+        st.handle(obs_st(gust=7.0, pres=1000.0, temp=21.0))
+        day = st.history.days[datetime.date.today().isoformat()]
+        self.assertEqual(day["gust"], 14.0)
+        self.assertEqual((day["pmin"], day["pmax"]), (998.0, 1002.0))
+        self.assertAlmostEqual(day["tmean"], 21.0)
+
+    def test_a_long_silence_is_not_credited_to_the_next_reading(self):
+        h = blank_history()
+        h.note_obs("2026-07-01", 1000.0, solar=600)
+        h.note_obs("2026-07-01", 1000.0 + 6 * 3600, solar=600)
+        # one minute for the first, five at most for the second
+        self.assertEqual(h.days["2026-07-01"]["mins"], 6.0)
+        self.assertAlmostEqual(h.days["2026-07-01"]["sun"], 60.0)
+
+    def test_it_survives_a_restart(self):
+        h = blank_history()
+        h.note_obs("2026-07-01", 1000.0, gust_ms=12.5, pres_mb=1001.0)
+        h.note_strikes("2026-07-01", 4)
+        h.save(force=True)
+        again = core.History(h.path)
+        self.assertEqual(again.days["2026-07-01"]["gust"], 12.5)
+        self.assertEqual(again.days["2026-07-01"]["strikes"], 4)
+
+    def test_a_damaged_entry_is_dropped_not_fatal(self):
+        import json
+        h = blank_history()
+        with open(h.path, "w") as f:
+            json.dump({"days": {"2026-07-01": {"gust": "windy"},
+                                "2026-07-02": "nonsense",
+                                "2026-07-03": {"gust": 9.0}}}, f)
+        self.assertEqual(list(core.History(h.path).days), ["2026-07-03"])
+
+    def test_rain_is_no_longer_forgotten_after_800_days(self):
+        h = blank_history()
+        start = datetime.date(2020, 1, 1)
+        for i in range(1500):
+            h.add_rain((start + datetime.timedelta(days=i)).isoformat(), 1.0)
+        self.assertEqual(len(h.rain_days), 1500)
+
+
+class MergingTheBackfill(unittest.TestCase):
+    """WeatherFlow's record folded into ours, without losing what we saw."""
+
+    def setUp(self):
+        self.h = blank_history()
+
+    def test_an_empty_day_is_filled(self):
+        self.assertTrue(self.h.merge_day("2026-06-01", {"gust": 9.0, "mins": 1440.0}))
+        self.assertEqual(self.h.days["2026-06-01"]["gust"], 9.0)
+
+    def test_extremes_are_a_union(self):
+        self.h.days["2026-06-01"] = {"gust": 12.0, "gust_t": 5.0, "pmin": 990.0,
+                                     "pmax": 1001.0, "mins": 1440.0}
+        self.h.merge_day("2026-06-01", {"gust": 9.0, "gust_t": 7.0, "pmin": 988.0,
+                                        "pmax": 1000.0, "mins": 1440.0})
+        day = self.h.days["2026-06-01"]
+        self.assertEqual((day["gust"], day["gust_t"]), (12.0, 5.0))
+        self.assertEqual((day["pmin"], day["pmax"]), (988.0, 1001.0))
+
+    def test_totals_come_from_whoever_watched_more_of_the_day(self):
+        # We were restarted at noon: six hours seen, and WeatherFlow saw all.
+        self.h.days["2026-06-01"] = {"sun": 900.0, "tmean": 25.0, "mins": 360.0}
+        self.h.merge_day("2026-06-01", {"sun": 5200.0, "tmean": 19.0, "mins": 1440.0})
+        self.assertEqual(self.h.days["2026-06-01"]["sun"], 5200.0)
+        self.assertEqual(self.h.days["2026-06-01"]["tmean"], 19.0)
+
+    def test_a_day_we_saw_whole_keeps_its_own_totals(self):
+        self.h.days["2026-06-01"] = {"sun": 5100.0, "mins": 1438.0}
+        self.h.merge_day("2026-06-01", {"sun": 5200.0, "mins": 1440.0})
+        self.assertEqual(self.h.days["2026-06-01"]["sun"], 5100.0)
+
+    def test_twice_is_the_same_as_once(self):
+        wf = {"gust": 9.0, "pmin": 990.0, "strikes": 3.0, "sun": 100.0, "mins": 1440.0}
+        self.h.merge_day("2026-06-01", dict(wf))
+        once = dict(self.h.days["2026-06-01"])
+        self.assertFalse(self.h.merge_day("2026-06-01", dict(wf)))
+        self.assertEqual(self.h.days["2026-06-01"], once)
+
+    def test_a_window_of_five_minute_buckets_is_read_as_such(self):
+        rows = [[t] for t in (0, 300, 600, 4200, 4500)]      # with a hole in it
+        self.assertEqual(server.Backfill.bucket_minutes(rows), 5.0)
+        self.assertEqual(server.Backfill.bucket_minutes([[0]]), 1.0)
+
+    def test_a_weatherflow_row_lands_in_the_right_fields(self):
+        row = [1750000000, 0.5, 2.0, 11.0, 200, 3, 995.5, 27.0, 60, 50000,
+               7.5, 800, 0.0, 0, 5, 2, 2.6, 5]
+        day = {}
+        server.Backfill.fold_obs(day, row, 5.0)
+        self.assertEqual((day["gust"], day["pmin"], day["uv"], day["strikes"]),
+                         (11.0, 995.5, 7.5, 2.0))
+        self.assertAlmostEqual(day["sun"], 800 * 5 / 60.0, places=1)
+        self.assertEqual(day["mins"], 5.0)
+
+
+class Almanac(unittest.TestCase):
+    """Where today stands in the record. All of it is date arithmetic, which
+    is exactly the kind that is wrong by one."""
+
+    TODAY = datetime.date(2026, 9, 21)
+
+    def setUp(self):
+        self.h = blank_history()
+
+    def day(self, back, lo=10.0, hi=20.0, rain=0.0, **summary):
+        iso = (self.TODAY - datetime.timedelta(days=back)).isoformat()
+        self.h.temp_days[iso] = {"lo": lo, "hi": hi}
+        if rain:
+            self.h.rain_days[iso] = rain
+        if summary:
+            self.h.days[iso] = dict(summary)
+        return iso
+
+    def almanac(self, **kw):
+        return self.h.almanac(today=self.TODAY, **kw)
+
+    def test_a_dry_streak_counts_today_and_stops_at_the_rain(self):
+        for back in range(0, 4):
+            self.day(back)
+        self.day(4, rain=6.0)
+        self.day(5)
+        a = self.almanac()
+        self.assertEqual((a["dry_days"], a["wet_days"]), (4, 0))
+        self.assertEqual(a["last_rain"]["days"], 4)
+
+    def test_dew_does_not_end_a_dry_streak(self):
+        self.day(0); self.day(1, rain=0.05); self.day(2)
+        self.assertEqual(self.almanac()["dry_days"], 3)
+
+    def test_a_day_nothing_is_known_about_ends_a_streak(self):
+        self.day(0); self.day(1); self.day(3)
+        self.assertEqual(self.almanac()["dry_days"], 2)
+
+    def test_warmest_since(self):
+        self.day(0, hi=31.0)
+        self.day(1, hi=25.0); self.day(2, hi=30.9); self.day(3, hi=33.0)
+        got = self.almanac()["warmest_since"]
+        self.assertEqual((got["days"], got["record"]), (3, False))
+
+    def test_warmest_the_record_holds(self):
+        self.day(0, hi=35.0); self.day(1, hi=25.0); self.day(2, hi=30.0)
+        got = self.almanac()["warmest_since"]
+        self.assertEqual((got["date"], got["days"], got["record"]), (None, 2, True))
+
+    def test_first_frost_belongs_to_the_winter_not_the_year(self):
+        self.day(0)
+        self.day(160, lo=-3.0)                       # 14 April: last spring's
+        a = self.almanac()
+        self.assertIsNone(a["first_frost"])
+        self.assertEqual(a["last_frost"]["days"], 160)
+        self.day(2, lo=-0.5)
+        a = self.almanac()
+        self.assertEqual((a["first_frost"]["days"], a["frost_days"]), (2, 1))
+
+    def test_the_warm_threshold_is_the_readers(self):
+        self.day(0, hi=24.0); self.day(3, hi=26.0); self.day(9, hi=28.0)
+        self.assertEqual(self.almanac()["last_warm"]["days"], 9)
+        self.assertEqual(self.almanac(warm_c=25.0)["last_warm"]["days"], 3)
+
+    def test_a_year_ago(self):
+        self.day(0)
+        self.assertIsNone(self.almanac()["year_ago"])
+        iso = self.day(365, hi=17.5)
+        self.assertEqual(iso, "2025-09-21")
+        self.assertEqual(self.almanac()["year_ago"]["hi"], 17.5)
+
+    def test_months_average_the_days_they_have(self):
+        self.day(0, lo=10, hi=20, rain=5.0)
+        self.day(1, lo=12, hi=24)
+        self.day(30, lo=15, hi=30, rain=2.0, gust=14.0)
+        months = {m["month"]: m for m in self.almanac()["months"]}
+        self.assertEqual(months["2026-09"]["hi_avg"], 22.0)
+        self.assertEqual(months["2026-09"]["wet_days"], 1)
+        self.assertEqual(months["2026-08"]["gust"], 14.0)
+
+    def test_records_name_the_day(self):
+        self.day(0, gust=6.0, pmin=1001.0)
+        windy = self.day(40, gust=21.5, pmin=982.0, strikes=55.0)
+        wet = self.day(90, rain=48.0)
+        last_year = self.day(300, gust=30.0)
+        rec = self.h.station_records(today=self.TODAY)
+        self.assertEqual(rec["year"]["gust"], {"v": 21.5, "date": windy})
+        self.assertEqual(rec["all"]["gust"]["date"], last_year)
+        self.assertEqual(rec["year"]["rain"]["date"], wet)
+        self.assertEqual(rec["year"]["pmin"]["v"], 982.0)
+        self.assertEqual(rec["year"]["strikes"]["v"], 55.0)
+
+    def test_nothing_recorded_is_none_not_zero(self):
+        self.day(0)
+        rec = self.h.station_records(today=self.TODAY)["year"]
+        self.assertIsNone(rec["gust"])
+        self.assertIsNone(rec["rain"])
+        self.assertIsNone(rec["strikes"])
+
+    def test_an_empty_record_does_not_raise(self):
+        a = self.almanac()
+        self.assertEqual((a["days"], a["dry_days"], a["plot"]), (0, 0, []))
+
+    def test_the_demo_year_stays_out_of_a_real_record(self):
+        for back in range(10):
+            self.day(back)
+        self.assertEqual(core.seed_demo_days(self.h, self.TODAY), 0)
+        self.assertEqual(len(self.h.temp_days), 10)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

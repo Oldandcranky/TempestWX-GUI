@@ -4306,7 +4306,12 @@ function yearPlot(rows, normal, todayIso){
   let bHi = null, bLo = null;
   if (normal) {
     bHi = []; bLo = [];
-    for (let i = 0; i < n; i += 3) {             // a smooth curve needs no more
+    // Every third day is enough for a smooth curve — and the last day as
+    // well, or the band stops short of today by whatever the stride leaves.
+    const stops = [];
+    for (let i = 0; i < n; i += 3) stops.push(i);
+    if (stops[stops.length - 1] !== n - 1) stops.push(n - 1);
+    for (const i of stops) {
       const d = new Date(start); d.setDate(d.getDate() + i);
       bHi.push([i, monthlyAt(normal.hi, d)]); bLo.push([i, monthlyAt(normal.lo, d)]);
     }

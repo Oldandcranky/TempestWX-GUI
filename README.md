@@ -360,6 +360,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The layout is arranged, not listed.** The Layout tab was a list with
+  ticks and arrows beside a small drawing of the grid it made; the drawing is
+  now the editor. The panels that are lit are the dashboard, in the shape the
+  wall will show it, and the dim ones in the tray underneath are what is
+  left. A click lights a panel or puts it out. Dragging moves one — onto
+  another to take its place, in from the tray, out to it — and so do the two
+  arrows each lit panel carries, which show on hover and always on a
+  television or a touch screen, since a remote cannot drag and not every
+  phone can. Each panel wears its card's own icon and colour. Saved as it
+  changes; the last lit panel stays lit.
 - **Settings can be reached on the TV.** The TV layout hides the footer's
   buttons, which left settings behind an `s` key no remote has. Hold the
   clock for a second — it fades while held, so a hand on a remote can see the
@@ -380,10 +390,8 @@ checked against the Host.
     field has the focus.
   - **The layout saves as it changes**, as dragging a card on the dashboard
     always did; the Save button's way lost the change if you left without
-    pressing it. Up and down buttons beside the drag handle, for a remote or
-    a keyboard; every target at least 44 pixels where the checkboxes were 14;
-    the last card cannot be switched off; and a small drawing of the grid
-    the choice makes.
+    pressing it. Every target is at least 44 pixels where the checkboxes
+    were 14, and the last card cannot be switched off.
   - Cards are listed by the names on the cards — "Station" and "Air quality",
     not "hardware" and "air" — with a line saying what each shows, and "needs
     a key" on the two that do, which opens the key.

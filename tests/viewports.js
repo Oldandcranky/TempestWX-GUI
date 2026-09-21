@@ -698,7 +698,11 @@ console.log = (...args) => {
     const bad = [];
     await abreast([[1920, 1080], [1024, 768], [414, 896]], async ([w, h]) => {
       const at = w + 'x' + h;
-      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      // The phone is a touch screen here, not a narrow desktop: nothing can
+      // hover on one, so the panels' arrows always show, and that is the case
+      // where they could sit across a name.
+      const page = await browser.newPage({ viewport: { width: w, height: h },
+                                           hasTouch: w < 720, isMobile: w < 720 });
       const errs = [], posts = [];
       page.on('pageerror', e => errs.push(e.message));
       const s = freshen();
@@ -734,7 +738,7 @@ console.log = (...args) => {
         for (const id of ['layout', 'screen', 'sources', 'record']) {
           await tab(id);
           const small = await page.evaluate(() => [...document.querySelectorAll(
-              '#settings button, #settings label.tick, #settings summary, #settings a.linkbtn, #settings input[type=password]')]
+              '#settings button, #settings .tile, #settings summary, #settings a.linkbtn, #settings input[type=password]')]
             .filter(e => e.offsetParent && !e.classList.contains('needs'))
             .map(e => ({t: (e.getAttribute('aria-label') || e.textContent).trim().slice(0, 24), r: e.getBoundingClientRect()}))
             .filter(x => x.r.height < 39.5 || x.r.width < 39.5).map(x => x.t + ' ' + Math.round(x.r.width) + 'x' + Math.round(x.r.height)));
@@ -751,33 +755,92 @@ console.log = (...args) => {
         if (w >= 1900 && cols < 3) bad.push(at + ': ' + cols + ' column(s) on a screen this wide');
         if (w < 720 && cols !== 1) bad.push(at + ': ' + cols + ' columns on a phone');
 
-        // Layout: the names the cards use, and saved without a button.
+        // Layout: panels. Lit ones are the dashboard, in its shape; dim ones wait.
         await tab('layout');
-        const names = await page.$$eval('.cardrow .nm > span', els => els.map(e => e.textContent));
-        if (!names.includes('Station') || !names.includes('Air quality') || names.includes('hardware'))
-          bad.push(at + ': the card list says ' + names.slice(-3).join(', '));
+        const tiles = async () => page.evaluate(() => ({
+          on: [...document.querySelectorAll('#tilesOn .tile')].map(t => t.dataset.card),
+          off: [...document.querySelectorAll('#tilesOff .tile')].map(t => t.dataset.card),
+          names: [...document.querySelectorAll('.tile .nm')].map(e => e.textContent),
+          cols: getComputedStyle(document.getElementById('tilesOn')).gridTemplateColumns.split(' ').length }));
+        let t0 = await tiles();
+        if (t0.on.join() !== 'temperature,wind,pollen') bad.push(at + ': lit panels are ' + t0.on);
+        if (t0.on.length + t0.off.length !== 13) bad.push(at + ': ' + (t0.on.length + t0.off.length) + ' panels, expected 13');
+        if (!t0.names.includes('Station') || !t0.names.includes('Air quality') || t0.names.includes('hardware'))
+          bad.push(at + ': panels are named ' + t0.names.slice(-3).join(', '));
+        if (t0.cols !== 2) bad.push(at + ': three lit panels drawn ' + t0.cols + ' across, the dashboard shows 2');
         if (await page.$('#settings button.primary:not(#setDone)')) bad.push(at + ': there is still a save button on the layout');
-        await page.$eval('.cardrow[data-card="wind"] .up', el => el.click());
+        // Lit must be unmistakably brighter than dim, and say so to a screen reader.
+        const look = await page.evaluate(() => { const f = (sel) => { const e = document.querySelector(sel); const c = getComputedStyle(e);
+            return {o: +c.opacity, checked: e.getAttribute('aria-checked'), border: c.borderTopColor, h: e.getBoundingClientRect().height, w: e.getBoundingClientRect().width}; };
+          return {lit: f('#tilesOn .tile'), dim: f('#tilesOff .tile')}; });
+        if (!(look.lit.o === 1 && look.dim.o <= 0.7)) bad.push(at + ': lit opacity ' + look.lit.o + ', dim ' + look.dim.o);
+        if (look.lit.border === look.dim.border) bad.push(at + ': a lit panel has the same edge as a dim one');
+        if (look.lit.checked !== 'true' || look.dim.checked !== 'false') bad.push(at + ': aria-checked is ' + look.lit.checked + '/' + look.dim.checked);
+        if (look.dim.h < 44 || look.dim.w < 100) bad.push(at + ': a dim panel is ' + Math.round(look.dim.w) + 'x' + Math.round(look.dim.h));
+        // The name must not run under the arrows, which always show on a phone.
+        const under = await page.evaluate(() => [...document.querySelectorAll('#tilesOn .tile')].filter(t => {
+          const n = t.querySelector('.nm').getBoundingClientRect();
+          return [...t.querySelectorAll('.nudge:not(:disabled)')].some(b => { const r = b.getBoundingClientRect();
+            return getComputedStyle(b).opacity !== '0' && r.left < n.right && n.left < r.right && r.top < n.bottom && n.top < r.bottom; }); }).length);
+        if (under) bad.push(at + ': ' + under + ' panel name(s) sit under an arrow');
+        const arrowsShow = await page.evaluate(() => matchMedia('(hover:none)').matches
+          && [...document.querySelectorAll('#tilesOn .nudge:not(:disabled)')].every(b => getComputedStyle(b).opacity === '1'));
+        if (w < 720 && !arrowsShow) bad.push(at + ': on a touch screen the arrows do not show');
+
+        // An arrow moves a panel one place, and it is saved without a button.
+        await page.$eval('#tilesOn .tile[data-card="wind"] .nudge.left', el => el.click());
         await page.waitForTimeout(1100);
-        const moved = posts[posts.length - 1] || {};
-        if (JSON.stringify(moved.slots) !== JSON.stringify(['wind', 'temperature', 'pollen']))
-          bad.push(at + ': moving Wind up saved ' + JSON.stringify(moved.slots));
+        if (JSON.stringify((posts[posts.length - 1] || {}).slots) !== JSON.stringify(['wind', 'temperature', 'pollen']))
+          bad.push(at + ': moving Wind earlier saved ' + JSON.stringify((posts[posts.length - 1] || {}).slots));
         const shape = await page.$eval('#gridShape', el => el.textContent);
-        if (!/3 cards · 2 across, 2 rows/.test(shape)) bad.push(at + ': the preview says "' + shape + '"');
-        if (await page.$$eval('.gridpreview div', els => els.length) !== 3) bad.push(at + ': the preview does not have three boxes');
-        // The last card cannot be switched off.
-        for (const c of ['wind', 'temperature', 'pollen'])
-          await page.$eval('.cardrow[data-card="' + c + '"] input', el => el.click());
+        if (!/3 panels · 2 across, 2 rows/.test(shape)) bad.push(at + ': the shape line says "' + shape + '"');
+        // A click on a dim panel lights it, at the end; a click on a lit one puts it out.
+        await page.$eval('#tilesOff .tile[data-card="records"]', el => el.click());
         await page.waitForTimeout(1100);
-        const left = await page.$$eval('.cardrow input:checked', els => els.length);
-        if (left !== 1) bad.push(at + ': ' + left + ' cards left ticked after unticking all three');
+        t0 = await tiles();
+        if (t0.on.join() !== 'wind,temperature,pollen,records') bad.push(at + ': lighting Records gave ' + t0.on);
+        if (JSON.stringify(posts[posts.length - 1].slots) !== JSON.stringify(t0.on)) bad.push(at + ': lighting a panel was not saved');
+        await page.$eval('#tilesOn .tile[data-card="temperature"]', el => el.click());
+        await page.waitForTimeout(300);
+        t0 = await tiles();
+        if (t0.on.includes('temperature') || !t0.off.includes('temperature')) bad.push(at + ': a click did not put Temperature out');
+        // Dragging: onto a lit panel takes its place; onto the tray puts it out.
+        const drag = (from, to) => page.evaluate(([from, to]) => {
+          const a = document.querySelector(from), b = document.querySelector(to), dt = new DataTransfer();
+          const fire = (el, type) => el.dispatchEvent(new DragEvent(type, {bubbles: true, cancelable: true, dataTransfer: dt}));
+          fire(a, 'dragstart'); fire(b, 'dragover'); fire(b, 'drop'); fire(a, 'dragend'); }, [from, to]);
+        await drag('#tilesOn .tile[data-card="records"]', '#tilesOn .tile[data-card="wind"]');
+        await page.waitForTimeout(300);
+        t0 = await tiles();
+        if (t0.on.join() !== 'records,wind,pollen') bad.push(at + ': dragging Records onto Wind gave ' + t0.on);
+        await drag('#tilesOff .tile[data-card="radar"]', '#tilesOn .tile[data-card="pollen"]');
+        await page.waitForTimeout(300);
+        t0 = await tiles();
+        if (t0.on.join() !== 'records,wind,radar,pollen') bad.push(at + ': dragging Radar in from the tray gave ' + t0.on);
+        await drag('#tilesOn .tile[data-card="radar"]', '#tilesOff');
+        await page.waitForTimeout(300);
+        t0 = await tiles();
+        if (t0.on.includes('radar')) bad.push(at + ': dragging Radar to the tray left it lit');
+        // The last lit panel stays lit, by click or by drag.
+        for (const c of ['records', 'wind', 'pollen'])
+          await page.$eval('.tile[data-card="' + c + '"]', el => el.click());
+        await drag('#tilesOn .tile', '#tilesOff');
+        await page.waitForTimeout(1100);
+        t0 = await tiles();
+        if (t0.on.length !== 1) bad.push(at + ': ' + t0.on.length + ' panels left lit after putting them all out');
         if ((posts[posts.length - 1].slots || []).length !== 1) bad.push(at + ': an empty layout was saved');
-        const needs = await page.$$eval('.cardrow .needs', els => els.map(e => e.closest('.cardrow').dataset.card));
+        // Space lights a focused panel, for a keyboard.
+        await page.focus('#tilesOff .tile[data-card="air"]');
+        await page.keyboard.press(' ');
+        await page.waitForTimeout(300);
+        if (!(await tiles()).on.includes('air')) bad.push(at + ': Space did not light the focused panel');
+        const needs = await page.$$eval('.tile .needs', els => els.map(e => e.closest('.tile').dataset.card));
         if (needs.join() !== 'internet') bad.push(at + ': "needs a key" is on [' + needs + '], expected internet only');
-        await page.$eval('.cardrow .needs', el => el.click());
+        await page.$eval('.tile .needs', el => el.click());
         await page.waitForTimeout(500);
         if (!await page.$eval('.source[data-source="internet"]', el => el.open).catch(() => false))
           bad.push(at + ': "needs a key" did not open the Internet source');
+        if ((await page.evaluate(() => cfg.slots)).includes('internet')) bad.push(at + ': asking about the key lit the panel');
 
         // Data sources: what is working, not what was once typed.
         const lines = await page.$$eval('.source', els => Object.fromEntries(els.map(e =>

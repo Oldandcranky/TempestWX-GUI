@@ -902,50 +902,122 @@ body:not(.tv) #card-records:hover .flipbtn{color:var(--accent)}
 
 body.show-settings #grid{display:none}
 body.show-settings #settings{display:block}
-.sheet{
-  max-width:640px;margin:0 auto;background:var(--card);
-  border:1px solid var(--card-edge);border-radius:var(--radius);
-  padding:clamp(14px,2vw,26px);
-}
-.sheet h2{font-size:clamp(13px,1.2vw,18px);font-weight:600;letter-spacing:.09em;
-          text-transform:uppercase;color:var(--label);margin-bottom:.8em}
-.sheet h2:not(:first-child){margin-top:1.6em}
-.sheet p.note{font-size:clamp(11px,1vw,14px);color:var(--label);
-              margin:-.4em 0 1em;line-height:1.5}
+/* ── Settings ────────────────────────────────────────────────────────────
+   It grew a section at a time into one column 640 pixels wide and 2,100 tall,
+   on screens three times that width, with nothing to say where you were in
+   it. Four tabs now, each a grid of panels that takes the width it is given:
+   two or three across on a desktop, one on a phone. Everything that can be
+   pressed is at least 44 pixels, because one of the things pressing it is a
+   television remote. */
+.setwrap{max-width:1500px;margin:0 auto;padding-bottom:1.5rem;
+         font-size:clamp(13px,1.05vw,16px)}
+.sethead{display:flex;align-items:center;gap:1em;padding:.2em .2em .6em}
+.sethead h1{font-size:clamp(15px,1.4vw,21px);font-weight:600;letter-spacing:.09em;
+            text-transform:uppercase;color:var(--label);flex:1}
+.settabs{position:sticky;top:0;z-index:3;display:flex;gap:6px;flex-wrap:wrap;
+         padding:.4em 0 .7em;background:var(--bg)}
+.settabs button{flex:1 1 auto;min-height:44px;white-space:nowrap}
+.settabs button[aria-selected="true"]{background:var(--accent);color:#101014;
+                                      border-color:transparent;font-weight:600}
+.setpanel{display:grid;gap:var(--gap);align-items:start;
+          grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr))}
+.sheet{background:var(--card);border:1px solid var(--card-edge);
+       border-radius:var(--radius);padding:clamp(14px,1.6vw,24px);min-width:0}
+.sheet.wide{grid-column:1/-1}
+.sheet h2{font-size:clamp(13px,1.15vw,17px);font-weight:600;letter-spacing:.09em;
+          text-transform:uppercase;color:var(--label);margin-bottom:.7em}
+.sheet p.note{font-size:clamp(12px,.95vw,14px);color:var(--label);
+              margin:0 0 1em;line-height:1.5}
+.sheet p.note a,.sheet .kv a{color:var(--accent)}
 .cardlist{display:flex;flex-direction:column;gap:6px}
 .cardrow{
-  display:flex;align-items:center;gap:.7em;padding:.55em .7em;
+  display:flex;align-items:center;gap:.6em;padding:.2em .4em .2em .7em;min-height:48px;
   background:var(--inset);border:1px solid var(--inset-edge);
   border-radius:var(--inset-radius);cursor:grab;
-  font-size:clamp(12px,1.1vw,16px);
 }
+.cardrow.off{opacity:.62}
 .cardrow.drag-over{border-color:var(--accent)}
 .cardrow.dragging{opacity:.4}
 .cardrow .grip{color:var(--faint);letter-spacing:.15em;cursor:grab}
-.cardrow .nm{flex:1;text-transform:capitalize}
-.cardrow input{width:1.05em;height:1.05em;accent-color:var(--accent)}
+.cardrow .nm{flex:1;min-width:0;display:flex;flex-direction:column;gap:.1em}
+.cardrow .nm small{color:var(--label);font-size:.82em;white-space:nowrap;
+                   overflow:hidden;text-overflow:ellipsis}
+.cardrow .needs{font-size:.78em;color:var(--accent);background:none;border:0;
+                padding:.3em .2em;min-height:0;text-decoration:underline;cursor:pointer}
+.cardrow .move{display:flex;gap:4px}
+.cardrow .move button{width:44px;height:40px;padding:0;line-height:1;font-size:1.05em}
+.cardrow .move button:disabled{opacity:.25;cursor:default}
+/* The box is the tick's target, not the tick: 44 pixels of label round a
+   checkbox that stays the size a checkbox is. */
+.cardrow label.tick{display:flex;align-items:center;justify-content:center;
+                    width:48px;height:44px;cursor:pointer}
+.cardrow label.tick input{width:1.35em;height:1.35em;accent-color:var(--accent);cursor:pointer}
+.gridpreview{display:grid;gap:5px;aspect-ratio:16/9;margin-top:.2em}
+.gridpreview div{background:var(--inset);border:1px solid var(--inset-edge);
+                 border-radius:6px;display:flex;align-items:center;justify-content:center;
+                 font-size:clamp(10px,.85vw,13px);color:var(--label);text-align:center;
+                 padding:.2em;min-width:0;overflow:hidden}
+.seg{display:inline-flex;flex-wrap:wrap;gap:4px}
+.seg button{min-height:44px;min-width:3.4em;padding:.4em .9em}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#101014;
+                                 border-color:transparent;font-weight:600}
+.kv{display:grid;grid-template-columns:minmax(7em,auto) 1fr;gap:.55em 1.2em;align-items:center}
+.kv > .k2{color:var(--label)}
+.kv > .v2{min-width:0;overflow-wrap:anywhere}
+.kv > .v2 small{display:block;color:var(--faint);font-size:.8em}
+.kv > .v2.unset{color:var(--faint)}
+.kv kbd{display:inline-block;min-width:1.7em;text-align:center;padding:.1em .4em;
+        border:1px solid var(--inset-edge);border-radius:5px;background:var(--inset);
+        font:inherit;font-size:.9em}
+/* A data source: one line that says whether it is working, which opens to
+   the explanation and the key. */
+.source{border-top:1px solid var(--rule)}
+.source:first-of-type{border-top:0}
+.source > summary{display:flex;align-items:center;gap:.8em;min-height:52px;cursor:pointer;
+                  list-style:none;padding:.2em 0}
+.source > summary::-webkit-details-marker{display:none}
+.source > summary .dot{margin-left:0;width:.65em;height:.65em}
+.source > summary .who{flex:1;min-width:0;display:flex;flex-direction:column;gap:.1em}
+.source > summary .who small{color:var(--label);font-size:.85em}
+.source > summary .who small.bad{color:var(--red)}
+.source > summary .chev{color:var(--faint);transition:transform .15s}
+.source[open] > summary .chev{transform:rotate(90deg)}
+.source .inside{padding:.2em 0 1.1em 1.45em}
+.sheet details.fold > summary{cursor:pointer;min-height:44px;display:flex;align-items:center;
+                              gap:.6em;color:var(--text);list-style:none}
+.sheet details.fold > summary::-webkit-details-marker{display:none}
+.sheet details.fold > summary::before{content:"›";color:var(--faint);transition:transform .15s}
+.sheet details.fold[open] > summary::before{transform:rotate(90deg)}
 .sheet .row{display:flex;gap:.6em;align-items:center;flex-wrap:wrap}
 .sheet .recrow{display:grid;grid-template-columns:minmax(8em,1.4fr) 1fr 1fr auto;gap:.8em;
-               align-items:center;padding:.35em 0;border-top:1px solid var(--rule);
-               font-size:clamp(12px,1vw,15px)}
+               align-items:center;padding:.3em 0;border-top:1px solid var(--rule)}
 .sheet .recrow .what{color:var(--label)}
-.sheet .recrow .val{font-weight:600;font-variant-numeric:tabular-nums}
-.sheet .recrow .when{color:var(--label)}
+.sheet .recrow{grid-template-columns:minmax(6.5em,1fr) auto auto auto}
+.sheet .recrow .val{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.sheet .recrow .when{color:var(--label);white-space:nowrap}
 .sheet .recordsec .tools{margin:.2em 0 .6em}
-.sheet .recordsec .linkbtn{display:inline-block;align-self:auto;margin:.2em 0 .8em;font-size:clamp(11px,1vw,14px)}
+.sheet .linkbtn{display:inline-flex;align-items:center;min-height:40px;align-self:auto;
+                margin:.2em .4em .4em 0;font-size:clamp(11px,.95vw,14px)}
+body.tv .sheet .linkbtn{display:inline-flex}
 .sheet input[type=password],.sheet input[type=text]{
-  flex:1;min-width:220px;background:var(--inset);color:var(--text);
+  flex:1;min-width:200px;min-height:44px;background:var(--inset);color:var(--text);
   border:1px solid var(--inset-edge);border-radius:var(--inset-radius);
-  padding:.55em .7em;font:inherit;font-size:clamp(12px,1.1vw,16px);
+  padding:.55em .7em;font:inherit;
 }
-.sheet button{
+.sheet button,.sethead button,.settabs button{
   background:var(--inset);color:var(--text);border:1px solid var(--inset-edge);
   border-radius:var(--inset-radius);padding:.55em 1.1em;font:inherit;
-  font-size:clamp(12px,1.1vw,16px);cursor:pointer;
+  min-height:44px;cursor:pointer;
 }
-.sheet button.primary{background:var(--accent);color:#101014;border-color:transparent;
-                      font-weight:600}
-.sheet button:hover{border-color:var(--accent)}
+.sheet button.primary,.sethead button.primary{background:var(--accent);color:#101014;
+                      border-color:transparent;font-weight:600}
+.sheet button:hover,.settabs button:hover,.sethead button:hover{border-color:var(--accent)}
+@media (max-width:720px){
+  .sheet .recrow{grid-template-columns:1fr auto auto;row-gap:.1em}
+  .sheet .recrow .what{grid-column:1/-1;padding-top:.3em}
+  .cardrow .nm small{display:none}
+  .settabs button{flex:1 1 40%}
+}
 .state{font-size:clamp(11px,1vw,14px);color:var(--label);min-height:1.4em}
 .state.ok{color:var(--green)} .state.bad{color:var(--red)}
 .card[draggable="true"]{cursor:grab}
@@ -1147,11 +1219,10 @@ const prefs = {};
 function loadPrefs(serverUnits){
   for (const k of Object.keys(UNITS)) {
     let v = null;
-    // Rain is the exception: its figure is no longer a tap target, so there
-    // is no way back from a stored choice. It follows the server setting,
-    // which is what a viewer who once tapped it to mm would want now.
-    if (k !== "rain")
-      try { v = localStorage.getItem("unit."+k); } catch (e) { /* private mode */ }
+    // Rain was the exception for a while: its figure stopped being a tap
+    // target, which left no way back from a stored choice. Settings has a
+    // control for every unit now, so a stored rain unit counts again.
+    try { v = localStorage.getItem("unit."+k); } catch (e) { /* private mode */ }
     if (!UNITS[k].includes(v)) v = (serverUnits && serverUnits[k]) || UNITS[k][0];
     prefs[k] = v;
   }
@@ -3494,6 +3565,7 @@ async function saveConfig(patch, statusEl){
    it for good otherwise — the backfill would only put a deleted number back —
    so a reading is marked, not removed, and the mark can be lifted. */
 let recordInfo = null;
+let recordsOpen = false;
 
 async function loadRecord(){
   try {
@@ -3566,6 +3638,10 @@ function recordSection(){
   const tools = el("div", "tools");
   tools.appendChild(csvLink("Download as CSV"));
   wrap.appendChild(tools);
+  const bf = cfg && cfg.backfill;
+  if (bf && bf.status && bf.status !== "off")
+    wrap.appendChild(el("p", "note", esc("Filled in from WeatherFlow: " + bf.status +
+      (bf.error ? " (" + bf.error + ")" : ""))));
 
   const status = el("div", "state");
   const line = (item, restore) => {
@@ -3582,9 +3658,15 @@ function recordSection(){
     return row;
   };
   if ((info.records || []).length) {
-    wrap.appendChild(el("p", "note", "The records as they stand. If one was a sensor fault " +
-      "rather than weather, mark it and the next best takes its place. Nothing is deleted."));
-    for (const item of info.records) wrap.appendChild(line(item, false));
+    const fold = el("details", "fold");
+    fold.id = "reviewRecords";
+    if (recordsOpen) fold.open = true;
+    fold.addEventListener("toggle", () => { recordsOpen = fold.open; });
+    fold.appendChild(el("summary", null, "Review the records"));
+    fold.appendChild(el("p", "note", "If one was a sensor fault rather than weather, mark it " +
+      "and the next best takes its place. Nothing is deleted, and a mark can be lifted."));
+    for (const item of info.records) fold.appendChild(line(item, false));
+    wrap.appendChild(fold);
   }
   if ((info.struck || []).length) {
     wrap.appendChild(el("p", "note", "Marked as not real:"));
@@ -3594,183 +3676,477 @@ function recordSection(){
   return wrap;
 }
 
+/* ── Settings ────────────────────────────────────────────────────────────
+   Four tabs. Which is open, and which data source is unfolded, live up here
+   rather than in the DOM, for the usual reason: the page can be redrawn —
+   after a save, after a key is set — and should come back where it was. */
+const CARD_INFO = {
+  temperature: ["Temperature", "Now, the day's range, feels-like and humidity"],
+  wind:        ["Wind", "Speed, gust, the compass and Beaufort force"],
+  pressure:    ["Pressure", "The dial, its trend and an outlook line"],
+  rainfall:    ["Rainfall", "Rate, today, and the month and year against normal"],
+  astronomy:   ["Astronomy", "Sun, daylight, UV and the moon"],
+  forecast:    ["Forecast", "Today and three days; opens the ten-day outlook"],
+  lightning:   ["Lightning", "Strikes today, the nearest and the last"],
+  radar:       ["Radar", "Live radar for your location"],
+  records:     ["Records", "Hottest, coldest, gust and rain; opens the almanac"],
+  air:         ["Air quality", "US AQI with PM2.5, PM10 and ozone"],
+  pollen:      ["Pollen", "Tree, grass and weed, and what is in season", "pollen"],
+  internet:    ["Internet", "Speed and line health from Speedtest Tracker", "internet"],
+  hardware:    ["Station", "Battery, firmware, signal and sensor faults"],
+};
+const cardTitle = (name) => (CARD_INFO[name] || [name])[0];
+
+const SETTINGS_TABS = [["layout", "Layout"], ["screen", "This screen"],
+                       ["sources", "Data sources"], ["record", "Record and about"]];
+let settingsTab = (() => { try { return localStorage.getItem("settings.tab"); } catch (e) { return null; } })();
+if (!SETTINGS_TABS.some(t => t[0] === settingsTab)) settingsTab = "layout";
+let openSource = null;                 // which data source is unfolded
+let layoutTimer = null;
+
+function showSettingsTab(tab, source){
+  settingsTab = tab;
+  if (source !== undefined) openSource = source;
+  try { localStorage.setItem("settings.tab", tab); } catch (e) {}
+  renderSettings();
+}
+
 function renderSettings(){
   const host = document.getElementById("settings");
+  const wrap = el("div", "setwrap");
+
+  const head = el("div", "sethead");
+  head.appendChild(el("h1", null, "Settings"));
+  const done = el("button", "primary", "Done");
+  done.type = "button";
+  done.id = "setDone";
+  done.addEventListener("click", () => toggleSettings(false));
+  head.appendChild(done);
+  wrap.appendChild(head);
+
+  const tabs = el("div", "settabs");
+  tabs.setAttribute("role", "tablist");
+  for (const [id, label] of SETTINGS_TABS) {
+    const t = el("button", null, esc(label));
+    t.type = "button";
+    t.dataset.tab = id;
+    t.setAttribute("role", "tab");
+    t.setAttribute("aria-selected", id === settingsTab ? "true" : "false");
+    t.addEventListener("click", () => showSettingsTab(id));
+    tabs.appendChild(t);
+  }
+  wrap.appendChild(tabs);
+
+  const panel = el("div", "setpanel");
+  panel.dataset.tab = settingsTab;
+  panel.setAttribute("role", "tabpanel");
+  ({layout: layoutPanel, screen: screenPanel,
+    sources: sourcesPanel, record: recordPanel})[settingsTab](panel);
+  wrap.appendChild(panel);
+  host.replaceChildren(wrap);
+  refreshSources();
+}
+
+/* ── Layout ──────────────────────────────────────────────────────────────
+   Saved as it changes, as dragging a card on the dashboard always was: two
+   ways of changing one list should not differ in whether they need a button,
+   and the button's way lost the change if you left without pressing it. */
+function layoutPanel(panel){
   const all = (cfg && cfg.cards) || [];
   const on = (cfg && cfg.slots) || [];
-  // chosen cards first, in their order, then the rest
   const ordered = on.concat(all.filter(c => !on.includes(c)));
 
-  const sheet = el("div","sheet");
-  sheet.innerHTML = '<h2>Cards</h2>' +
-    '<p class="note">Tick the cards you want, drag to reorder. ' +
-    'This layout is shared by every screen — the TV included.</p>';
+  const sheet = el("div", "sheet");
+  sheet.innerHTML = '<h2>Cards on the dashboard</h2>' +
+    '<p class="note">Tick the ones you want and put them in order, with the arrows or by ' +
+    'dragging. Saved as you go, and shared by every screen — the TV included.</p>';
+  const list = el("div", "cardlist");
+  const status = el("div", "state");
+  status.id = "layoutState";
+  const side = el("div", "sheet");
 
-  const list = el("div","cardlist");
-  for (const name of ordered) {
-    const row = el("div","cardrow");
-    row.draggable = true;
-    row.dataset.card = name;
-    row.innerHTML = '<span class="grip">⠿</span>' +
-      '<span class="nm">' + esc(name) + '</span>' +
-      '<input type="checkbox"' + (on.includes(name) ? " checked" : "") + '>';
-    list.appendChild(row);
-  }
-  wireRowDrag(list);
-  sheet.appendChild(list);
-
-  const status = el("div","state");
-  const apply = el("button","primary","Save layout");
-  apply.addEventListener("click", () => {
-    const picked = [...list.querySelectorAll(".cardrow")]
-      .filter(r => r.querySelector("input").checked)
-      .map(r => r.dataset.card);
-    if (!picked.length) {
-      status.className = "state bad";
-      status.textContent = "Pick at least one card.";
-      return;
-    }
-    saveConfig({slots: picked}, status);
-  });
-  const applyRow = el("div","row");
-  applyRow.append(apply, status);
-  sheet.appendChild(applyRow);
-
-  // ── secrets ───────────────────────────────────────────────────────────
-  // One helper for both keys: reveal toggle, paste checks, and never
-  // rendering the stored value, because the server does not return it.
-  const secretField = (opts) => {
-    const wrap = el("div");
-    wrap.innerHTML = '<h2>' + esc(opts.title) + '</h2>' +
-                     '<p class="note">' + opts.note + '</p>';
-
-    const field = document.createElement("input");
-    field.type = "password";
-    field.autocomplete = "off";
-    field.spellcheck = false;
-    field.placeholder = opts.isSet ? "Already configured — type to replace it"
-                                   : opts.placeholder;
-
-    const EYE = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none">' +
-      '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" ' +
-      'stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" ' +
-      'stroke="currentColor" stroke-width="1.7"/>';
-    const EYE_OPEN = EYE + '</svg>';
-    const EYE_SHUT = EYE + '<path d="M4 20 20 4" stroke="currentColor" ' +
-      'stroke-width="1.7" stroke-linecap="round"/></svg>';
-
-    const eye = el("button", null, "");
-    eye.type = "button";
-    eye.style.cssText = "padding:.5em .7em;line-height:0";
-    eye.setAttribute("aria-label", "Show");
-    eye.innerHTML = EYE_OPEN;
-    eye.addEventListener("click", () => {
-      const show = field.type === "password";
-      field.type = show ? "text" : "password";
-      eye.innerHTML = show ? EYE_SHUT : EYE_OPEN;
-      eye.setAttribute("aria-pressed", show ? "true" : "false");
-      field.focus();
+  const picked = () => [...list.children]
+    .filter(r => r.querySelector("input").checked).map(r => r.dataset.card);
+  const tidy = () => {
+    const rows = [...list.children];
+    rows.forEach((r, i) => {
+      r.classList.toggle("off", !r.querySelector("input").checked);
+      r.querySelector(".up").disabled = i === 0;
+      r.querySelector(".down").disabled = i === rows.length - 1;
     });
-
-    const hint = el("div","state");
-    field.addEventListener("input", () => {
-      const v = field.value;
-      if (!v) { hint.className = "state"; hint.textContent = ""; return; }
-      const notes = [v.length + " characters"];
-      let bad = false;
-      if (v !== v.trim()) { notes.push("leading or trailing space — trimmed on save"); bad = true; }
-      if (/\s/.test(v.trim())) { notes.push("contains a space in the middle"); bad = true; }
-      if (/[\u2018\u2019\u201c\u201d]/.test(v)) { notes.push("contains a curly quote"); bad = true; }
-      hint.className = "state" + (bad ? " bad" : " ok");
-      hint.textContent = notes.join(" · ");
-    });
-
-    const state = el("div","state",
-                     opts.isSet ? "Status: configured." : "Status: not set.");
-    const reset = () => {
-      field.value = ""; hint.className = "state"; hint.textContent = "";
-      field.type = "password"; eye.innerHTML = EYE_OPEN;
-    };
-    const save = el("button","primary","Save");
-    save.addEventListener("click", async () => {
-      if (!field.value.trim()) {
-        state.className = "state bad"; state.textContent = "Nothing to save.";
-        return;
-      }
-      const patch = {}; patch[opts.field] = field.value;
-      const ok = await saveConfig(patch, state);
-      reset();
-      if (ok) { state.className = "state ok"; state.textContent = opts.savedText; }
-    });
-    const clear = el("button", null, "Clear");
-    clear.addEventListener("click", async () => {
-      const patch = {}; patch[opts.field] = "";
-      const ok = await saveConfig(patch, state);
-      reset();
-      if (ok) { state.className = "state"; state.textContent = "Status: not set."; }
-    });
-
-    const row = el("div","row");
-    row.append(field, eye, save, clear);
-    wrap.append(row, hint, state);
-    return wrap;
+    drawPreview(side, picked());
+  };
+  const changed = () => {
+    tidy();
+    clearTimeout(layoutTimer);
+    status.className = "state"; status.textContent = "Saving…";
+    layoutTimer = setTimeout(() => saveConfig({slots: picked()}, status), 450);
   };
 
-  sheet.appendChild(secretField({
-    title: "WeatherFlow token",
-    field: "token",
-    isSet: !!(cfg && cfg.token_set),
-    placeholder: "Paste your personal access token",
-    savedText: "Saved. Backfill starting.",
-    note: 'Optional. With it the dashboard backfills your station\'s real ' +
-      'history, so 24-hour, monthly and record figures are right from the ' +
-      'start instead of only counting from when this started running. Get ' +
-      'one at <a href="https://tempestwx.com/settings/tokens" target="_blank" ' +
-      'rel="noopener noreferrer" style="color:var(--accent)">tempestwx.com</a>. ' +
-      'Stored on the server and never sent back to a browser, including this one.',
-  }));
-
-  sheet.appendChild(secretField({
-    title: "Pollen key",
-    field: "pollen_key",
-    isSet: !!(cfg && cfg.pollen_key_set),
-    placeholder: "Paste your Google Pollen API key",
-    savedText: "Saved. Fetching pollen.",
-    note: 'Optional, and only needed for the Pollen card. No free keyless ' +
-      'source covers North America — Open-Meteo\'s pollen model is Europe ' +
-      'only. Enable the Pollen API in a ' +
-      '<a href="https://console.cloud.google.com/" target="_blank" ' +
-      'rel="noopener noreferrer" style="color:var(--accent)">Google Cloud</a> ' +
-      'project and paste the key here for tree, grass and weed counts plus ' +
-      'which plants are in season. Handled exactly like the token above.',
-  }));
-
-  sheet.appendChild(secretField({
-    title: "Speedtest token",
-    field: "speedtest_token",
-    isSet: !!(cfg && cfg.speedtest_token_set),
-    placeholder: "Paste your Speedtest Tracker API token",
-    savedText: "Saved. Fetching results.",
-    note: 'Optional, and only needed for the Internet card. Create one under ' +
-      'Profile \u2192 API tokens in your own Speedtest Tracker, with the ' +
-      'results:read ability. The instance URL is set with ' +
-      '<code>TEMPEST_SPEEDTEST_URL</code>; only the token lives here, ' +
-      'handled exactly like the two above.',
-  }));
-
-  sheet.appendChild(recordSection());
-
-  if (cfg && cfg.backfill && cfg.backfill.status && cfg.backfill.status !== "off") {
-    const b = cfg.backfill;
-    sheet.appendChild(el("div","state",
-      "Backfill: " + b.status + (b.added ? " — " + b.added + " observations merged" : "") +
-      (b.error ? " (" + b.error + ")" : "")));
+  for (const name of ordered) {
+    const info = CARD_INFO[name] || [name, ""];
+    const row = el("div", "cardrow");
+    row.draggable = true;
+    row.dataset.card = name;
+    row.innerHTML = '<span class="grip" aria-hidden="true">⠿</span>' +
+      '<span class="nm"><span>' + esc(info[0]) + '</span><small>' + esc(info[1]) + '</small></span>';
+    const needs = info[2];
+    const keyed = needs === "pollen" ? cfg && cfg.pollen_key_set
+                : needs === "internet" ? cfg && cfg.speedtest_token_set : true;
+    if (needs && !keyed) {
+      const b = el("button", "needs", "needs a key");
+      b.type = "button";
+      b.addEventListener("click", () => showSettingsTab("sources", needs));
+      row.appendChild(b);
+    }
+    const move = el("span", "move");
+    for (const [cls, glyph, label, step] of [["up", "↑", "Move up", -1], ["down", "↓", "Move down", 1]]) {
+      const b = el("button", cls, glyph);
+      b.type = "button";
+      b.draggable = false;
+      b.setAttribute("aria-label", label + ": " + info[0]);
+      b.addEventListener("click", () => {
+        const rows = [...list.children], i = rows.indexOf(row), j = i + step;
+        if (j < 0 || j >= rows.length) return;
+        list.insertBefore(row, step < 0 ? rows[j] : rows[j].nextSibling);
+        changed();
+        (b.disabled ? row.querySelector(step < 0 ? ".down" : ".up") : b).focus();
+      });
+      move.appendChild(b);
+    }
+    row.appendChild(move);
+    const tick = el("label", "tick");
+    tick.innerHTML = '<input type="checkbox"' + (on.includes(name) ? " checked" : "") +
+                     ' aria-label="Show ' + esc(info[0]) + '">';
+    tick.querySelector("input").addEventListener("change", (e) => {
+      if (!picked().length) {
+        e.target.checked = true;               // an empty wall is not a layout
+        status.className = "state bad";
+        status.textContent = "At least one card stays on.";
+        return;
+      }
+      changed();
+    });
+    row.appendChild(tick);
+    list.appendChild(row);
   }
-  host.replaceChildren(sheet);
+  wireRowDrag(list, changed);
+  sheet.append(list, status);
+  panel.append(sheet, side);
+  tidy();
+}
+
+/* What the ticked cards make: the same rule render() uses, drawn small. */
+function drawPreview(side, names){
+  const n = names.length;
+  const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+  const rows = Math.max(1, Math.ceil(n / cols));
+  side.innerHTML = '<h2>What that makes</h2>' +
+    '<p class="note" id="gridShape">' + n + (n === 1 ? " card" : " cards") + " · " + cols +
+    " across, " + rows + (rows === 1 ? " row" : " rows") + " on a wide screen. " +
+    "A phone shows them one at a time, in this order.</p>";
+  const g = el("div", "gridpreview");
+  g.style.gridTemplateColumns = "repeat(" + cols + ",1fr)";
+  g.style.gridTemplateRows = "repeat(" + rows + ",1fr)";
+  for (const name of names) g.appendChild(el("div", null, esc(cardTitle(name))));
+  side.appendChild(g);
+}
+
+/* ── This screen ─────────────────────────────────────────────────────────
+   Units, theme and the TV layout belong to the browser, not the server, so
+   the TV and a phone can differ. They were reachable only through footer
+   icons a finger wide — and the units only by knowing that the big number on
+   a card is a button. */
+function segmented(options, current, pick, label){
+  const seg = el("div", "seg");
+  seg.setAttribute("role", "group");
+  seg.setAttribute("aria-label", label);
+  for (const [value, text] of options) {
+    const b = el("button", null, esc(text));
+    b.type = "button";
+    b.dataset.value = value;
+    b.setAttribute("aria-pressed", value === current ? "true" : "false");
+    b.addEventListener("click", () => {
+      pick(value);
+      for (const o of seg.children) o.setAttribute("aria-pressed", o === b ? "true" : "false");
+    });
+    seg.appendChild(b);
+  }
+  return seg;
+}
+
+function setUnit(kind, value){
+  prefs[kind] = value;
+  try { localStorage.setItem("unit." + kind, value); } catch (e) {}
+  almanac = null;                          // its round numbers follow the unit
+}
+
+function screenPanel(panel){
+  const units = el("div", "sheet");
+  units.innerHTML = '<h2>Units</h2><p class="note">For this browser only, so the TV and ' +
+    'your phone can differ. On a card, tapping the big number cycles its unit too.</p>';
+  const kv = el("div", "kv");
+  for (const [kind, label] of [["temp", "Temperature"], ["wind", "Wind"], ["pres", "Pressure"],
+                               ["rain", "Rain"], ["dist", "Distance"]]) {
+    kv.appendChild(el("span", "k2", label));
+    const cell = el("span", "v2");
+    cell.appendChild(segmented(UNITS[kind].map(u => [u, u]), prefs[kind],
+                               (v) => setUnit(kind, v), label));
+    kv.appendChild(cell);
+  }
+  units.appendChild(kv);
+
+  const look = el("div", "sheet");
+  look.innerHTML = '<h2>Appearance</h2><p class="note">Also for this browser only.</p>';
+  const kv2 = el("div", "kv");
+  kv2.appendChild(el("span", "k2", "Theme"));
+  const th = el("span", "v2");
+  th.appendChild(segmented([["dark", "Dark"], ["light", "Light"]],
+    document.documentElement.dataset.theme === "light" ? "light" : "dark", applyTheme, "Theme"));
+  kv2.appendChild(th);
+  kv2.appendChild(el("span", "k2", "TV layout"));
+  const tv = el("span", "v2");
+  tv.appendChild(segmented([["off", "Off"], ["on", "On"]],
+    document.body.classList.contains("tv") ? "on" : "off", (v) => setTv(v === "on"), "TV layout"));
+  tv.appendChild(el("small", null, "Larger type, no cursor and no footer buttons. " +
+    "Add <code style=\"white-space:nowrap\">?tv</code> to the address to start in it."));
+  kv2.appendChild(tv);
+  look.appendChild(kv2);
+
+  const keys = el("div", "sheet");
+  keys.innerHTML = '<h2>Keyboard</h2>';
+  const kv3 = el("div", "kv");
+  for (const [k, what] of [["d", "Ten-day outlook"], ["a", "Almanac"], ["n", "Internet, the last week"],
+                           ["w", "Weather map"], ["s", "Settings"], ["t", "Light or dark"],
+                           ["f", "TV layout"], ["Esc", "Back to the cards"]]) {
+    kv3.appendChild(el("span", "k2", "<kbd>" + esc(k) + "</kbd>"));
+    kv3.appendChild(el("span", "v2", esc(what)));
+  }
+  keys.appendChild(kv3);
+  panel.append(units, look, keys);
+}
+
+/* ── Data sources ────────────────────────────────────────────────────────
+   "Status: configured" only ever meant that something had once been typed
+   into the box. Whether the key works is a different question, and the one
+   anybody opening this page is asking. Every source already reports its last
+   error to the cards; this is the same report, in one place. */
+function sourceList(){
+  const s = last || {};
+  const fetched = (src, what) => {
+    src = src || {};
+    // The forecaster's words carry when they were written, not when they were
+    // fetched, and a forecast two hours old is a working forecast.
+    const when = src.fetched_at ? "fetched " + ago(s.now - src.fetched_at) + " ago"
+               : src.updated ? "issued " + ago(s.now - src.updated) + " ago" : "";
+    if (src.available && !src.error) return ["live", ["Working", when].filter(Boolean).join(" · ")];
+    if (src.available) return ["stale", "Showing old data — " + src.error];
+    return [src.error ? "offline" : "waiting", src.error || ("Waiting for the first " + what)];
+  };
+  const bf = (cfg && cfg.backfill) || s.backfill || {};
+  const hub = s.health === "live" ? ["live", "Live · last packet " + ago(s.age_s || 0) + " ago"]
+    : s.health === "stale" ? ["stale", "Quiet for " + ago(s.age_s || 0)]
+    : s.health === "offline" ? ["offline", "Nothing heard for " + ago(s.age_s || 0)]
+    : ["waiting", "No packets yet on UDP " + (s.port || "")];
+  const alerts = s.alerts || {};
+  return [
+    {id: "hub", name: "Your station", state: hub,
+     note: "The hub broadcasts on your own network and this listens. Nothing leaves the " +
+           "house for any of it. If this is quiet, check that the server and the hub share a subnet."},
+    {id: "wf", name: "WeatherFlow history", secret: {
+        field: "token", isSet: !!(cfg && cfg.token_set),
+        placeholder: "Paste your personal access token", savedText: "Saved. Backfill starting."},
+     state: !(cfg && cfg.token_set) ? ["waiting", "Not set up — optional, needs a token"]
+       : bf.status === "ok" ? ["live", "Working" + (bf.added ? " · " + bf.added + " observations merged" : "")]
+       : bf.status === "failed" ? ["offline", bf.error || "Failing"]
+       : ["waiting", bf.status || "Starting"],
+     note: 'Optional. With it the daily record is filled in from your station\'s own archive, ' +
+       'back to the day it was installed. Get a token at <a href="https://tempestwx.com/settings/tokens" ' +
+       'target="_blank" rel="noopener noreferrer">tempestwx.com</a>. Stored on the server and ' +
+       'never sent back to a browser, including this one.'},
+    {id: "forecast", name: "Forecast", state: fetched(s.forecast, "forecast"),
+     note: "Open-Meteo. Free, no account and no key."},
+    {id: "nws", name: "Alerts and the forecaster's words",
+     state: alerts.error ? ["stale", "Alerts failing — " + alerts.error] : fetched(s.nws, "forecast text"),
+     note: "The US National Weather Service. No key. Outside its coverage it simply returns nothing."},
+    {id: "obs", name: "What is falling nearby", state: fetched(s.precip_obs, "observation"),
+     note: "The two nearest NWS stations, for snow the Tempest cannot see."},
+    {id: "air", name: "Air quality", state: fetched(s.air, "reading"),
+     note: "Open-Meteo. Free, no account and no key."},
+    {id: "pollen", name: "Pollen", secret: {
+        field: "pollen_key", isSet: !!(cfg && cfg.pollen_key_set),
+        placeholder: "Paste your Google Pollen API key", savedText: "Saved. Fetching pollen."},
+     state: !(cfg && cfg.pollen_key_set) ? ["waiting", "Not set up — the Pollen card needs a key"]
+                                         : fetched(s.pollen, "count"),
+     note: 'Only needed for the Pollen card. No free keyless source covers North America. Enable ' +
+       'the Pollen API in a <a href="https://console.cloud.google.com/" target="_blank" ' +
+       'rel="noopener noreferrer">Google Cloud</a> project and paste the key here.'},
+    {id: "internet", name: "Internet", secret: {
+        field: "speedtest_token", isSet: !!(cfg && cfg.speedtest_token_set),
+        placeholder: "Paste your Speedtest Tracker API token", savedText: "Saved. Fetching results."},
+     state: !(cfg && cfg.speedtest_token_set) ? ["waiting", "Not set up — the Internet card needs a token"]
+                                              : fetched(s.internet, "result"),
+     note: "Only needed for the Internet card. Create a token under Profile → API tokens in your " +
+       "own Speedtest Tracker, with the results:read ability. Where the tracker lives is set on " +
+       "the server: see Record and about."},
+  ];
+}
+
+function sourcesPanel(panel){
+  const sheet = el("div", "sheet wide");
+  sheet.innerHTML = '<h2>Where the data comes from</h2>' +
+    '<p class="note">Each line says whether it is working now. Open one for what it is and, ' +
+    'where it needs one, its key. Keys are stored on the server and never shown again.</p>';
+  for (const src of sourceList()) {
+    const d = el("details", "source");
+    d.dataset.source = src.id;
+    if (openSource === src.id) d.open = true;
+    d.addEventListener("toggle", () => {
+      if (d.open) openSource = src.id; else if (openSource === src.id) openSource = null;
+    });
+    const sum = el("summary");
+    sum.innerHTML = '<span class="dot"></span><span class="who"><span>' + esc(src.name) +
+      (src.secret ? ' <small style="display:inline">· ' + (src.secret.isSet ? "key saved" : "needs a key") + '</small>' : '') +
+      '</span><small class="line"></small></span><span class="chev" aria-hidden="true">›</span>';
+    d.appendChild(sum);
+    const inside = el("div", "inside");
+    inside.appendChild(el("p", "note", src.note));
+    if (src.secret) inside.appendChild(secretField(src.secret));
+    d.appendChild(inside);
+    sheet.appendChild(d);
+  }
+  panel.appendChild(sheet);
+}
+
+/* The status lines, brought up to date in place. The page is not rebuilt
+   every two seconds like the cards are — somebody may be typing a key into
+   it — so only the dots and the words move. */
+function refreshSources(){
+  const rows = document.querySelectorAll("#settings .source");
+  if (!rows.length) return;
+  const byId = new Map(sourceList().map(x => [x.id, x]));
+  for (const d of rows) {
+    const src = byId.get(d.dataset.source);
+    if (!src) continue;
+    d.querySelector(".dot").className = "dot " + src.state[0];
+    const line = d.querySelector(".line");
+    line.textContent = src.state[1];
+    line.className = "line" + (src.state[0] === "offline" || src.state[0] === "stale" ? " bad" : "");
+  }
+}
+
+/* One key: a reveal toggle, checks on what was pasted, and never the stored
+   value, because the server does not send it. */
+function secretField(opts){
+  const wrap = el("div");
+  const field = document.createElement("input");
+  field.type = "password";
+  field.autocomplete = "off";
+  field.spellcheck = false;
+  field.placeholder = opts.isSet ? "A key is saved — type to replace it" : opts.placeholder;
+  field.setAttribute("aria-label", opts.placeholder);
+
+  const EYE = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none">' +
+    '<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" ' +
+    'stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" ' +
+    'stroke="currentColor" stroke-width="1.7"/>';
+  const EYE_OPEN = EYE + '</svg>';
+  const EYE_SHUT = EYE + '<path d="M4 20 20 4" stroke="currentColor" ' +
+    'stroke-width="1.7" stroke-linecap="round"/></svg>';
+  const eye = el("button", null, EYE_OPEN);
+  eye.type = "button";
+  eye.style.cssText = "padding:.5em .8em;line-height:0";
+  eye.setAttribute("aria-label", "Show what was typed");
+  eye.addEventListener("click", () => {
+    const show = field.type === "password";
+    field.type = show ? "text" : "password";
+    eye.innerHTML = show ? EYE_SHUT : EYE_OPEN;
+    eye.setAttribute("aria-pressed", show ? "true" : "false");
+    field.focus();
+  });
+
+  const hint = el("div", "state");
+  field.addEventListener("input", () => {
+    const v = field.value;
+    if (!v) { hint.className = "state"; hint.textContent = ""; return; }
+    const notes = [v.length + " characters"];
+    let bad = false;
+    if (v !== v.trim()) { notes.push("leading or trailing space — trimmed on save"); bad = true; }
+    if (/\s/.test(v.trim())) { notes.push("contains a space in the middle"); bad = true; }
+    if (/[‘’“”]/.test(v)) { notes.push("contains a curly quote"); bad = true; }
+    hint.className = "state" + (bad ? " bad" : " ok");
+    hint.textContent = notes.join(" · ");
+  });
+
+  const state = el("div", "state");
+  const save = el("button", "primary", "Save");
+  save.type = "button";
+  save.addEventListener("click", async () => {
+    if (!field.value.trim()) { state.className = "state bad"; state.textContent = "Nothing to save."; return; }
+    const ok = await saveConfig({[opts.field]: field.value}, state);
+    if (ok) { await loadConfig(); renderSettings(); }
+  });
+  const row = el("div", "row");
+  row.append(field, eye, save);
+  if (opts.isSet) {
+    const clear = el("button", null, "Remove the key");
+    clear.type = "button";
+    clear.addEventListener("click", async () => {
+      const ok = await saveConfig({[opts.field]: ""}, state);
+      if (ok) { await loadConfig(); renderSettings(); }
+    });
+    row.appendChild(clear);
+  }
+  wrap.append(row, hint, state);
+  return wrap;
+}
+
+/* ── Record and about ────────────────────────────────────────────────── */
+function recordPanel(panel){
+  const rec = el("div", "sheet");
+  rec.appendChild(recordSection());
+
+  const srv = el("div", "sheet");
+  srv.innerHTML = '<h2>How the server was started</h2>' +
+    '<p class="note">Read once at start, from <code>docker-compose.yml</code> on the machine ' +
+    'that runs this. To change one, edit that file and restart the container; each line names ' +
+    'its variable.</p>';
+  const kv = el("div", "kv");
+  for (const row of (cfg && cfg.server) || []) {
+    kv.appendChild(el("span", "k2", esc(row.what)));
+    kv.appendChild(el("span", "v2" + (row.value ? "" : " unset"),
+      esc(row.value || "not set") + "<small>" + esc(row.env) + "</small>"));
+  }
+  srv.appendChild(kv);
+
+  const s = last || {};
+  const about = el("div", "sheet");
+  about.innerHTML = '<h2>About</h2>';
+  const kv2 = el("div", "kv");
+  const fact = (k, v, small) => {
+    kv2.appendChild(el("span", "k2", esc(k)));
+    kv2.appendChild(el("span", "v2", esc(v) + (small ? "<small>" + esc(small) + "</small>" : "")));
+  };
+  fact("Version", s.version || DASH);
+  fact("Page", s.ui || DASH, "changes with every deploy; the page reloads itself when it does");
+  fact("Server up", s.uptime_s == null ? DASH : ago(s.uptime_s));
+  fact("Station", s.serial || DASH, s.hub_serial ? "through hub " + s.hub_serial : "");
+  about.appendChild(kv2);
+  const links = el("div", "tools");
+  links.style.marginTop = "1em";
+  for (const [href, text] of [["testall", "Every picture the dashboard can draw"],
+                              ["?testalert", "Preview the alert banner"],
+                              ["?teststorm=overhead", "Preview a storm overhead"]]) {
+    const a = el("a", "linkbtn", esc(text));
+    a.href = href;
+    links.appendChild(a);
+  }
+  about.appendChild(links);
+  panel.append(rec, srv, about);
 }
 
 /* Drag rows in the settings list. */
-function wireRowDrag(list){
+function wireRowDrag(list, moved){
   let src = null;
   list.addEventListener("dragstart", e => {
     src = e.target.closest(".cardrow");
@@ -3798,6 +4174,7 @@ function wireRowDrag(list){
     list.insertBefore(src, rows.indexOf(src) < rows.indexOf(over)
                            ? over.nextSibling : over);
     [...list.children].forEach(c => c.classList.remove("drag-over"));
+    if (moved) moved();
   });
 }
 
@@ -4688,6 +5065,7 @@ function render(s){
           Date.now() - outlookSince > OUTLOOK_IDLE_MS && !TESTALL) toggleOutlook(false);
       else renderOutlook();
     }
+    if (document.body.classList.contains("show-settings")) refreshSources();
     updateFooter(s);
     return;                                   // cards are hidden; skip the work
   }
@@ -4981,15 +5359,29 @@ function toggleMap(force){
   pageTurn(swap);
 }
 
-function toggleSettings(force){
+/* A history entry, like the outlook, the Internet page and the almanac have.
+   Without one the TV remote's Back button — which is history-back — did not
+   close settings, it left the dashboard. */
+let leavingSettings = false;
+
+function toggleSettings(force, fromHistory){
+  const open = document.body.classList.contains("show-settings");
+  const on = force != null ? force : !open;
+  if (!fromHistory) {
+    const ours = !!(history.state && history.state.settings);
+    if (!on && ours) {
+      if (!leavingSettings) { leavingSettings = true; history.back(); }
+      return;                               // popstate does the closing
+    }
+    if (on && !ours) history.pushState({settings: true}, "");
+  }
   const swap = () => {
-    const on = force != null ? force
-      : !document.body.classList.contains("show-settings");
     document.body.classList.toggle("show-settings", on);
-    if (on) document.body.classList.remove("show-map", "show-outlook");
+    if (on) document.body.classList.remove("show-map", "show-outlook", "show-net", "show-almanac");
     document.getElementById("settings").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("setBtn").setAttribute("aria-pressed", on ? "true" : "false");
     if (on) { recordInfo = null; renderSettings(); }   // records move; ask again
+    else if (last) render(last);                       // a unit may have changed
   };
   pageTurn(swap);
 }
@@ -5035,6 +5427,12 @@ window.addEventListener("popstate", () => {
   leavingOutlook = false;
   leavingNet = false;
   leavingAlmanac = false;
+  leavingSettings = false;
+  const set = !!(history.state && history.state.settings);
+  if (set !== document.body.classList.contains("show-settings")) {
+    if (set && !cfg) loadConfig().then(() => toggleSettings(true, true));
+    else toggleSettings(set, true);
+  }
   const alm = !!(history.state && history.state.almanac);
   if (alm !== document.body.classList.contains("show-almanac"))
     toggleAlmanac(alm, true);
@@ -5115,6 +5513,11 @@ document.getElementById("themeBtn").addEventListener("click", toggleTheme);
 document.getElementById("tvBtn").addEventListener("click",
   () => setTv(!document.body.classList.contains("tv")));
 document.addEventListener("keydown", (e) => {
+  // A token with an "s" in it closed the settings page it was being typed
+  // into, and one with a "t" changed the theme on the way.
+  const typing = e.target && e.target.closest && e.target.closest("input, textarea, select, [contenteditable]");
+  if (typing && e.key !== "Escape") return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === "t") toggleTheme();
   if (e.key === "f") setTv(!document.body.classList.contains("tv"));
   if (e.key === "w") toggleMap();
@@ -5155,6 +5558,7 @@ document.addEventListener("keydown", (e) => {
   if (history.state && history.state.netpage) toggleNet(true, true);
   loadPrefs(null);
   if (history.state && history.state.almanac) toggleAlmanac(true, true);
+  if (history.state && history.state.settings) loadConfig().then(() => toggleSettings(true, true));
   tickClock();
   setInterval(tickClock, 1000);
   loadConfig();

@@ -84,6 +84,14 @@ in `web/fonts/`. Edit it directly.
   overlapped its own caption because the space was calculated rather than
   handed over. The fix, used since by the Temperature trace, is a flex child
   with a `max-height`: it takes what is going spare and overlap is impossible.
+- **Settings is not rebuilt on the two-second tick** — somebody may be typing
+  a key into it. `refreshSources()` updates the status dots in place instead.
+  Which tab and which source are open live in module variables. Every page
+  that replaces the grid (outlook, Internet, almanac, settings) pushes a
+  history entry, because the TV remote's Back is history-back: a page without
+  one makes Back leave the dashboard.
+- **Keyboard shortcuts stand down while a field has focus.** A new shortcut
+  goes inside that guard in the one `keydown` listener.
 - **`.dockerignore` patterns match the whole path from the context root**, so
   `._*` catches the top level only and `**/._*` is needed for nested files.
 

@@ -637,7 +637,11 @@ console.log = (...args) => {
           if (id === 'hardware') bad.push(at + ': station card ' + why);
 
         await page.$eval('#setBtn', el => el.click());
+        await page.waitForTimeout(800);
+        await page.$eval('.settabs button[data-tab="record"]', el => el.click());
         await page.waitForTimeout(1500);
+        await page.$eval('#reviewRecords summary', el => el.click());
+        await page.waitForTimeout(300);
         const sec = await page.evaluate(() => {
           const el = document.getElementById('recordsec');
           const link = el && el.querySelector('a.linkbtn');
@@ -683,6 +687,144 @@ console.log = (...args) => {
     } catch (e) { bad.push('CSV: ' + e.message); }
     failures += bad.length;
     console.log(bad.length ? '  FAIL daily record' : '  ok   daily record');
+    for (const why of bad) console.log('         ' + why);
+  });
+
+  // ── the settings page ─────────────────────────────────────────────────
+  // Its faults were all of a kind a screenshot does not show: Back left the
+  // dashboard, a key with an "s" in it closed the page, a change was lost
+  // without its button, nothing was large enough for a remote to press.
+  section("the settings page: tabs, autosave, live status and the way out", async () => {
+    const bad = [];
+    await abreast([[1920, 1080], [1024, 768], [414, 896]], async ([w, h]) => {
+      const at = w + 'x' + h;
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      const errs = [], posts = [];
+      page.on('pageerror', e => errs.push(e.message));
+      const s = freshen();
+      s.pollen = Object.assign({}, s.pollen, {error: 'Pollen key rejected (HTTP 403)'});
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(s) }));
+      const CFG = {slots: ['temperature', 'wind', 'pollen'], cards: STATE.slots.slice(),
+                   token_set: true, pollen_key_set: true, speedtest_token_set: false,
+                   backfill: {status: 'ok', added: 12, error: ''},
+                   server: [{what: 'Station name', value: '', env: 'TEMPEST_NAME'},
+                            {what: 'Internet plan', value: '1000 down · 40 up Mbps', env: 'TEMPEST_PLAN_DOWN / _UP'}]};
+      await page.route('**/api/config', route => {
+        if (route.request().method() === 'POST') {
+          const body = route.request().postDataJSON();
+          posts.push(body);
+          if (body.slots) CFG.slots = body.slots;
+          return route.fulfill({ status: 200, contentType: 'application/json',
+                                 body: JSON.stringify(Object.assign({ok: true, changed: []}, CFG)) });
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(CFG) });
+      });
+      const tab = async (id) => { await page.$eval('.settabs button[data-tab="' + id + '"]', el => el.click());
+                                  await page.waitForTimeout(500); };
+      const open = () => page.evaluate(() => document.body.classList.contains('show-settings'));
+      try {
+        await page.goto(BASE, { waitUntil: 'networkidle' });
+        await page.waitForTimeout(SETTLE_MS);
+        await page.$eval('#setBtn', el => el.click());
+        await page.waitForTimeout(900);
+        await tab('layout');
+
+        // Everything pressable is big enough to press, on every tab.
+        for (const id of ['layout', 'screen', 'sources', 'record']) {
+          await tab(id);
+          const small = await page.evaluate(() => [...document.querySelectorAll(
+              '#settings button, #settings label.tick, #settings summary, #settings a.linkbtn, #settings input[type=password]')]
+            .filter(e => e.offsetParent && !e.classList.contains('needs'))
+            .map(e => ({t: (e.getAttribute('aria-label') || e.textContent).trim().slice(0, 24), r: e.getBoundingClientRect()}))
+            .filter(x => x.r.height < 39.5 || x.r.width < 39.5).map(x => x.t + ' ' + Math.round(x.r.width) + 'x' + Math.round(x.r.height)));
+          if (small.length) bad.push(at + ' ' + id + ': too small to press: ' + small.slice(0, 4).join(', '));
+          const wide = await page.evaluate(() => ({
+            page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            sheets: [...document.querySelectorAll('#settings .sheet')].filter(e => e.scrollWidth > e.clientWidth + 1).length }));
+          if (wide.page > 1) bad.push(at + ' ' + id + ': the page scrolls sideways by ' + wide.page + 'px');
+          if (wide.sheets) bad.push(at + ' ' + id + ': ' + wide.sheets + ' panel(s) wider than themselves');
+        }
+        await tab('record');
+        const cols = await page.evaluate(() => new Set([...document.querySelectorAll('#settings .sheet')]
+          .map(e => Math.round(e.getBoundingClientRect().left))).size);
+        if (w >= 1900 && cols < 3) bad.push(at + ': ' + cols + ' column(s) on a screen this wide');
+        if (w < 720 && cols !== 1) bad.push(at + ': ' + cols + ' columns on a phone');
+
+        // Layout: the names the cards use, and saved without a button.
+        await tab('layout');
+        const names = await page.$$eval('.cardrow .nm > span', els => els.map(e => e.textContent));
+        if (!names.includes('Station') || !names.includes('Air quality') || names.includes('hardware'))
+          bad.push(at + ': the card list says ' + names.slice(-3).join(', '));
+        if (await page.$('#settings button.primary:not(#setDone)')) bad.push(at + ': there is still a save button on the layout');
+        await page.$eval('.cardrow[data-card="wind"] .up', el => el.click());
+        await page.waitForTimeout(1100);
+        const moved = posts[posts.length - 1] || {};
+        if (JSON.stringify(moved.slots) !== JSON.stringify(['wind', 'temperature', 'pollen']))
+          bad.push(at + ': moving Wind up saved ' + JSON.stringify(moved.slots));
+        const shape = await page.$eval('#gridShape', el => el.textContent);
+        if (!/3 cards · 2 across, 2 rows/.test(shape)) bad.push(at + ': the preview says "' + shape + '"');
+        if (await page.$$eval('.gridpreview div', els => els.length) !== 3) bad.push(at + ': the preview does not have three boxes');
+        // The last card cannot be switched off.
+        for (const c of ['wind', 'temperature', 'pollen'])
+          await page.$eval('.cardrow[data-card="' + c + '"] input', el => el.click());
+        await page.waitForTimeout(1100);
+        const left = await page.$$eval('.cardrow input:checked', els => els.length);
+        if (left !== 1) bad.push(at + ': ' + left + ' cards left ticked after unticking all three');
+        if ((posts[posts.length - 1].slots || []).length !== 1) bad.push(at + ': an empty layout was saved');
+        const needs = await page.$$eval('.cardrow .needs', els => els.map(e => e.closest('.cardrow').dataset.card));
+        if (needs.join() !== 'internet') bad.push(at + ': "needs a key" is on [' + needs + '], expected internet only');
+        await page.$eval('.cardrow .needs', el => el.click());
+        await page.waitForTimeout(500);
+        if (!await page.$eval('.source[data-source="internet"]', el => el.open).catch(() => false))
+          bad.push(at + ': "needs a key" did not open the Internet source');
+
+        // Data sources: what is working, not what was once typed.
+        const lines = await page.$$eval('.source', els => Object.fromEntries(els.map(e =>
+          [e.dataset.source, e.querySelector('.line').textContent + ' [' + e.querySelector('.dot').className + ']'])));
+        if (!/key rejected/.test(lines.pollen || '') || !/stale/.test(lines.pollen || ''))
+          bad.push(at + ': a rejected pollen key reads "' + lines.pollen + '"');
+        if (!/Working/.test(lines.air || '') || !/live/.test(lines.air || '')) bad.push(at + ': air quality reads "' + lines.air + '"');
+        if (!/Not set up/.test(lines.internet || '')) bad.push(at + ': an unset token reads "' + lines.internet + '"');
+        if (/configured/i.test(Object.values(lines).join(' '))) bad.push(at + ': it still says "configured"');
+        // A key with shortcut letters in it must not close the page or change the theme.
+        const theme = await page.evaluate(() => document.documentElement.dataset.theme);
+        await page.focus('.source[data-source="internet"] input');
+        await page.keyboard.type('stfwdna-token');
+        if (!await open()) bad.push(at + ': typing a key closed the settings page');
+        if (await page.evaluate(() => document.documentElement.dataset.theme) !== theme) bad.push(at + ': typing a key changed the theme');
+        if (await page.$eval('.source[data-source="internet"] input', el => el.value) !== 'stfwdna-token')
+          bad.push(at + ': the field did not keep what was typed');
+
+        // This screen: a unit chosen here is the unit on the cards.
+        await tab('screen');
+        await page.$eval('.seg[aria-label="Temperature"] button[data-value="°C"]', el => el.click());
+        await page.$eval('.seg[aria-label="Rain"] button[data-value="mm"]', el => el.click());
+        const stored = await page.evaluate(() => [localStorage.getItem('unit.temp'), localStorage.getItem('unit.rain')]);
+        if (stored.join() !== '°C,mm') bad.push(at + ': units stored as ' + stored);
+
+        // Out: Done, and Back, and neither leaves the dashboard.
+        await page.$eval('#setDone', el => el.click());
+        await page.waitForTimeout(900);
+        if (await open()) bad.push(at + ': Done did not close it');
+        const hero = await page.$eval('#card-temp .hero .u', el => el.textContent).catch(() => 'nothing');
+        if (hero !== '°C') bad.push(at + ': after choosing °C the Temperature card says ' + hero);
+        await page.keyboard.press('s');
+        await page.waitForTimeout(900);
+        if (!await open()) bad.push(at + ': s did not open it');
+        if (await page.$eval('.settabs button[aria-selected="true"]', el => el.dataset.tab) !== 'screen')
+          bad.push(at + ': it did not come back on the tab it was left on');
+        await page.goBack();
+        await page.waitForTimeout(900);
+        if (await open()) bad.push(at + ': Back did not close it');
+        if (!/localhost|127\.0\.0\.1/.test(page.url())) bad.push(at + ': Back left the dashboard for ' + page.url());
+        if (!await page.evaluate(() => document.querySelectorAll('#grid .card[id]').length)) bad.push(at + ': the cards did not come back');
+      } catch (e) { bad.push(at + ': ' + e.message.split('\n')[0]); }
+      for (const m of errs) bad.push(at + ': pageerror: ' + m);
+      await page.close();
+    });
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL settings page' : '  ok   settings page');
     for (const why of bad) console.log('         ' + why);
   });
 

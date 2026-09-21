@@ -1854,6 +1854,42 @@ class Dashboard:
                             if self.backfill else "off")
         return body
 
+    def server_config(self):
+        """What this server was started with, for the settings page to show.
+
+        None of it can be changed from a browser — it is read once, at start,
+        from the environment — but until now finding out what was set meant
+        an SSH session and a look at the compose file. Each row names the
+        variable that sets it. No secrets: those are not here to show.
+        """
+        a = self.args
+        months = lambda v: "twelve monthly figures" if v else ""
+        rows = [
+            ("Station name", a.name or "", "TEMPEST_NAME"),
+            ("Location", "" if a.lat is None or a.lon is None
+                else "%.2f, %.2f" % (a.lat, a.lon), "TEMPEST_LAT / TEMPEST_LON"),
+            ("Units a new browser starts in", " · ".join(
+                [a.temp_unit, a.wind_unit, a.pres_unit, a.rain_unit, a.dist_unit]),
+             "TEMPEST_TEMP_UNIT and its kin"),
+            ("Normal rainfall", months(self.rain_monthly), "TEMPEST_RAIN_MONTHLY"),
+            ("Normal highs and lows", months(self.temp_normal),
+             "TEMPEST_TEMP_NORMAL_HIGH / _LOW"),
+            ("Internet plan", "" if not (a.plan_down or a.plan_up)
+                else "%g down · %g up Mbps" % (a.plan_down or 0, a.plan_up or 0),
+             "TEMPEST_PLAN_DOWN / _UP"),
+            ("Speedtest Tracker", a.speedtest_url or "", "TEMPEST_SPEEDTEST_URL"),
+            ("Observation stations", a.obs_stations or "nearest two, chosen by distance",
+             "TEMPEST_OBS_STATIONS"),
+            ("Hub broadcasts on", "UDP %s" % a.udp_port, "TEMPEST_UDP_PORT"),
+            ("History kept in", a.data_dir, "TEMPEST_DATA_DIR"),
+        ]
+        off = [name for name, on in (("forecast", a.forecast), ("alerts", a.alerts),
+                                     ("NWS forecast", a.nws),
+                                     ("observations", a.observations)) if not on]
+        if off:
+            rows.append(("Switched off", ", ".join(off), "TEMPEST_NO_…"))
+        return [{"what": w, "value": v, "env": e} for w, v, e in rows]
+
     RECORD_LABELS = (("hi", "Hottest"), ("lo", "Coldest"),
                      ("gust", "Strongest gust"), ("rain", "Wettest day"),
                      ("pmin", "Lowest pressure"), ("pmax", "Highest pressure"),
@@ -2120,6 +2156,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/config":
                 cfg = self.server.dashboard.config.public()
                 cfg["backfill"] = self.server.dashboard.snapshot()["backfill"]
+                cfg["server"] = self.server.dashboard.server_config()
                 self._send(200, json.dumps(cfg),
                            "application/json; charset=utf-8")
             elif path == "/healthz":

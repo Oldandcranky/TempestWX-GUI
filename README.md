@@ -80,8 +80,9 @@ Four more pages, each behind an icon in the footer:
   range with the rain standing on the floor, the dry streak, the warmest day
   since, first and last frost, the station's records for gust, rain, pressure,
   lightning, sun and temperature swing, and a column for each month.
-- **Settings** (`s`) — choose and reorder cards, and set the optional
-  WeatherFlow token.
+- **Settings** (`s`) — four tabs: the card layout; this browser's units,
+  theme and TV layout; every data source with whether it is working and its
+  key; and the daily record, how the server was started, and the version.
 
 Switching between them uses the browser's native View Transitions, so there is
 no animation library involved.
@@ -264,7 +265,7 @@ and sunshine — back to the day the station was installed.
 | `/api/days.csv` | The whole daily record, one row a day. `?temp=F&wind=mph&pres=inHg&rain=in` choose the units |
 | `/api/record` | The all-time records, what has been struck from them, and whether the record is being saved |
 | `/api/almanac` | Streaks, season marks, records, a row per month and a year of daily rows. `?warm=&hot=&frost=` set the thresholds, in °C |
-| `/api/config` | The card layout, and whether a token is set (never the token) |
+| `/api/config` | The card layout, whether each key is set (never the key), and what the server was started with |
 | `/healthz` | `{"ok": true, "health": "live", "saving": true}` — `saving` is false when history cannot be written |
 
 `/api/state` is a stable shape. If you want to feed this into Home Assistant,
@@ -358,6 +359,42 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The settings page, rebuilt.** It had grown a section at a time into one
+  column 640 pixels wide and 2,100 tall, on screens three times that width.
+  Four tabs now — Layout, This screen, Data sources, Record and about — each
+  a grid of panels that takes the width it is given, and it reopens on the
+  tab it was left on.
+  - **The TV's Back button left the dashboard.** Settings was the one page
+    without a history entry, and the remote's Back is history-back. It has
+    one now, and a Done button.
+  - **A key with an "s" in it closed the page it was being typed into**, and
+    one with a "t" changed the theme on the way. Shortcuts stand down while a
+    field has the focus.
+  - **The layout saves as it changes**, as dragging a card on the dashboard
+    always did; the Save button's way lost the change if you left without
+    pressing it. Up and down buttons beside the drag handle, for a remote or
+    a keyboard; every target at least 44 pixels where the checkboxes were 14;
+    the last card cannot be switched off; and a small drawing of the grid
+    the choice makes.
+  - Cards are listed by the names on the cards — "Station" and "Air quality",
+    not "hardware" and "air" — with a line saying what each shows, and "needs
+    a key" on the two that do, which opens the key.
+  - **Data sources says what is working.** "Status: configured" only ever
+    meant something had once been typed into the box; a dead key read the
+    same as a live one. Each source — the hub, WeatherFlow, the forecast, the
+    weather service, air quality, pollen, Speedtest — has a dot and a line
+    from the same report the cards use, kept live while the page is open, and
+    opens to its explanation and its key.
+  - **This screen**: units, theme and TV layout, which belong to the browser
+    and were reachable only through footer icons a finger wide — the units
+    only by knowing the big number on a card is a button. The rain unit can
+    be chosen again; it had been left following the server since its figure
+    stopped being a tap target.
+  - **How the server was started**, read-only: station name, location, plan
+    rates, normals, the Speedtest URL, each with the variable that sets it.
+    Finding out used to mean SSH. And an About panel with the version, the
+    deployed page's digest and the preview links.
+  - The nine "Not real" buttons fold away behind "Review the records".
 - **The daily record is looked after.** It is years of data at three hundred
   bytes a day, and there were four ways to lose it without being told.
   - It shared a file with the 48 hours of samples, rewritten whole every five

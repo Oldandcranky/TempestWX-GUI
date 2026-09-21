@@ -290,7 +290,8 @@ This is meant to sit on a screen nobody touches, so it looks after itself.
 ## On a TV
 
 Add `?tv` for the big-screen layout: larger type throughout, no cursor, no
-controls. `f` toggles it.
+controls. `f` toggles it. With the controls gone, settings is behind the
+clock: hold it for a second, or click it three times.
 
 The whole page drifts through a few pixels on a slow cycle, and TV mode pulls
 peak brightness back slightly. Both reduce the risk of burning a static layout
@@ -359,6 +360,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Settings can be reached on the TV.** The TV layout hides the footer's
+  buttons, which left settings behind an `s` key no remote has. Hold the
+  clock for a second — it fades while held, so a hand on a remote can see the
+  press has been noticed — or click it three times. The second way is there
+  because a television may report a held button as nothing but a click when
+  it is let go. The clock and date are one padded target, since a remote's
+  pointer finds a small one hard.
 - **The settings page, rebuilt.** It had grown a section at a time into one
   column 640 pixels wide and 2,100 tall, on screens three times that width.
   Four tabs now — Layout, This screen, Data sources, Record and about — each

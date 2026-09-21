@@ -558,6 +558,16 @@ footer{
   font-size:clamp(11px,.95vw,15px);
   border-top:1px solid var(--card-edge);
 }
+/* The clock and the date are one target: held for a second, or clicked three
+   times, they open settings. The TV layout hides the footer's buttons, and
+   settings could then be opened only with a key no remote has. Both together,
+   and padded, because a remote's pointer finds a small target hard. While it
+   is held it fades, so a hand on a remote can see the press has been noticed. */
+.clockhold{display:inline-flex;align-items:baseline;gap:inherit;padding:.7em .7em;
+           margin:-.7em -.7em;border-radius:var(--inset-radius);
+           -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+           touch-action:manipulation;transition:opacity .2s,background-color .2s}
+.clockhold.holding{opacity:.45;background:var(--inset);transition:opacity .9s linear,background-color .2s}
 footer .clock{font-weight:700;font-size:1.5em}
 footer .date{color:var(--label)}
 footer .spacer{flex:1}
@@ -1159,8 +1169,10 @@ body.tv .sheet .linkbtn{display:inline-flex}
   <div id="netpage" aria-hidden="true"></div>
   <div id="almanac" aria-hidden="true"></div>
   <footer>
-    <span class="clock" id="clock">--:--:--</span>
-    <span class="date" id="date"></span>
+    <span class="clockhold" id="clockHold" title="Hold for settings">
+      <span class="clock" id="clock">--:--:--</span>
+      <span class="date" id="date"></span>
+    </span>
     <span class="dot" id="footdot"></span>
     <span class="meta" id="station"></span>
     <span class="spacer"></span>
@@ -3908,7 +3920,8 @@ function screenPanel(panel){
   const tv = el("span", "v2");
   tv.appendChild(segmented([["off", "Off"], ["on", "On"]],
     document.body.classList.contains("tv") ? "on" : "off", (v) => setTv(v === "on"), "TV layout"));
-  tv.appendChild(el("small", null, "Larger type, no cursor and no footer buttons. " +
+  tv.appendChild(el("small", null, "Larger type, no cursor and no footer buttons. Hold the clock " +
+    "for a second, or click it three times, to come back here. " +
     "Add <code style=\"white-space:nowrap\">?tv</code> to the address to start in it."));
   kv2.appendChild(tv);
   look.appendChild(kv2);
@@ -5422,6 +5435,42 @@ function toggleOutlook(force, fromHistory){
 document.getElementById("outBtn").addEventListener("click", () => toggleOutlook());
 document.getElementById("netBtn").addEventListener("click", () => toggleNet());
 document.getElementById("almBtn").addEventListener("click", () => toggleAlmanac());
+
+/* Settings from the clock: a press held for a second, or three clicks inside
+   a second and a half. The second is there because nobody here can say how a
+   given television reports a held button — some send the press and the
+   release, some only a click when it is let go. */
+const HOLD_FOR_SETTINGS_MS = 1000;
+(() => {
+  const target = document.getElementById("clockHold");
+  let timer = null, clicks = [], opened = false;
+  const openIt = async () => {
+    opened = true;
+    target.classList.remove("holding");
+    if (document.body.classList.contains("show-settings")) return;
+    if (!cfg) await loadConfig();
+    toggleSettings(true);
+  };
+  const cancel = () => { clearTimeout(timer); timer = null; target.classList.remove("holding"); };
+  target.addEventListener("pointerdown", (e) => {
+    if (e.button) return;                       // the main button only
+    opened = false;
+    cancel();
+    target.classList.add("holding");
+    timer = setTimeout(openIt, HOLD_FOR_SETTINGS_MS);
+  });
+  for (const ev of ["pointerup", "pointerleave", "pointercancel"])
+    target.addEventListener(ev, cancel);
+  // A long press on a touch screen would otherwise bring up the copy menu.
+  target.addEventListener("contextmenu", (e) => e.preventDefault());
+  target.addEventListener("click", () => {
+    if (opened) { opened = false; clicks = []; return; }    // the hold already did it
+    const now = Date.now();
+    clicks = clicks.filter(t => now - t < 1500);
+    clicks.push(now);
+    if (clicks.length >= 3) { clicks = []; openIt(); }
+  });
+})();
 
 window.addEventListener("popstate", () => {
   leavingOutlook = false;

@@ -1636,6 +1636,50 @@ console.log = (...args) => {
       await page.$eval('#card-internet .face.front .card-head', el => el.click());
       await page.waitForTimeout(600);
       if (!await flipped()) bad.push('the Internet header turned it twice, or not at all');
+      // Settings on the TV, where the footer's buttons are hidden and there is
+      // no "s" key: the clock, held for a second, or clicked three times. This
+      // lives in the solo section because it times a press.
+      const settingsOpen = () => page.evaluate(() => document.body.classList.contains('show-settings'));
+      await page.evaluate(() => setTv(true));
+      await page.waitForTimeout(2300);                      // a render in the larger type
+      const clock = await page.evaluate(() => { const r = document.getElementById('clockHold').getBoundingClientRect();
+        return {x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height,
+                buttons: getComputedStyle(document.querySelector('footer .controls')).display}; });
+      if (clock.buttons !== 'none') bad.push('the footer buttons show in TV layout, so this test proves nothing');
+      if (clock.h < 40 || clock.w < 120) bad.push('the clock is a ' + Math.round(clock.w) + 'x' + Math.round(clock.h) + ' target for a remote');
+      await page.mouse.move(clock.x, clock.y);
+      await page.mouse.down(); await page.waitForTimeout(250); await page.mouse.up();
+      await page.waitForTimeout(700);
+      if (await settingsOpen()) bad.push('a short press on the clock opened settings');
+      await page.waitForTimeout(1600);                      // let that click age out
+      await page.mouse.down();
+      await page.waitForTimeout(500);
+      if (!await page.evaluate(() => document.getElementById('clockHold').classList.contains('holding')))
+        bad.push('a held clock gives no sign of being held');
+      await page.waitForTimeout(800);
+      await page.mouse.up();
+      await page.waitForTimeout(900);
+      if (!await settingsOpen()) bad.push('holding the clock did not open settings');
+      if (!await page.$('#setDone')) bad.push('settings opened from the clock has no Done button');
+      await page.goBack();
+      await page.waitForTimeout(900);
+      if (await settingsOpen()) bad.push('Back did not close settings opened from the clock');
+      if (!await page.evaluate(() => document.querySelectorAll('#grid .card[id]').length))
+        bad.push('the cards did not come back after settings');
+      // A press that slides off the clock is not a hold.
+      await page.mouse.move(clock.x, clock.y);
+      await page.mouse.down(); await page.waitForTimeout(300);
+      await page.mouse.move(clock.x + 600, clock.y - 300); await page.waitForTimeout(1100);
+      await page.mouse.up(); await page.waitForTimeout(500);
+      if (await settingsOpen()) bad.push('a press that left the clock still opened settings');
+      // And three clicks, for a television that reports no held press.
+      await page.waitForTimeout(1600);
+      for (let i = 0; i < 3; i++) { await page.mouse.click(clock.x, clock.y); await page.waitForTimeout(180); }
+      await page.waitForTimeout(900);
+      if (!await settingsOpen()) bad.push('three clicks on the clock did not open settings');
+      await page.$eval('#setDone', el => el.click());
+      await page.waitForTimeout(900);
+      if (await settingsOpen()) bad.push('Done did not close settings on the TV');
     } catch (e) {
       bad.push(e.message.split('\n')[0]);
     }

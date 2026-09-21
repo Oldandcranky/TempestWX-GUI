@@ -353,6 +353,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The scale bands' labels sit under the bar, on every card size.** Records,
+  Air quality and Station each draw a coloured bar with figures beneath it.
+  The figures were placed at 1.15 em of their own font size, under a bar
+  measured in a different one, so they cleared it only on cards where the two
+  sizes happened to agree; on a large card they rode up onto the colours,
+  grey on a gradient. This is also what the AQI scale's "300+" was doing when
+  it looked clipped. Everything in a band is now measured against one font
+  size. The Records card's "this month" outline hugs the bar instead of
+  boxing in the labels beneath it, and when today's reading is near either
+  end of the record it takes that end's label rather than printing over it.
 - **The station remembers its days.** History was 48 hours of samples plus
   each day's rain and its high and low; everything else about a day — its
   strongest gust, how low the pressure fell, how many strikes, how much sun —

@@ -136,6 +136,36 @@ const measure = (root) => {
         bad.push([id, 'a drawing escapes the card by ' + spill.toFixed(0) + 'px']);
     }
 
+    // The scale bands — Records, Air quality, Station. Their labels were
+    // placed in em of their own font under a bar measured in another, so on
+    // a large card they rode up onto the colours, and the month's outline
+    // was a box over the labels as well as the bar.
+    for (const band of card.querySelectorAll('.gauge-span')) {
+      const track = band.querySelector('.track').getBoundingClientRect();
+      const labels = [...band.querySelectorAll('.end,.nowlab')]
+        .map(n => ({text: n.textContent, r: n.getBoundingClientRect()}));
+      for (const {text, r} of labels) {
+        if (r.top < track.bottom - 0.5)
+          bad.push([id, 'band label "' + text + '" sits on the bar, ' +
+                        (track.bottom - r.top).toFixed(0) + 'px up']);
+        if (r.left < frame.left - 1 || r.right > frame.right + 1)
+          bad.push([id, 'band label "' + text + '" leaves the card']);
+      }
+      for (let i = 0; i < labels.length; i++)
+        for (let j = i + 1; j < labels.length; j++) {
+          const a = labels[i].r, c = labels[j].r;
+          if (a.left < c.right - 1 && c.left < a.right - 1)
+            bad.push([id, 'band labels "' + labels[i].text + '" and "' + labels[j].text + '" overlap']);
+        }
+      const month = band.querySelector('.month');
+      if (month) {
+        const m = month.getBoundingClientRect();
+        if (m.bottom > track.bottom + track.height || m.top < track.top - track.height)
+          bad.push([id, 'the month outline is ' + m.height.toFixed(0) + 'px tall round a ' +
+                        track.height.toFixed(0) + 'px bar']);
+      }
+    }
+
     const fit = parseFloat(getComputedStyle(card).getPropertyValue('--fit')) || 1;
     if (fit < 0.6)
       bad.push([id, 'type shrunk to ' + fit.toFixed(2) + ' — the card is too full']);
@@ -453,6 +483,45 @@ const measureOutlook = () => {
     }
     failures += bad.length;
     console.log(bad.length ? '  FAIL internet page' : '  ok   internet page');
+    for (const why of bad) console.log('         ' + why);
+  }
+
+  // ── the Records band, with today at each end of it and in the middle ──
+  // On a wall of six large cards as well as the crowded thirteen: the large
+  // card is where the labels came adrift, and no other test draws one.
+  {
+    const bad = [];
+    const SIX = ['temperature', 'wind', 'records', 'air', 'hardware', 'forecast'];
+    const jobs = [];
+    for (const [w, h] of [[1920, 1080], [1280, 1024], [414, 896]])
+      for (const slots of [SIX, null])
+        for (const where of ['lo', 'mid', 'hi', 'month-is-everything']) jobs.push([w, h, slots, where]);
+    // Side by side, six at a time: two dozen page loads in a row is a minute
+    // and a half of a suite that is meant to be run before every push.
+    for (let i = 0; i < jobs.length; i += 6)
+      await Promise.all(jobs.slice(i, i + 6).map(async ([w, h, slots, where]) => {
+          const page = await browser.newPage({ viewport: { width: w, height: h } });
+          const s = freshen();
+          if (slots) s.slots = slots;
+          const all = s.records.all;
+          s.obs.temp_c = where === 'lo' ? all.lo[0] : where === 'hi' ? all.hi[0]
+                       : (all.lo[0] + all.hi[0]) / 2;
+          if (where === 'month-is-everything')       // a station in its first month
+            s.records.month = s.records.year = Object.assign({}, all);
+          await page.route('**/api/state', route => route.fulfill({
+            status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(s),
+          }));
+          await page.goto(BASE, { waitUntil: 'networkidle' });
+          await page.waitForTimeout(SETTLE_MS);
+          const at = w + 'x' + h + (slots ? ' six cards' : ' thirteen') + ', today at ' + where;
+          for (const [id, why] of await page.evaluate(measure, '#grid'))
+            if (id === 'records') bad.push(at + ': ' + why);
+          if (!await page.evaluate(() => !!document.querySelector('#card-records .nowlab')))
+            bad.push(at + ': today is not marked on the band');
+          await page.close();
+      }));
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL records band' : '  ok   records band');
     for (const why of bad) console.log('         ' + why);
   }
 

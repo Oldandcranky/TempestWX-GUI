@@ -856,35 +856,41 @@ body:not(.tv) #card-records:hover .flipbtn{color:var(--accent)}
 }
 /* Records card: the whole span the station has ever seen, with this month
    and today marked on it. */
-/* Everything inside is sized in em, which inherits the body's font size
-   and so ignored the fit pass entirely: on a short card the type shrank
-   to the 0.6 floor around a gauge that never moved, and the card
-   overflowed anyway. Tying its font size to --fit makes the whole block
-   shrink with the rest. */
-.gauge-span{position:relative;width:100%;padding:.2em 0 1.5em;
-            font-size:calc(1em*var(--fit))}
+/* One font size for the whole band, and every length inside it in em of
+   that. The labels used to carry their own font size and sit at "top:1.15em"
+   — 1.15 of THEIR em, under a bar measured in the body's — so they cleared
+   the bar only on cards where the two sizes happened to agree. On a large
+   card the label type is the smaller of the two and the labels rode up onto
+   the colours, where grey on a gradient cannot be read. --fs-label already
+   carries --fit, so the band still shrinks with the rest of the card. */
+.gauge-span{position:relative;width:100%;font-size:var(--fs-label);
+            padding:.6em 0 1.45em;line-height:1}
 .gauge-span .track{
-  position:relative;height:.9em;border-radius:.45em;overflow:hidden;
+  position:relative;height:.8em;border-radius:.4em;overflow:hidden;
   background:linear-gradient(90deg,#2f6fd0 0%,#00bcd4 22%,#66bb6a 42%,
              #f5c518 62%,#ff8837 80%,#ff5252 100%);
   opacity:.85;
 }
+/* This month, as an outline that hugs the bar. It was stretched over the
+   padding too, labels and all: a young station's month is nearly its whole
+   record, and the outline became an empty box the width of the card with
+   the end labels trapped behind its border. */
 .gauge-span .month{
-  position:absolute;top:-.18em;bottom:-.18em;border-radius:.5em;
-  border:2px solid var(--text);opacity:.55;
+  position:absolute;top:.4em;height:1.2em;border-radius:.6em;box-sizing:border-box;
+  border:2px solid var(--text);opacity:.6;
 }
 .gauge-span .now{
-  position:absolute;top:-.45em;width:0;height:0;
+  position:absolute;top:.05em;width:0;height:0;
   border-left:.42em solid transparent;border-right:.42em solid transparent;
   border-top:.5em solid var(--text);transform:translateX(-50%);
 }
-.gauge-span .nowlab{
-  position:absolute;top:1.15em;transform:translateX(-50%);white-space:nowrap;
-  font-size:var(--fs-label);font-weight:700;color:var(--text);
+.gauge-span .nowlab,.gauge-span .end{
+  position:absolute;top:1.75em;font-size:1em;white-space:nowrap;
 }
-.gauge-span .end{
-  position:absolute;top:1.15em;font-size:var(--fs-label);color:var(--label);
-}
+.gauge-span .nowlab{transform:translateX(-50%);font-weight:700;color:var(--text)}
+.gauge-span .nowlab.atlo{transform:none}
+.gauge-span .nowlab.athi{transform:translateX(-100%)}
+.gauge-span .end{color:var(--label)}
 .gauge-span .end.lo{left:0} .gauge-span .end.hi{right:0}
 /* Four rows and the band do not fit a short card at any readable size — at
    thirteen cards on a 720-line screen the card is 157 pixels tall. So the
@@ -2713,13 +2719,20 @@ function buildRecords(s){
     inner += '<div class="month" style="left:' + a.toFixed(1) +
              '%;width:' + Math.max(1.5, bb - a).toFixed(1) + '%"></div>';
   }
-  if (now != null) {
-    inner += '<div class="now" style="left:' + pct(now).toFixed(1) + '%"></div>' +
-             '<div class="nowlab" style="left:' + pct(now).toFixed(1) + '%">' +
+  // Three labels share one line, so the one that matters wins it: near
+  // either end, today's reading takes that end's place rather than being
+  // printed across it, and leans inward so it cannot leave the card.
+  const at = now == null ? null : pct(now);
+  if (at != null) {
+    const lean = at < 12 ? " atlo" : at > 88 ? " athi" : "";
+    inner += '<div class="now" style="left:' + at.toFixed(1) + '%"></div>' +
+             '<div class="nowlab' + lean + '" style="left:' + at.toFixed(1) + '%">' +
              esc(fg(temp(now)) + prefs.temp) + '</div>';
   }
-  inner += '<span class="end lo">' + esc(fg(temp(lo)) + prefs.temp) + '</span>' +
-           '<span class="end hi">' + esc(fg(temp(hi)) + prefs.temp) + '</span>';
+  if (at == null || at >= 30)
+    inner += '<span class="end lo">' + esc(fg(temp(lo)) + prefs.temp) + '</span>';
+  if (at == null || at <= 70)
+    inner += '<span class="end hi">' + esc(fg(temp(hi)) + prefs.temp) + '</span>';
   g.innerHTML = inner;
   b.appendChild(g);
 

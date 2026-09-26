@@ -360,6 +360,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Striking a record asks first, and cannot cascade.** One press struck it,
+  and the Hottest row's button then sat in the same place with the next
+  hottest day behind it: four presses in a row struck a July heatwave and a
+  hot September day, and the almanac's year showed gaps where they had
+  been. The first press now arms the row, a second press on a different
+  button does it, and what was just struck stays where the row was, offering
+  "Put back", rather than the next record moving in under the cursor.
 - **The layout is arranged, not listed.** The Layout tab was a list with
   ticks and arrows beside a small drawing of the grid it made; the drawing is
   now the editor. The panels that are lit are the dashboard, in the shape the

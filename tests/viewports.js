@@ -655,9 +655,23 @@ console.log = (...args) => {
         if (!/api\/days\.csv\?temp=F&wind=mph&pres=inHg&rain=in/.test(sec.href))
           bad.push(at + ': the CSV link is "' + sec.href + '"');
         if (sec.wide) bad.push(at + ': ' + sec.wide + ' record row(s) too wide for the sheet');
-        // Striking the gust record: the right request, with the header, and the list redrawn.
-        await page.$$eval('#recordsec .recrow', rows => rows.find(r => /Strongest gust/.test(r.textContent))
-          .querySelector('button').click());
+        // Striking the gust record asks first, then sends the right request with
+        // the header, and the struck reading stays put rather than the next
+        // record moving in under the cursor.
+        const gustBtn = () => page.$$eval('#recordsec .recrow', rows => { const r = rows.find(r => /Strongest gust/.test(r.textContent));
+          const b = r && r.querySelector('button'); if (b) b.click(); return b ? b.textContent : null; });
+        const first = await gustBtn();
+        await page.waitForTimeout(300);
+        if (posts.length) bad.push(at + ': one press struck the record, without asking');
+        if (!/Not real/.test(first || '')) bad.push(at + ': the gust row offers "' + first + '"');
+        const offered = await page.$$eval('#recordsec .recrow.armed button', bs => bs.map(b => b.textContent));
+        if (offered.join() !== 'Yes, strike it,Keep it') bad.push(at + ': an armed row offers [' + offered + ']');
+        await page.$eval('#recordsec .recrow.armed button:last-child', b => b.click());   // Keep it
+        await page.waitForTimeout(300);
+        if (await page.$('#recordsec .recrow.armed')) bad.push(at + ': "Keep it" left the row armed');
+        if (posts.length) bad.push(at + ': "Keep it" struck the record');
+        await gustBtn(); await page.waitForTimeout(300);
+        await page.$eval('#recordsec .recrow.armed button:first-child', b => b.click());  // Yes
         await page.waitForTimeout(1200);
         const p0 = posts[0] || {};
         if (!p0.body || !p0.body.strike || p0.body.strike.date !== '2024-12-15' || p0.body.strike.field !== 'gust')
@@ -667,6 +681,13 @@ console.log = (...args) => {
           .map(r => r.textContent));
         if (!after.some(t => /Strongest gust/.test(t) && /Put back/.test(t)))
           bad.push(at + ': the struck gust is not offered back');
+        // What was just struck holds the top of the list, so a second press
+        // where the first landed cannot strike the next record.
+        const top = await page.$eval('#recordsec details .recrow', r => r.textContent);
+        if (!/Strongest gust/.test(top) || !/struck/.test(top) || !/Put back/.test(top))
+          bad.push(at + ': after a strike the top row is "' + top.slice(0, 60) + '"');
+        if (await page.$$eval('#recordsec button', bs => bs.filter(b => /Yes, strike/.test(b.textContent)).length))
+          bad.push(at + ': a "Yes, strike it" is showing after the strike');
       } catch (e) { bad.push(at + ': ' + e.message.split('\n')[0]); }
       for (const m of errs) bad.push(at + ': pageerror: ' + m);
       await page.close();

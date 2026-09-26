@@ -1030,6 +1030,11 @@ body.show-settings #settings{display:block}
 .sheet .recrow{grid-template-columns:minmax(6.5em,1fr) auto auto auto}
 .sheet .recrow .val{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 .sheet .recrow .when{color:var(--label);white-space:nowrap}
+.sheet .recrow.armed{background:color-mix(in srgb,var(--red) 10%,transparent);border-radius:var(--inset-radius)}
+.sheet .recrow.just{background:color-mix(in srgb,var(--accent) 10%,transparent);border-radius:var(--inset-radius);
+                    border-top:0}
+.sheet .recrow .confirm{display:flex;gap:6px;justify-content:flex-end}
+.sheet button.danger{background:var(--red);color:#fff;border-color:transparent;font-weight:600}
 .sheet .recordsec .tools{margin:.2em 0 .6em}
 .sheet .linkbtn{display:inline-flex;align-items:center;min-height:40px;align-self:auto;
                 margin:.2em .4em .4em 0;font-size:clamp(11px,.95vw,14px)}
@@ -3602,6 +3607,8 @@ async function saveConfig(patch, statusEl){
    so a reading is marked, not removed, and the mark can be lifted. */
 let recordInfo = null;
 let recordsOpen = false;
+let recordArmed = null;        // "date/field" of the one row waiting for a yes
+let recordJust = null;         // what was struck last, so the row stays put
 
 async function loadRecord(){
   try {
@@ -3624,6 +3631,8 @@ async function strikeRecord(item, restore, statusEl){
     const body = await r.json().catch(() => ({}));
     if (!r.ok || body.ok === false) throw new Error(body.error || ("HTTP " + r.status));
     recordInfo = body;
+    recordArmed = null;
+    recordJust = restore ? null : item;
     almanac = null;                       // the almanac was built on the old record
     document.getElementById("recordsec").replaceWith(recordSection());
     poll();
@@ -3680,17 +3689,56 @@ function recordSection(){
       (bf.error ? " (" + bf.error + ")" : ""))));
 
   const status = el("div", "state");
+  /* Striking takes two presses, and the second is on a different button.
+     One press used to do it, and the Hottest row's button then sat in the
+     same place with the next hottest day behind it: four presses in a row
+     struck four successive records, a July heatwave gone in a second. Now
+     the first press only arms the row, a second on "Yes, strike it" does it,
+     and what was just struck stays where the row was, offering "Put back",
+     rather than the next record moving in under the cursor. */
+  const key = (item) => item.date + "/" + item.field;
   const line = (item, restore) => {
-    const row = el("div", "recrow");
+    const row = el("div", "recrow" + (recordArmed === key(item) ? " armed" : ""));
     row.innerHTML = '<span class="what">' + esc(item.label) + '</span>' +
       '<span class="val">' + (restore ? "" : esc(recordValue(item))) + '</span>' +
       '<span class="when">' + esc(niceDay(item.date)) + '</span>';
-    const btn = el("button", "", restore ? "Put back" : "Not real");
-    btn.type = "button";
-    btn.title = restore ? "Count this reading again"
-      : "Leave this reading out of the records; the next best takes its place";
-    btn.addEventListener("click", () => strikeRecord(item, restore, status));
-    row.appendChild(btn);
+    if (restore) {
+      const btn = el("button", "", "Put back");
+      btn.type = "button";
+      btn.title = "Count this reading again";
+      btn.addEventListener("click", () => strikeRecord(item, true, status));
+      row.appendChild(btn);
+    } else if (recordArmed === key(item)) {
+      const pair = el("span", "confirm");
+      const yes = el("button", "danger", "Yes, strike it");
+      yes.type = "button";
+      yes.addEventListener("click", () => strikeRecord(item, false, status));
+      const no = el("button", "", "Keep it");
+      no.type = "button";
+      no.addEventListener("click", () => { recordArmed = null; wrap.replaceWith(recordSection()); });
+      pair.append(yes, no);
+      row.appendChild(pair);
+    } else {
+      const btn = el("button", "", "Not real…");
+      btn.type = "button";
+      btn.title = "Leave this reading out of the records; the next best takes its place. Asks first.";
+      btn.addEventListener("click", () => { recordArmed = key(item); wrap.replaceWith(recordSection()); });
+      row.appendChild(btn);
+    }
+    return row;
+  };
+  // The reading struck a moment ago, kept at the top where its row was.
+  const justRow = () => {
+    const j = recordJust;
+    if (!j) return null;
+    const row = el("div", "recrow just");
+    row.innerHTML = '<span class="what">' + esc(j.label) + '</span>' +
+      '<span class="val">' + esc(recordValue(j)) + '</span>' +
+      '<span class="when">' + esc(niceDay(j.date)) + ' · struck</span>';
+    const back = el("button", "", "Put back");
+    back.type = "button";
+    back.addEventListener("click", () => strikeRecord(j, true, status));
+    row.appendChild(back);
     return row;
   };
   if ((info.records || []).length) {
@@ -3700,7 +3748,9 @@ function recordSection(){
     fold.addEventListener("toggle", () => { recordsOpen = fold.open; });
     fold.appendChild(el("summary", null, "Review the records"));
     fold.appendChild(el("p", "note", "If one was a sensor fault rather than weather, mark it " +
-      "and the next best takes its place. Nothing is deleted, and a mark can be lifted."));
+      "and the next best takes its place. It asks before it does. Nothing is deleted, and a mark can be lifted."));
+    const just = justRow();
+    if (just) fold.appendChild(just);
     for (const item of info.records) fold.appendChild(line(item, false));
     wrap.appendChild(fold);
   }

@@ -55,12 +55,12 @@ the grid rearranges itself for however many you choose.
 
 | Card | Shows |
 |---|---|
-| **Temperature** | Now, 24-hour min and max with the times they happened, 24-hour change, hourly trend, feels-like, humidity, dew point, and a comfort read |
+| **Temperature** | Now, 24-hour min and max with the times they happened, 24-hour change, hourly trend, feels-like, humidity, dew point, and a comfort read — or, in season, the frost line: the cold night coming, how long it has been below freezing, the wind chill and its frostbite time |
 | **Wind** | Average and gust with the day's peak, a live rapid-wind hero, a compass strip that slides under a fixed marker, Beaufort force, 24-hour wind run and steadiness |
 | **Pressure** | A dial scaled to the 24-hour range, hourly rate of change, barometric tendency, min/max/span, and an outlook line |
 | **Rainfall** | Current rate, today and yesterday, month and year to date |
 | **Astronomy** | Sunrise, sunset, time to the next, a daylight arc with the sun on it, UV with its WHO band, brightness, solar radiation, moonrise, moonset, phase and the next new and full moon |
-| **Forecast** | Current conditions, today's high, low and precipitation chance, and a three-day strip |
+| **Forecast** | Current conditions, today's high, low and precipitation chance — or snowfall, on a snow day — and a three-day strip |
 | **Records** | Hottest and coldest with dates, for the month, the year and all time, over a band showing the station's whole range, with the year's strongest gust and wettest day. A tap opens the almanac |
 | **Lightning** | Strikes today, nearest, last strike, last hour and last three hours |
 | **Radar** | Live radar for your location |
@@ -360,6 +360,25 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Winter readiness.** Northern Illinois, and the first frost due.
+  - **The frost line.** The Temperature card's last line turns to winter
+    when winter has something to say, on the weather service's thresholds:
+    "Frost likely tonight · low 34°" at 36 °F, "Freeze" at 32, "Hard
+    freeze" at 28, from the forecast's next few nights — tonight being the
+    lower of today's and tomorrow's minimum, since the coming night's low is
+    mostly tomorrow morning's. Once it happens: "Below freezing since
+    2:10 AM", from the station's own readings. With a wind chill of 20 °F
+    or less the line names it, and at the chart's frostbite marks it says
+    how many minutes exposed skin has. The comfort line comes back for the
+    rest of the year.
+  - **Snow on the forecast**, which the station cannot measure and the
+    forecast can: the Forecast card's precipitation cell reads "Snow 3 in"
+    on a snow day, the day strips carry a snowflake and the amount, the
+    ten-day plot stands snow bars on its floor with a freezing line where
+    the scale crosses it, and the caption gives the total. Inches or
+    centimetres as the reader keeps rain.
+  - `?testwinter` previews the week ahead — a hard freeze and snow — and
+    `?testwinter=now` the night it has arrived; both are in `/testall`.
 - **An alert opens to what it says.** The banner gave the event and the end
   time and nothing more; the statement's own words — "locally dense fog will
   reduce visibilities to one quarter mile or less" — were fetched and thrown

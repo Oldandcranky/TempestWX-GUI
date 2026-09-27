@@ -912,6 +912,87 @@ console.log = (...args) => {
     for (const why of bad) console.log('         ' + why);
   });
 
+  // ── winter: frost, freeze, snow and wind chill, in September ──────────
+  section("winter: the frost line, snow on the forecast, frostbite now", async () => {
+    const bad = [];
+    await abreast([['ahead', 1920, 1080], ['ahead', 1920, 720], ['ahead', 414, 896], ['now', 1920, 720], ['now', 1024, 768]],
+      async ([mode, w, h]) => {
+        const at = mode + ' at ' + w + 'x' + h;
+        const page = await browser.newPage({ viewport: { width: w, height: h } });
+        const errs = [];
+        page.on('pageerror', e => errs.push(e.message));
+        const s = freshen();
+        // The captured state already carries a wind chill; the preview
+        // decides what is shown, so start from the plain case.
+        Object.assign(s.derived, {feels_model: '', feels_c: s.obs.temp_c, frostbite_min: null, freezing_since: null});
+        await page.route('**/api/state', route => route.fulfill({
+          status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(s) }));
+        try {
+          await page.goto(BASE + '/?testwinter=' + mode, { waitUntil: 'networkidle' });
+          await page.waitForTimeout(SETTLE_MS);
+          for (const [id, why] of await page.evaluate(measure, '#grid'))
+            if (['temp', 'fc'].includes(id)) bad.push(at + ': ' + id + ' ' + why);
+          const seen = await page.evaluate(() => ({
+            temp: (document.querySelector('#card-temp .caption') || {}).textContent || '',
+            fc: (document.querySelector('#card-fc') || {}).textContent || '',
+            snowCells: [...document.querySelectorAll('#card-fc .fc-pop')].filter(e => /❄/.test(e.textContent)).length }));
+          if (mode === 'ahead') {
+            if (!/Hard freeze Tuesday · low 19°/.test(seen.temp)) bad.push(at + ': the Temperature card says "' + seen.temp + '"');
+            if (seen.snowCells !== 2) bad.push(at + ': ' + seen.snowCells + ' snow days on the Forecast card, expected 2');
+            if (!/❄ 2.4 in/.test(seen.fc) || !/❄ 5.5 in/.test(seen.fc)) bad.push(at + ': the Forecast card lacks the snow amounts');
+          } else {
+            if (!/Wind chill -20° · frostbite in 30 min/.test(seen.temp)) bad.push(at + ': the Temperature card says "' + seen.temp + '"');
+          }
+          if (w > 720) {
+            await page.$eval('#card-fc .card-body', el => el.click());
+            await page.waitForTimeout(1500);
+            const out = await page.evaluate(() => {
+              const host = document.getElementById('outlook');
+              const svg = host.querySelector('.outplot svg');
+              const cap = host.querySelector('.caption');
+              return { open: document.body.classList.contains('show-outlook'),
+                       bars: svg ? svg.querySelectorAll('rect').length : 0,
+                       legend: (host.querySelector('.ax.snow') || {}).textContent || '',
+                       caption: cap ? cap.textContent : '', capCut: cap ? cap.scrollWidth > cap.clientWidth + 1 : false,
+                       snowDays: [...host.querySelectorAll('.fc-pop')].filter(e => /❄/.test(e.textContent)).length };
+            });
+            if (!out.open) bad.push(at + ': the outlook did not open');
+            if (out.bars !== 3) bad.push(at + ': ' + out.bars + ' snow bars on the outlook, expected 3');
+            if (!/up to 5.5 in/.test(out.legend)) bad.push(at + ': the snow legend says "' + out.legend + '"');
+            if (out.snowDays !== 3) bad.push(at + ': ' + out.snowDays + ' snow days in the strip, expected 3');
+            if (!/Snow 8.4 in/.test(out.caption) || !/Hard freeze/.test(out.caption)) bad.push(at + ': the caption says "' + out.caption + '"');
+            if (!/^(Hard freeze|Freeze|Frost)/.test(out.caption)) bad.push(at + ': the winter news is not first in the caption');
+            if (w >= 1900 && h >= 1000 && out.capCut) bad.push(at + ': the outlook caption is cut off even on a full screen');
+            for (const [id, why] of await page.evaluate(measure, '#outlook')) bad.push(at + ': outlook ' + why);
+          }
+        } catch (e) { bad.push(at + ': ' + e.message.split('\n')[0]); }
+        for (const m of errs) bad.push(at + ': pageerror: ' + m);
+        await page.close();
+      });
+    // In Celsius the same numbers are said in Celsius.
+    {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await page.addInitScript(() => { try { localStorage.setItem('unit.temp', '°C'); localStorage.setItem('unit.rain', 'mm'); } catch (e) {} });
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()) }));
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify((() => { const s = freshen();
+          Object.assign(s.derived, {feels_model: '', feels_c: s.obs.temp_c, frostbite_min: null, freezing_since: null});
+          return s; })()) }));
+      await page.goto(BASE + '/?testwinter=ahead', { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const t = await page.evaluate(() => ({ temp: document.querySelector('#card-temp .caption').textContent,
+                                            fc: document.querySelector('#card-fc').textContent }));
+      if (!/low -7°/.test(t.temp)) bad.push('in Celsius the freeze line says "' + t.temp + '"');
+      if (!/❄ 6.1 cm/.test(t.fc)) bad.push('in Celsius the snow is not in centimetres');
+      await page.close();
+    }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL winter' : '  ok   winter');
+    for (const why of bad) console.log('         ' + why);
+  });
+
   // ── the almanac page ──────────────────────────────────────────────────
   // Three records of a station's life: a full and violent year, which is the
   // case for width; a station three days old, which is the case for every
@@ -1337,7 +1418,7 @@ console.log = (...args) => {
             label: st.label, tag: document.getElementById('testtag').textContent,
             want: { rain: st.rain || null, alerts: st.alerts ? Math.min(3, st.alerts.length) : 0,
                     pollen: st.pollen, wind: st.wind, flip: /Internet/.test(st.label),
-                    outlook: /outlook/.test(st.label), almanac: /Almanac/.test(st.label) },
+                    outlook: /outlook/.test(st.label), almanac: /Almanac/.test(st.label), winter: st.winter || null },
             rain: sky ? sky.dataset.tier : null,
             hail: !!document.querySelector('#card-rain .drop.hail'),
             alerts: document.querySelectorAll('#alerts .alert').length,
@@ -1348,6 +1429,7 @@ console.log = (...args) => {
             flipped: !!document.querySelector('#card-internet.flipped'),
             outlook: document.body.classList.contains('show-outlook'),
             almanac: document.body.classList.contains('show-almanac'),
+            winterLine: (document.querySelector('#card-temp .caption') || {}).textContent || '',
             cards: [...document.querySelectorAll('#grid .card[id]')].map(c => c.draggable),
           };
         });
@@ -1362,6 +1444,8 @@ console.log = (...args) => {
         if (w.flip !== r.flipped) bad.push(at + ': Internet card ' + (r.flipped ? 'turned' : 'not turned'));
         if (w.outlook !== r.outlook) bad.push(at + ': outlook ' + (r.outlook ? 'open' : 'closed'));
         if (w.almanac !== r.almanac) bad.push(at + ': almanac ' + (r.almanac ? 'open' : 'closed'));
+        if (w.winter === 'ahead' && !/Hard freeze/.test(r.winterLine)) bad.push(at + ': no freeze line');
+        if (w.winter === 'now' && !/frostbite/.test(r.winterLine)) bad.push(at + ': no frostbite line');
         if (r.cards.some(Boolean)) bad.push(at + ': cards are draggable on the test page');
       }
       // One more click wraps to the start; the left arrow goes back to the end.

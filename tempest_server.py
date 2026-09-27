@@ -363,7 +363,8 @@ class ForecastFetcher(PollingFetcher):
                         "apparent_temperature,weather_code,wind_speed_10m,"
                         "wind_direction_10m,is_day"),
             "daily": ("weather_code,temperature_2m_max,temperature_2m_min,"
-                      "precipitation_probability_max,sunrise,sunset"),
+                      "precipitation_probability_max,sunrise,sunset,"
+                      "snowfall_sum,apparent_temperature_min"),
             "timezone": "auto",
             "forecast_days": str(self.days),
             "wind_speed_unit": "ms",
@@ -389,6 +390,10 @@ class ForecastFetcher(PollingFetcher):
                 "tmax_c": pick("temperature_2m_max"),
                 "tmin_c": pick("temperature_2m_min"),
                 "pop": pick("precipitation_probability_max"),
+                # Snow, which the station cannot measure. Centimetres; the
+                # page shows inches or centimetres as the reader has chosen.
+                "snow_cm": pick("snowfall_sum"),
+                "feels_min_c": pick("apparent_temperature_min"),
             })
         return {
             "fetched_at": time.time(),
@@ -1957,6 +1962,11 @@ class Dashboard:
                                   "error": "Forecast off"
                                            if not self.args.forecast
                                            else "Set --lat and --lon"})
+        # Worked out now rather than when the forecast was fetched, because
+        # "tonight" changes at midnight and the forecast is held for an hour.
+        if snap["forecast"].get("available"):
+            snap["forecast"]["winter"] = core.winter_outlook(
+                snap["forecast"].get("days") or [])
         return snap
 
     def almanac(self, **thresholds):

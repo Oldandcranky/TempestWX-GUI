@@ -567,6 +567,78 @@ class ToolsMistakes(unittest.TestCase):
         self.assertEqual(sorted(map(str, dropped)), sorted(["['loss']", "['download latency', 'upload latency']"]))
 
 
+class WinterWords(unittest.TestCase):
+    """Frost, freeze and frostbite, on NWS's thresholds."""
+
+    TODAY = datetime.date(2026, 10, 12)
+
+    def days(self, *lows_f):
+        return [{"date": (self.TODAY + datetime.timedelta(days=i)).isoformat(),
+                 "tmin_c": (f - 32) * 5 / 9} for i, f in enumerate(lows_f)]
+
+    def outlook(self, *lows_f):
+        return core.winter_outlook(self.days(*lows_f), today=self.TODAY)
+
+    def test_a_mild_week_says_nothing(self):
+        self.assertIsNone(self.outlook(45, 41, 38, 40))
+
+    def test_tonight_is_the_lower_of_today_and_tomorrow(self):
+        got = self.outlook(45, 33, 50, 50)          # the cold is tomorrow morning
+        self.assertEqual((got["kind"], got["when"]), ("frost", "tonight"))
+        self.assertAlmostEqual(got["low_c"] * 9 / 5 + 32, 33, places=5)
+
+    def test_the_thresholds(self):
+        self.assertEqual(self.outlook(36)["kind"], "frost")
+        self.assertEqual(self.outlook(32)["kind"], "freeze")
+        self.assertEqual(self.outlook(28)["kind"], "hard")
+        self.assertIsNone(self.outlook(36.5))
+
+    def test_a_cold_night_later_in_the_week_is_named(self):
+        got = self.outlook(45, 44, 40, 30)          # Thursday: Oct 15 2026
+        self.assertEqual((got["kind"], got["when"], got["date"]), ("freeze", "Thursday", "2026-10-15"))
+
+    def test_only_the_first_cold_night_is_reported(self):
+        self.assertEqual(self.outlook(45, 35, 20, 10)["kind"], "frost")
+
+    def test_yesterday_does_not_count(self):
+        days = self.days(20, 45, 45)
+        days[0]["date"] = (self.TODAY - datetime.timedelta(days=1)).isoformat()
+        self.assertIsNone(core.winter_outlook(days, today=self.TODAY))
+
+    def test_freezing_since_is_the_start_of_the_run(self):
+        t = 1_700_000_000
+        rows = [(t, 2.0), (t + 600, 0.5), (t + 1200, -0.2), (t + 1800, -1.0), (t + 2400, -1.5)]
+        self.assertEqual(core.freezing_since(rows, now=t + 2500), t + 1200)
+
+    def test_not_below_freezing_now_is_nothing(self):
+        t = 1_700_000_000
+        self.assertIsNone(core.freezing_since([(t, -5.0), (t + 600, 0.5)], now=t + 700))
+
+    def test_a_gap_in_the_record_ends_the_run(self):
+        t = 1_700_000_000
+        rows = [(t, -5.0), (t + 5000, -4.0), (t + 5600, -3.0)]   # over an hour between the first two
+        self.assertEqual(core.freezing_since(rows, now=t + 5700), t + 5000)
+
+    def test_a_stale_record_is_not_below_freezing_now(self):
+        t = 1_700_000_000
+        self.assertIsNone(core.freezing_since([(t, -5.0)], now=t + 7200))
+
+    def test_frostbite_times_follow_the_chart(self):
+        self.assertIsNone(core.frostbite_minutes(-10))
+        self.assertEqual(core.frostbite_minutes(-18), 30)
+        self.assertEqual(core.frostbite_minutes(-33), 10)
+        self.assertEqual(core.frostbite_minutes(-50), 5)
+
+    def test_the_state_carries_them(self):
+        st = core.StationState(history=blank_history())
+        st.handle(obs_st(temp=-20.0, gust=9.0))
+        st.data["wind_avg_ms"] = 9.0
+        snap = st.snapshot()
+        self.assertEqual(snap["derived"]["feels_model"], "Wind chill")
+        self.assertEqual(snap["derived"]["frostbite_min"], 30)
+        self.assertIsNotNone(snap["derived"]["freezing_since"])
+
+
 class TwoStations(unittest.TestCase):
     """DuPage and DeKalb, merged into one answer for the card."""
 

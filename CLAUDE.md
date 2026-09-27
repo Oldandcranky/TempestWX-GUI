@@ -95,6 +95,17 @@ in `web/fonts/`. Edit it directly.
 - **`.dockerignore` patterns match the whole path from the context root**, so
   `._*` catches the top level only and `**/._*` is needed for nested files.
 
+## Winter
+
+`core.winter_outlook`, `freezing_since` and `frostbite_minutes` hold the
+thresholds (NWS: 36/32/28 °F, frostbite at −18/−32/−48 °F wind chill) and
+are unit-tested with fixed dates. The forecast's `winter` block is computed
+in `Dashboard.snapshot`, not at fetch time, because "tonight" changes at
+midnight while the forecast is held for an hour. The Temperature card has
+one caption slot; `winterLine()` decides what wins it (frostbite, then below
+freezing, then the cold night coming, else comfort). `?testwinter` and
+`?testwinter=now` preview it out of season.
+
 ## The daily record
 
 `History.days` holds one summary per day — gust, pressure range, strikes,

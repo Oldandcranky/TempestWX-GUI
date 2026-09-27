@@ -30,8 +30,10 @@
   "beaufort_name": "Light air",
   "comfort": "Hot \u00b7 Comfortable",
   "dew_c": 13.60838684344022,
-  "feels_c": 28.125517526949515,
-  "feels_model": "Heat index",
+  "feels_c": -29.4,
+  "feels_model": "Wind chill",
+  "freezing_since": 1789557729.1540258,
+  "frostbite_min": 30,
   "gust_max": {
    "t": 1789514281.2146175,
    "v": 4.1
@@ -95,77 +97,103 @@
    {
     "code": 95,
     "date": "2000-01-01",
+    "feels_min_c": 22.0556,
     "pop": 100,
+    "snow_cm": 0,
     "tmax_c": 38.5,
     "tmin_c": 26.0556
    },
    {
     "code": 96,
     "date": "2000-01-02",
+    "feels_min_c": 21.3333,
     "pop": 100,
+    "snow_cm": 31.2,
     "tmax_c": 37.6111,
     "tmin_c": 25.3333
    },
    {
     "code": 3,
     "date": "2000-01-03",
+    "feels_min_c": 16.7222,
     "pop": 64,
+    "snow_cm": 6.1,
     "tmax_c": 31.3333,
     "tmin_c": 20.7222
    },
    {
     "code": 61,
     "date": "2000-01-04",
+    "feels_min_c": 7.1667000000000005,
     "pop": 38,
+    "snow_cm": 0,
     "tmax_c": 22.1667,
     "tmin_c": 11.1667
    },
    {
     "code": 63,
     "date": "2000-01-05",
+    "feels_min_c": 1.3888999999999996,
     "pop": 22,
+    "snow_cm": 0.8,
     "tmax_c": 14.6111,
     "tmin_c": 5.3889
    },
    {
     "code": 2,
     "date": "2000-01-06",
+    "feels_min_c": -5.2222,
     "pop": 9,
+    "snow_cm": 0,
     "tmax_c": 7.0,
     "tmin_c": -1.2222
    },
    {
     "code": 73,
     "date": "2000-01-07",
+    "feels_min_c": -13.6111,
     "pop": 71,
+    "snow_cm": 0,
     "tmax_c": -0.4444,
     "tmin_c": -9.6111
    },
    {
     "code": 75,
     "date": "2000-01-08",
+    "feels_min_c": -23.6667,
     "pop": 88,
+    "snow_cm": 0,
     "tmax_c": -7.2778,
     "tmin_c": -19.6667
    },
    {
     "code": 1,
     "date": "2000-01-09",
+    "feels_min_c": -28.6111,
     "pop": 12,
+    "snow_cm": 0,
     "tmax_c": -12.4444,
     "tmin_c": -24.6111
    },
    {
     "code": 0,
     "date": "2000-01-10",
+    "feels_min_c": -35.4444,
     "pop": 5,
+    "snow_cm": 0,
     "tmax_c": -18.7778,
     "tmin_c": -31.4444
    }
   ],
   "error": "",
   "fetched_at": 0,
-  "source": "Open-Meteo"
+  "source": "Open-Meteo",
+  "winter": {
+   "date": "2000-01-03",
+   "kind": "hard",
+   "low_c": -8.9,
+   "when": "Wednesday"
+  }
  },
  "hardware": {
   "battery_24h_delta": null,

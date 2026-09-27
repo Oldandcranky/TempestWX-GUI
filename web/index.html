@@ -748,6 +748,8 @@ body.show-outlook #outlook{display:flex}
 #outlook .outplot .ax.norm{color:var(--label);transform:translateY(.2em)}
 #outlook .outplot .ax.norm.above{transform:translateY(calc(-100% - .2em))}
 #outlook .outplot .ax.norm.end{left:auto;right:.4em}
+#outlook .outplot .ax.snow{left:auto;right:.4em;bottom:.3em;color:var(--cold);background:var(--card);
+                           padding:0 .3em;border-radius:3px}
 /* Ten across is a lot of columns. The high/low pair is the widest thing in
    each one, so it is capped by the card's width as well as the usual size —
    a 1280-wide screen gives each day 128px, and two three-digit figures
@@ -1769,6 +1771,36 @@ const STORM_OVERHEAD_MI = 5;
 const STORM_QUIET_DAYS = 7;
 
 /* ?teststorm=overhead|nearby|quiet|kite, the same idea as ?testrain. */
+/* ?testwinter: a hard freeze forecast, snow in the days ahead, and a wind
+   chill now — so the winter lines can be seen in September. ?testwinter=now
+   is the night it has arrived: below freezing for three hours, frostbite
+   weather. Applied to a copy of the state, like the other previews. */
+const TEST_WINTER = (() => {
+  const q = new URLSearchParams(location.search);
+  return q.has("testwinter") ? (q.get("testwinter") || "ahead") : null;
+})();
+function winterApply(s, mode){
+  s = JSON.parse(JSON.stringify(s));
+  const fc = s.forecast = Object.assign({available: true, error: "", days: []}, s.forecast);
+  fc.days = (fc.days || []).map((d, i) => Object.assign({}, d, {
+    tmin_c: i === 1 ? -3.5 : i === 2 ? -7 : d.tmin_c,
+    tmax_c: i === 1 ? 1.5 : i === 2 ? -2 : d.tmax_c,
+    snow_cm: i === 1 ? 6.1 : i === 2 ? 14 : i === 4 ? 1.2 : 0,
+    code: i === 1 ? 73 : i === 2 ? 75 : i === 4 ? 71 : d.code}));
+  fc.winter = {kind: "hard", low_c: -7, date: fc.days[2] && fc.days[2].date, when: "Tuesday"};
+  // "Ahead" means it has not arrived: nothing about now is wintry yet.
+  s.derived = Object.assign({}, s.derived, {frostbite_min: null, freezing_since: null,
+    feels_model: "", feels_c: s.obs && s.obs.temp_c});
+  if (mode === "now") {
+    const now = s.now || Date.now() / 1000;
+    s.obs = Object.assign({}, s.obs, {temp_c: -17, wind_avg_ms: 9, wind_gust_ms: 13, rh: 70});
+    s.derived = Object.assign({}, s.derived, {feels_c: -29, feels_model: "Wind chill",
+      frostbite_min: 30, freezing_since: now - 3 * 3600, comfort: "Frigid · Very dry"});
+    fc.winter = {kind: "hard", low_c: -19, date: fc.days[0] && fc.days[0].date, when: "tonight"};
+  }
+  return s;
+}
+
 let TEST_STORM = (() => {
   const q = new URLSearchParams(location.search);
   return q.has("teststorm") ? stormPreset(q.get("teststorm")) : null;
@@ -2006,6 +2038,31 @@ function wmo(code, isDay){
 }
 
 /* ── the six cards ───────────────────────────────────────────────────── */
+/* Snow in the unit the reader keeps rain in: inches with inches, else cm. */
+const snowAmt = (cm) => cm == null ? null
+  : prefs.rain === "in" ? fx(cm / 2.54, cm / 2.54 >= 10 ? 0 : 1) + " in" : fx(cm, cm >= 10 ? 0 : 1) + " cm";
+const SNOW_TRACE_CM = 0.25;         // a tenth of an inch: less is a dusting
+const snowy = (day) => day && day.snow_cm != null && day.snow_cm >= SNOW_TRACE_CM;
+
+/* The Temperature card's one line, when winter has something to say. In
+   the order it matters: skin freezing now, then below freezing now, then
+   the cold night coming. Nothing, the rest of the year. */
+function winterLine(s){
+  const d = s.derived || {}, fc = s.forecast || {};
+  if (d.frostbite_min != null)
+    return ["❄ Wind chill " + fg(temp(d.feels_c), 0) + "° · frostbite in " + d.frostbite_min + " min", "red"];
+  if (d.freezing_since != null)
+    return ["❄ Below freezing since " + clock(d.freezing_since), "cold"];
+  if (d.feels_model === "Wind chill" && d.feels_c != null && (d.feels_c * 9 / 5 + 32) <= 20)
+    return ["❄ Wind chill " + fg(temp(d.feels_c), 0) + "°", "cold"];
+  const w = fc.winter;
+  if (w) {
+    const word = {hard: "Hard freeze", freeze: "Freeze", frost: "Frost likely"}[w.kind] || "Frost";
+    return ["❄ " + word + " " + w.when + " · low " + fg(temp(w.low_c), 0) + "°", w.kind === "frost" ? "cold" : "red"];
+  }
+  return null;
+}
+
 function buildTemperature(s){
   const d = s.derived, o = s.obs;
   const {card:c, body:b} = card("temp","Temperature","thermometer","amber",s.health);
@@ -2033,7 +2090,9 @@ function buildTemperature(s){
     {k:"Humid", v:o.rh == null ? DASH : Math.round(o.rh), u:o.rh == null ? "" : "%", inline:true, small:true},
     {k:"Dew", v:fg(temp(d.dew_c)), u:d.dew_c == null ? "" : prefs.temp, inline:true, small:true},
   ]));
-  if (d.comfort) b.appendChild(caption("☀ " + d.comfort, "yellow"));
+  const winter = winterLine(s);
+  if (winter) b.appendChild(caption(winter[0], winter[1]));
+  else if (d.comfort) b.appendChild(caption("☀ " + d.comfort, "yellow"));
   return c;
 }
 
@@ -2656,8 +2715,10 @@ function buildForecast(s){
      small:true, inline:true},
     {k:"Feels", v:fg(temp(d.feels_c)), u:d.feels_c == null ? "" : prefs.temp,
      small:true, inline:true},
-    {k:"Precip", v:today.pop == null ? DASH : today.pop, u:today.pop == null ? "" : "%",
-     small:true, inline:true},
+    snowy(today)
+      ? {k:"Snow", v:snowAmt(today.snow_cm), small:true, inline:true, tone:"cold"}
+      : {k:"Precip", v:today.pop == null ? DASH : today.pop, u:today.pop == null ? "" : "%",
+         small:true, inline:true},
   ]));
   b.appendChild(cells([
     {k:"High", v:fg(temp(today.tmax_c)), u:today.tmax_c == null ? "" : prefs.temp,
@@ -2678,7 +2739,8 @@ function buildForecast(s){
       '<div class="fc-hl"><span class="red">' + esc(fg(temp(day.tmax_c))) +
         '</span><span class="sep">/</span><span class="cold">' +
         esc(fg(temp(day.tmin_c))) + '</span></div>' +
-      '<div class="fc-pop">' + (day.pop == null ? "" : esc(day.pop + "%")) + '</div>';
+      '<div class="fc-pop">' + (snowy(day) ? '❄ ' + esc(snowAmt(day.snow_cm))
+                                : day.pop == null ? "" : esc(day.pop + "%")) + '</div>';
     strip.appendChild(cell);
   }
   b.appendChild(strip);
@@ -4468,7 +4530,8 @@ function renderOutlook(){
       '<div class="fc-hl"><span class="red">' + esc(fg(temp(d.tmax_c))) +
         '</span><span class="sep">/</span><span class="cold">' +
         esc(fg(temp(d.tmin_c))) + '</span></div>' +
-      '<div class="fc-pop">' + (d.pop == null ? "" : esc(d.pop + "%")) + '</div>';
+      '<div class="fc-pop">' + (snowy(d) ? '❄ ' + esc(snowAmt(d.snow_cm))
+                                : d.pop == null ? "" : esc(d.pop + "%")) + '</div>';
     cell.title = w.label;
     strip.appendChild(cell);
   }
@@ -4483,11 +4546,17 @@ function renderOutlook(){
   const warm = pick("tmax_c", (v, a) => v > a);
   const cold = pick("tmin_c", (v, a) => v < a);
   const wet  = pick("pop",    (v, a) => v > a);
+  // News first, credit last: on a narrow screen the line is cut from the
+  // end, and the forecaster's office is the part that can go.
   const bits = [];
-  if (periods.length) bits.push("Words: NWS " + (nws.office || "") + (nws.updated ? " · " + clock(nws.updated) : ""));
+  if (fc.winter) bits.push({hard: "Hard freeze", freeze: "Freeze", frost: "Frost"}[fc.winter.kind] + " " +
+                           (fc.winter.when === "tonight" ? "tonight" : fc.winter.when.slice(0, 3)));
+  const snowTotal = days.reduce((t, d) => t + (snowy(d) ? d.snow_cm : 0), 0);
+  if (snowTotal > 0) bits.push("Snow " + snowAmt(snowTotal));
   if (warm) bits.push("Warmest " + fg(temp(warm.tmax_c)) + "° " + name(warm));
   if (cold) bits.push("Coolest " + fg(temp(cold.tmin_c)) + "° " + name(cold));
   if (wet && wet.pop > 0) bits.push("Wettest " + wet.pop + "% " + name(wet));
+  if (periods.length) bits.push("Words: NWS " + (nws.office || "") + (nws.updated ? " · " + clock(nws.updated) : ""));
   b.appendChild(caption(bits.join(" · ") || (fc.source || "")));
   host.replaceChildren(c);
   fitCards();                // render() skips its own pass while this is up
@@ -4542,6 +4611,23 @@ function outlookPlot(days, normal, dateOf){
     pts.map((p, i) => p == null ? "" : (i && pts[i-1] != null ? "L" : "M") + p).join("") +
     '" fill="none" stroke="var(--'+tone+')" stroke-width="2.4" ' +
     'stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+  // Snow, as bars on the floor: the deepest day stands a third of the plot,
+  // the way the almanac draws rain. A freezing line where the scale crosses
+  // it, so the days below it read as such without arithmetic.
+  let snowArt = "";
+  const deepest = Math.max(0, ...days.map(d => snowy(d) ? d.snow_cm : 0));
+  if (deepest > 0) {
+    const bw = W / n * 0.5;
+    days.forEach((d, i) => {
+      if (!snowy(d)) return;
+      const h = d.snow_cm / deepest * H * 0.33;
+      snowArt += '<rect x="' + (x(i) - bw / 2).toFixed(2) + '" y="' + (H - h).toFixed(2) +
+        '" width="' + bw.toFixed(2) + '" height="' + h.toFixed(2) + '" fill="var(--cold)" fill-opacity=".35"/>';
+    });
+  }
+  if (lo < 0 && hi > 0)
+    snowArt += '<path d="M0 ' + y(0).toFixed(2) + ' H' + W + '" fill="none" stroke="var(--cold)" ' +
+      'stroke-width="1" stroke-dasharray="2 3" opacity=".6" vector-effect="non-scaling-stroke"/>';
   const both = days.map((d, i) => d.tmax_c != null && d.tmin_c != null ? i : -1)
                    .filter(i => i >= 0);
   const fill = both.length > 1
@@ -4552,8 +4638,9 @@ function outlookPlot(days, normal, dateOf){
 
   wrap.innerHTML =
     '<svg class="plot" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
-      bandArt + rules + fill + line(his, "red") + line(los, "cold") +
-    '</svg>';
+      bandArt + rules + snowArt + fill + line(his, "red") + line(los, "cold") +
+    '</svg>' +
+    (deepest > 0 ? '<span class="ax snow">❄ up to ' + esc(snowAmt(deepest)) + '</span>' : '');
   if (bHi) {
     const top = normLabel(bHi, days, y, H, n);
     wrap.insertAdjacentHTML("beforeend",
@@ -5167,7 +5254,7 @@ let last = null;
    makes it advance by itself every N seconds instead. */
 const TESTALL = /\/testall$/.test(location.pathname);
 const TESTALL_DWELL = Math.max(0, Number(new URLSearchParams(location.search).get("dwell")) || 0) * 1000;
-const TESTALL_SLOTS = ["rainfall", "lightning", "pollen", "wind", "internet", "forecast"];
+const TESTALL_SLOTS = ["rainfall", "lightning", "pollen", "wind", "internet", "forecast", "temperature"];
 const TESTALL_STEPS = [
   {label: "Light rain", rain: "light"},
   {label: "Moderate rain", rain: "moderate"},
@@ -5184,6 +5271,8 @@ const TESTALL_STEPS = [
   {label: "Lightning — quiet, and the kite", storm: "kite"},
   {label: "Alerts — the three worst", alerts: ["extreme", "severe", "moderate"]},
   {label: "Alerts — minor and unknown", alerts: ["minor", "unknown"]},
+  {label: "Winter ahead — a hard freeze and snow in the forecast", winter: "ahead"},
+  {label: "Winter now — below freezing, frostbite weather", winter: "now"},
   ...[0, 1, 2, 3, 4, 5].map(i => ({label: "Pollen — " + POLLEN_WORDS[i], pollen: i})),
   {label: "Wind — calm", wind: 0.3},
   {label: "Wind — a breeze", wind: 3.5},
@@ -5216,6 +5305,7 @@ function testallApply(s){
   if (st.wind != null) {
     s.obs = Object.assign({}, s.obs, {wind_avg_ms: st.wind, wind_gust_ms: st.wind * 1.4});
   }
+  if (st.winter) s = winterApply(s, st.winter);
   return s;
 }
 
@@ -5239,6 +5329,7 @@ function testallNext(dir = 1){
 const grid = document.getElementById("grid");
 
 function render(s){
+  if (TEST_WINTER) s = winterApply(s, TEST_WINTER);
   last = s;
   if (paused) return;                       // a drag is in progress
   if (document.body.classList.contains("show-map") ||

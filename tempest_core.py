@@ -206,6 +206,88 @@ def apparent_temp_c(temp_c, rh, wind_ms):
     return temp_c, ""
 
 
+# ────────────────────────────────────────────────────────── Winter ─────────
+#
+# NWS conventions, in Fahrenheit because that is how they are written: frost
+# is possible at 36 °F on a clear, still night, a freeze is 32 °F, and a hard
+# freeze — the one that ends the growing season for good — is 28 °F.
+FROST_F, FREEZE_F, HARD_FREEZE_F = 36.0, 32.0, 28.0
+
+# The NWS wind-chill chart's frostbite times: exposed skin, in minutes.
+FROSTBITE = ((-48.0, 5), (-32.0, 10), (-18.0, 30))
+
+
+def frostbite_minutes(feels_f):
+    """How long exposed skin has at this wind chill, or None when the chart
+    says more than half an hour (which it does not bother to state)."""
+    if feels_f is None:
+        return None
+    for limit, minutes in FROSTBITE:
+        if feels_f <= limit:
+            return minutes
+    return None
+
+
+def freezing_since(rows, now=None):
+    """When the temperature last went below freezing and stayed there, from
+    (t, °C) samples, or None if it is not below freezing now. A gap of more
+    than an hour in the samples ends the run: nothing is known across it."""
+    if not rows:
+        return None
+    now = time.time() if now is None else now
+    t, v = rows[-1]
+    if v is None or v > 0 or now - t > 3600:
+        return None
+    since = t
+    for t2, v2 in reversed(rows[:-1]):
+        if v2 is None or v2 > 0 or since - t2 > 3600:
+            break
+        since = t2
+    return since
+
+
+def winter_outlook(days, today=None):
+    """The coldest of the next few forecast nights, when it is cold enough
+    to matter: {"kind": "frost"|"freeze"|"hard", "low_c", "date", "when"}
+    or None.
+
+    `when` is "tonight" for the low of the coming night, else the weekday.
+    A daily minimum is a calendar day's, and the coming night's low is
+    mostly tomorrow morning's, so tonight is the lower of today's and
+    tomorrow's. Only the first cold night is reported: the one to cover the
+    tomatoes for.
+    """
+    today = today or date.today()
+    if not days:
+        return None
+    lows = []
+    for i, d in enumerate(days[:4]):
+        try:
+            when = date.fromisoformat(str(d.get("date"))[:10])
+            low = float(d["tmin_c"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if when < today:
+            continue
+        lows.append((when, low))
+    if not lows:
+        return None
+    # tonight: today's and tomorrow's minima together
+    tonight = [l for w, l in lows if (w - today).days <= 1]
+    later = [(w, l) for w, l in lows if (w - today).days > 1]
+    candidates = ([(None, min(tonight))] if tonight else []) + later
+    for when, low_c in candidates:
+        low_f = low_c * 9 / 5 + 32
+        if low_f > FROST_F:
+            continue
+        kind = ("hard" if low_f <= HARD_FREEZE_F else
+                "freeze" if low_f <= FREEZE_F else "frost")
+        return {"kind": kind, "low_c": low_c,
+                "date": (when or today).isoformat(),
+                "when": "tonight" if when is None else when.strftime("%A")}
+    return None
+
+
 def uv_category(uv):
     if uv is None:
         return ""
@@ -1767,6 +1849,8 @@ class StationState:
         moon_alt = (moon_altitude(lat, lon, now)
                     if lat is not None and lon is not None else None)
         w_lo, w_hi = hist.range_of("wind_ms", 1)
+        feels_f = None if feels_c is None else feels_c * 9 / 5 + 32
+        below_since = freezing_since(hist.series("temp_c", 24, points=10 ** 6), now)
         avg_ms = None
         rows = hist.series("wind_ms", 1, points=10 ** 6)
         if rows:
@@ -1788,6 +1872,9 @@ class StationState:
             "derived": {
                 "feels_c": feels_c,
                 "feels_model": feels_model,
+                "frostbite_min": (frostbite_minutes(feels_f)
+                                  if feels_model == "Wind chill" else None),
+                "freezing_since": below_since,
                 "dew_c": dew_point_c(temp_c, rh),
                 "comfort": comfort_words(temp_c, rh),
                 "temp_min": pair(t_lo), "temp_max": pair(t_hi),

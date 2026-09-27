@@ -1477,6 +1477,7 @@ class StationState:
         self.hub_serial = ""        # the hub it reports through, HB-...
         self.last_packet = None
         self.last_packet_type = ""
+        self.recent = deque(maxlen=900)  # (ts, type, from) of the last packets
         self.day = date.today().isoformat()
         self.restored_at = None
 
@@ -1677,7 +1678,20 @@ class StationState:
         if known:
             self.last_packet = time.time()
             self.last_packet_type = mtype or ""
+            self.recent.append((self.last_packet, mtype or "",
+                                addr[0] if addr else ""))
         return known
+
+    def packets_in(self, seconds=60):
+        """What arrived in the last `seconds`: {"total", "by_type", "from"}."""
+        cutoff = time.time() - seconds
+        with self.lock:
+            rows = [r for r in self.recent if r[0] >= cutoff]
+        by = {}
+        for _t, kind, _src in rows:
+            by[kind] = by.get(kind, 0) + 1
+        return {"total": len(rows), "by_type": by,
+                "from": sorted({r[2] for r in rows if r[2]})}
 
     def _screen(self, reading):
         """An observation with its impossible values taken out.

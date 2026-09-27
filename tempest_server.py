@@ -2021,7 +2021,8 @@ class Dashboard:
                 else "%g down · %g up Mbps" % (a.plan_down or 0, a.plan_up or 0),
              "TEMPEST_PLAN_DOWN / _UP"),
             ("Speedtest Tracker", a.speedtest_url or "", "TEMPEST_SPEEDTEST_URL"),
-            ("Observation stations", a.obs_stations or "nearest two, chosen by distance",
+            ("Observation stations", self._obs_station_names()
+             or a.obs_stations or "nearest two, chosen by distance",
              "TEMPEST_OBS_STATIONS"),
             ("Hub broadcasts on", "UDP %s" % a.udp_port, "TEMPEST_UDP_PORT"),
             ("History kept in", a.data_dir, "TEMPEST_DATA_DIR"),
@@ -2038,6 +2039,124 @@ class Dashboard:
                      ("pmin", "Lowest pressure"), ("pmax", "Highest pressure"),
                      ("strikes", "Most strikes"), ("sun", "Sunniest day"),
                      ("swing", "Widest swing"))
+
+    def _obs_station_names(self):
+        st = getattr(self.observations, "stations", None)
+        if not st:
+            return ""
+        return ", ".join("%s (%.0f mi)" % (name or sid, miles) for sid, name, miles in st)
+
+    # ── Check now: one fetch, on demand, for the settings page ────────────
+    CHECKABLE = ("hub", "wf", "forecast", "nws", "obs", "air", "pollen", "internet")
+
+    def check(self, source):
+        """Fetch one source right now and say what happened: whether it
+        worked, how long it took, and one line on what came back — or the
+        failure in full. A success replaces the source's data, so the card
+        refreshes too; a failure changes nothing the schedule holds.
+
+        Nothing here echoes a URL or a response body: the WeatherFlow token
+        travels in the URL, and a body can carry it back.
+        """
+        started = time.time()
+        out = {"source": source, "at": started, "ok": False, "summary": "", "error": ""}
+        if source not in self.CHECKABLE:
+            out["error"] = "Unknown source"
+            return out
+        try:
+            if source == "hub":
+                seen = self.state.packets_in(60)
+                out["ok"] = seen["total"] > 0
+                if seen["total"]:
+                    kinds = ", ".join("%s %d" % (k, n) for k, n in
+                                      sorted(seen["by_type"].items(), key=lambda kv: -kv[1]))
+                    out["summary"] = ("%d packets in the last minute (%s)"
+                                      % (seen["total"], kinds)
+                                      + (" from " + ", ".join(seen["from"]) if seen["from"] else ""))
+                else:
+                    out["error"] = ("Nothing heard on UDP %d in the last minute. The hub "
+                                    "broadcasts; this host must share its subnet, and a "
+                                    "container must use host networking." % self.args.udp_port)
+            elif source == "wf":
+                if not self.backfill:
+                    out["error"] = "No WeatherFlow token is saved"
+                else:
+                    device = self.backfill._find_device()
+                    out["ok"] = device is not None
+                    out["summary"] = ("Token accepted; Tempest device %s found" % device
+                                      if device is not None else "")
+                    if device is None:
+                        out["error"] = "Token accepted, but no Tempest device on the account"
+            elif source == "nws":
+                parts = []
+                for name, f in (("alerts", self.alerts), ("forecast text", self.nws)):
+                    if f is None:
+                        continue
+                    fresh = f.fetch_once()
+                    with f.lock:
+                        f.store(fresh); f.error = ""
+                    f.after_success(fresh)
+                    if name == "alerts":
+                        parts.append("%d active alert%s" % (len(fresh), "" if len(fresh) == 1 else "s"))
+                    else:
+                        parts.append("%d forecast periods from %s" % (
+                            len(fresh.get("periods") or []), fresh.get("office") or "NWS"))
+                out["ok"] = bool(parts)
+                out["summary"] = " · ".join(parts) or ""
+                if not parts:
+                    out["error"] = "Alerts and the NWS forecast are switched off"
+            else:
+                f = {"forecast": self.forecast, "obs": self.observations,
+                     "air": self.air, "pollen": self.pollen,
+                     "internet": self.speedtest}[source]
+                if f is None:
+                    out["error"] = {"pollen": "No pollen key is saved",
+                                    "internet": "No Speedtest token is saved"}.get(
+                        source, "This source is switched off")
+                else:
+                    fresh = f.fetch_once()
+                    with f.lock:
+                        f.store(fresh); f.error = ""
+                    f.after_success(fresh)
+                    out["ok"] = True
+                    out["summary"] = self._describe_fetch(source, fresh)
+        except Exception as e:
+            code = getattr(e, "code", None)
+            out["error"] = "%s%s" % (
+                (self._describer(source)(e) if self._describer(source) else
+                 "%s (%s)" % (e.__class__.__name__, e)),
+                " · HTTP %s" % code if code else "")
+        out["took_ms"] = int((time.time() - started) * 1000)
+        return out
+
+    def _describer(self, source):
+        f = {"forecast": self.forecast, "obs": self.observations, "air": self.air,
+             "pollen": self.pollen, "internet": self.speedtest, "nws": self.nws,
+             "wf": self.backfill}.get(source)
+        return getattr(f, "describe", None)
+
+    @staticmethod
+    def _describe_fetch(source, fresh):
+        fresh = fresh or {}
+        if source == "forecast":
+            cur = fresh.get("current") or {}
+            return "%d days; now %s °C" % (len(fresh.get("days") or []), cur.get("temp_c"))
+        if source == "obs":
+            names = [st.get("station_name") or st.get("station")
+                     for st in (fresh.get("stations") or [])]
+            return "%s reporting: %s" % (", ".join(names) or "no station",
+                                         fresh.get("kind") or "nothing falling")
+        if source == "air":
+            return "US AQI %s" % fresh.get("us_aqi")
+        if source == "pollen":
+            return "tree %s · grass %s · weed %s" % (
+                fresh.get("tree"), fresh.get("grass"), fresh.get("weed"))
+        if source == "internet":
+            return "%d tests in the window; latest %s Mbps down, %s" % (
+                fresh.get("tests") or 0,
+                None if fresh.get("down") is None else round(fresh["down"]),
+                fresh.get("status") or "")
+        return "fetched"
 
     def record(self):
         """The all-time records, each with the day it was set, so that one
@@ -2103,7 +2222,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if path not in ("/api/config", "/api/record"):
+        if path not in ("/api/config", "/api/record", "/api/check"):
             self._send(404, "Not found\n", "text/plain; charset=utf-8")
             return
         # There is no login on this dashboard, so require a header a plain
@@ -2137,6 +2256,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         dash = self.server.dashboard
+        if path == "/api/check":
+            # A fetch on demand costs the outside service a call — Google
+            # bills for pollen — so it sits behind the same header as a write.
+            source = str((patch if isinstance(patch, dict) else {}).get("source") or "")
+            body = dash.check(source)
+            self._send(200 if body["ok"] or body.get("error") else 400,
+                       json.dumps(body, allow_nan=False, default=str),
+                       "application/json; charset=utf-8")
+            return
         if path == "/api/record":
             # {"strike": {"date": ..., "field": ...}} or {"restore": {...}}
             if not isinstance(patch, dict):

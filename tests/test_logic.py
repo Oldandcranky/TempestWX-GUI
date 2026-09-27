@@ -15,6 +15,8 @@ import datetime
 import os
 import sys
 import unittest
+import threading
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -647,6 +649,70 @@ class WinterWords(unittest.TestCase):
         self.assertEqual(snap["derived"]["feels_model"], "Wind chill")
         self.assertEqual(snap["derived"]["frostbite_min"], 30)
         self.assertIsNotNone(snap["derived"]["freezing_since"])
+
+
+class CheckNow(unittest.TestCase):
+    """One fetch on demand, and what it says."""
+
+    def dash(self, **fetchers):
+        class Args: udp_port = 50222; obs_stations = ""
+        d = server.Dashboard.__new__(server.Dashboard)
+        d.args = Args()
+        d.state = core.StationState(history=blank_history())
+        for name in ("forecast", "observations", "air", "pollen", "speedtest",
+                     "nws", "alerts", "backfill"):
+            setattr(d, name, fetchers.get(name))
+        return d
+
+    class Fake(server.PollingFetcher):
+        LABEL = "Forecast"
+        def __init__(self, result=None, exc=None):
+            server.PollingFetcher.__init__(self, threading.Event())
+            self.result, self.exc, self.stored = result, exc, None
+        def fetch_once(self):
+            if self.exc: raise self.exc
+            return self.result
+        def store(self, fresh): self.stored = fresh
+
+    def test_a_working_source_reports_what_came_back_and_refreshes_it(self):
+        f = self.Fake({"days": [1] * 10, "current": {"temp_c": 12.5, "code": 3}})
+        out = self.dash(forecast=f).check("forecast")
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["summary"], "10 days; now 12.5 °C")
+        self.assertIsNotNone(f.stored)
+        self.assertIn("took_ms", out)
+
+    def test_a_failing_source_reports_the_failure_and_the_http_code(self):
+        import urllib.error, io
+        exc = urllib.error.HTTPError("https://x", 503, "nope", {}, io.BytesIO(b""))
+        f = self.Fake(exc=exc)
+        out = self.dash(forecast=f).check("forecast")
+        self.assertFalse(out["ok"])
+        self.assertIn("HTTP 503", out["error"])
+        self.assertIsNone(f.stored)
+
+    def test_a_source_that_is_off_says_so(self):
+        out = self.dash().check("pollen")
+        self.assertEqual(out["error"], "No pollen key is saved")
+
+    def test_the_hub_counts_the_last_minutes_packets(self):
+        d = self.dash()
+        for _ in range(3): d.state.handle({"type": "rapid_wind", "serial_number": "ST-1", "ob": [0, 1.0, 90]}, ("10.0.0.47", 1))
+        d.state.handle(obs_st(), ("10.0.0.47", 1))
+        out = d.check("hub")
+        self.assertTrue(out["ok"])
+        self.assertIn("4 packets in the last minute", out["summary"])
+        self.assertIn("rapid_wind 3", out["summary"])
+        self.assertIn("from 10.0.0.47", out["summary"])
+
+    def test_a_silent_hub_is_told_what_to_check(self):
+        out = self.dash().check("hub")
+        self.assertFalse(out["ok"])
+        self.assertIn("UDP 50222", out["error"])
+
+    def test_nothing_is_echoed_that_could_carry_a_token(self):
+        out = self.dash().check("forecast")
+        self.assertNotIn("http", json.dumps(out).lower().replace("http 4", ""))
 
 
 class TwoStations(unittest.TestCase):

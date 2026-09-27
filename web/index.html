@@ -1023,6 +1023,16 @@ body.show-settings #settings{display:block}
 .kv > .v2{min-width:0;overflow-wrap:anywhere}
 .kv > .v2 small{display:block;color:var(--faint);font-size:.8em}
 .kv > .v2.unset{color:var(--faint)}
+.kv > .span2{grid-column:1/-1;color:var(--faint);font-size:.85em;margin-top:-.2em}
+.kv.keys{grid-template-columns:auto 1fr}
+.sheet .state:empty{display:none;min-height:0}
+.source .inside{padding-bottom:.6em}
+.checknow{margin-top:.6em;display:flex;flex-wrap:wrap;gap:.6em;align-items:center}
+.checkout{flex:1 1 100%;font-size:.95em;line-height:1.4;color:var(--label)}
+.checkout:empty{display:none}
+.checkout.ok b{color:var(--green)} .checkout.bad b{color:var(--red)}
+.checkout small{display:block;color:var(--faint);font-size:.85em}
+body.tv .checknow{display:none}
 .kv kbd{display:inline-block;min-width:1.7em;text-align:center;padding:.1em .4em;
         border:1px solid var(--inset-edge);border-radius:5px;background:var(--inset);
         font:inherit;font-size:.9em}
@@ -3832,11 +3842,6 @@ function recordSection(){
   const tools = el("div", "tools");
   tools.appendChild(csvLink("Download as CSV"));
   wrap.appendChild(tools);
-  const bf = cfg && cfg.backfill;
-  if (bf && bf.status && bf.status !== "off")
-    wrap.appendChild(el("p", "note", esc("Filled in from WeatherFlow: " + bf.status +
-      (bf.error ? " (" + bf.error + ")" : ""))));
-
   const status = el("div", "state");
   /* Striking takes two presses, and the second is on a different button.
      One press used to do it, and the Hottest row's button then sat in the
@@ -3935,7 +3940,7 @@ const CARD_INFO = {
 };
 const cardTitle = (name) => (CARD_INFO[name] || [name])[0];
 
-const SETTINGS_TABS = [["layout", "Layout"], ["screen", "This screen"],
+const SETTINGS_TABS = [["layout", "Layout"], ["screen", "Display"],
                        ["sources", "Data sources"], ["record", "Record and about"]];
 let settingsTab = (() => { try { return localStorage.getItem("settings.tab"); } catch (e) { return null; } })();
 if (!SETTINGS_TABS.some(t => t[0] === settingsTab)) settingsTab = "layout";
@@ -4206,18 +4211,20 @@ function screenPanel(panel){
   const tv = el("span", "v2");
   tv.appendChild(segmented([["off", "Off"], ["on", "On"]],
     document.body.classList.contains("tv") ? "on" : "off", (v) => setTv(v === "on"), "TV layout"));
-  tv.appendChild(el("small", null, "Larger type, no cursor and no footer buttons. Hold the clock " +
-    "for a second, or click it three times, to come back here. " +
-    "Add <code style=\"white-space:nowrap\">?tv</code> to the address to start in it."));
   kv2.appendChild(tv);
+  const tvNote = el("small", "span2", "Larger type, no cursor and no footer buttons. Hold the clock " +
+    "for a second, or click it three times, to come back here. " +
+    "Add <code style=\"white-space:nowrap\">?tv</code> to the address to start in it.");
+  kv2.appendChild(tvNote);
   look.appendChild(kv2);
 
   const keys = el("div", "sheet");
   keys.innerHTML = '<h2>Keyboard</h2>';
-  const kv3 = el("div", "kv");
+  const kv3 = el("div", "kv keys");
   for (const [k, what] of [["d", "Ten-day outlook"], ["a", "Almanac"], ["n", "Internet, the last week"],
                            ["w", "Weather map"], ["s", "Settings"], ["t", "Light or dark"],
-                           ["f", "TV layout"], ["Esc", "Back to the cards"]]) {
+                           ["f", "TV layout"], ["Esc", "Back to the cards, or close an open alert"],
+                           ["hold", "the clock, on the TV: settings"]]) {
     kv3.appendChild(el("span", "k2", "<kbd>" + esc(k) + "</kbd>"));
     kv3.appendChild(el("span", "v2", esc(what)));
   }
@@ -4311,10 +4318,57 @@ function sourcesPanel(panel){
     const inside = el("div", "inside");
     inside.appendChild(el("p", "note", src.note));
     if (src.secret) inside.appendChild(secretField(src.secret));
+    inside.appendChild(checkNow(src.id));
     d.appendChild(inside);
     sheet.appendChild(d);
   }
   panel.appendChild(sheet);
+}
+
+/* Check now: ask the server to fetch this source once, right now, and say
+   what happened — how long it took, what came back, or the failure in full.
+   The status lines say whether the last scheduled fetch worked; this is for
+   when you have just changed something and do not want to wait for the
+   next one, or when "failing" needs more than a word. Results are kept in a
+   module variable so a redraw does not lose them. Not on the TV, where
+   nobody troubleshoots. */
+const checkResults = {};
+
+function checkNow(id){
+  const wrap = el("div", "checknow");
+  const btn = el("button", "", "Check now");
+  btn.type = "button";
+  const out = el("div", "checkout");
+  const show = (r) => {
+    if (!r) { out.replaceChildren(); return; }
+    out.className = "checkout " + (r.pending ? "" : r.ok ? "ok" : "bad");
+    out.innerHTML = r.pending ? "Checking…"
+      : '<b>' + (r.ok ? "✓" : "✗") + '</b> ' +
+        (r.took_ms != null ? esc((r.took_ms / 1000).toFixed(1) + " s") + " · " : "") +
+        esc(r.ok ? r.summary : r.error) +
+        '<small>' + esc(clock(r.at)) + '</small>';
+  };
+  show(checkResults[id]);
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    checkResults[id] = {pending: true};
+    show(checkResults[id]);
+    try {
+      const r = await fetch("api/check", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-Tempest-Config": "1"},
+        body: JSON.stringify({source: id}),
+      });
+      checkResults[id] = await r.json();
+    } catch (e) {
+      checkResults[id] = {ok: false, error: "Could not reach the dashboard server", at: Date.now() / 1000};
+    }
+    btn.disabled = false;
+    show(checkResults[id]);
+    poll();                                     // a success refreshed the card
+  });
+  wrap.append(btn, out);
+  return wrap;
 }
 
 /* The status lines, brought up to date in place. The page is not rebuilt
@@ -4433,9 +4487,10 @@ function recordPanel(panel){
   about.appendChild(kv2);
   const links = el("div", "tools");
   links.style.marginTop = "1em";
-  for (const [href, text] of [["testall", "Every picture the dashboard can draw"],
+  for (const [href, text] of [["testall", "Walk through every preview"],
                               ["?testalert", "Preview the alert banner"],
-                              ["?teststorm=overhead", "Preview a storm overhead"]]) {
+                              ["?teststorm=overhead", "Preview a storm overhead"],
+                              ["?testwinter", "Preview winter"]]) {
     const a = el("a", "linkbtn", esc(text));
     a.href = href;
     links.appendChild(a);

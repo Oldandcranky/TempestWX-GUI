@@ -863,6 +863,33 @@ console.log = (...args) => {
           bad.push(at + ': "needs a key" did not open the Internet source');
         if ((await page.evaluate(() => cfg.slots)).includes('internet')) bad.push(at + ': asking about the key lit the panel');
 
+        // Check now: one press, one request with the header, and the answer
+        // where the press was. Not on the TV.
+        let checks = 0;
+        await page.route('**/api/check', route => { checks++;
+          return route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({source: 'forecast', ok: true, took_ms: 812, at: Date.now() / 1000,
+                                  summary: '10 days; now 12.5°C, code 3', error: ''}) }); });
+        await tab('sources');
+        await page.$eval('.source[data-source="forecast"] summary', el => el.click());
+        await page.waitForTimeout(300);
+        await page.$eval('.source[data-source="forecast"] .checknow button', el => el.click());
+        await page.waitForTimeout(600);
+        const chk = await page.$eval('.source[data-source="forecast"] .checkout', el => el.textContent);
+        if (checks !== 1) bad.push(at + ': Check now made ' + checks + ' requests');
+        if (!/✓/.test(chk) || !/0\.8 s/.test(chk) || !/10 days/.test(chk)) bad.push(at + ': the check result reads "' + chk + '"');
+        // The TV layout label sits level with its buttons.
+        await tab('screen');
+        const level = await page.evaluate(() => {
+          const k = [...document.querySelectorAll('.kv > .k2')].find(e => e.textContent === 'TV layout');
+          const b = k.nextElementSibling.querySelector('button');
+          return Math.abs((k.getBoundingClientRect().top + k.getBoundingClientRect().bottom) / 2 -
+                          (b.getBoundingClientRect().top + b.getBoundingClientRect().bottom) / 2); });
+        if (level > 6) bad.push(at + ': the TV layout label is ' + Math.round(level) + 'px off its buttons');
+        if (await page.$eval('.settabs button[data-tab="screen"]', el => el.textContent) !== 'Display')
+          bad.push(at + ': the second tab is not called Display');
+        await tab('sources');                      // the checks below expect it
+
         // Data sources: what is working, not what was once typed.
         const lines = await page.$$eval('.source', els => Object.fromEntries(els.map(e =>
           [e.dataset.source, e.querySelector('.line').textContent + ' [' + e.querySelector('.dot').className + ']'])));
@@ -873,6 +900,8 @@ console.log = (...args) => {
         if (/configured/i.test(Object.values(lines).join(' '))) bad.push(at + ': it still says "configured"');
         // A key with shortcut letters in it must not close the page or change the theme.
         const theme = await page.evaluate(() => document.documentElement.dataset.theme);
+        await page.$eval('.source[data-source="internet"]', el => { if (!el.open) el.querySelector('summary').click(); });
+        await page.waitForTimeout(300);
         await page.focus('.source[data-source="internet"] input');
         await page.keyboard.type('stfwdna-token');
         if (!await open()) bad.push(at + ': typing a key closed the settings page');

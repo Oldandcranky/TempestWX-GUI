@@ -264,6 +264,7 @@ and sunshine — back to the day the station was installed.
 | `/api/series` | The slow half of the state: the 24-hour series and the forecaster's words |
 | `/api/days.csv` | The whole daily record, one row a day. `?temp=F&wind=mph&pres=inHg&rain=in` choose the units |
 | `/api/record` | The all-time records, what has been struck from them, and whether the record is being saved |
+| `/api/check` | `POST {"source": …}` with the settings header: fetch one source now and report what happened |
 | `/api/almanac` | Streaks, season marks, records, a row per month and a year of daily rows. `?warm=&hot=&frost=` set the thresholds, in °C |
 | `/api/config` | The card layout, whether each key is set (never the key), and what the server was started with |
 | `/healthz` | `{"ok": true, "health": "live", "saving": true}` — `saving` is false when history cannot be written |
@@ -360,6 +361,23 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Check now, on every data source.** The status lines say whether the
+  last scheduled fetch worked; this asks for one right now and says what
+  happened — how long it took, one line on what came back ("10 days; now
+  12.5 °C"), or the failure in full with its HTTP code. For the hub it
+  counts the last minute's packets by type and where they came from, or
+  says what to check when there are none. A success refreshes the card. It
+  never shows a request URL or a response body, because the WeatherFlow
+  token travels in one and can come back in the other. Behind the same
+  header as a settings write, since a fetch costs the outside service a
+  call. Not shown in the TV layout.
+- Settings, after a review: the second tab is "Display"; the TV layout note
+  sits under its row instead of pushing the label out of line; the keyboard
+  list has a narrow key column and names the clock and Escape's second
+  duty; an opened data source no longer leaves an empty band under its key;
+  the start-up panel names the observation stations actually in use; the
+  About buttons say what they do and include the winter preview; and the
+  daily record's duplicate backfill line is gone.
 - **Alerts stay on the cards, and stop when they end.** A banner showed on
   every page — settings, the almanac, the outlook — and stayed until the
   weather service dropped it, which can be a while after its end time. Now

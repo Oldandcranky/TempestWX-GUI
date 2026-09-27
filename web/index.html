@@ -175,41 +175,14 @@ body.tv{cursor:none}
 
 svg.plot{width:100%;height:100%;display:block;overflow:visible}
 
-/* ── The internet card has two sides ─────────────────────────────────────
-   The glance view stays the front; the corner button turns it over to the
-   test history. Both faces are built every render, so the flip is a CSS
-   transform rather than a rebuild — and because the grid is replaced every
-   two seconds, a card that is rendered already-flipped simply starts that
-   way and does not re-animate. */
-.card.flip{position:relative}
-.flipper{position:absolute;inset:0}
-/* The turned-away face is collapsed, not rotated away in 3-D.
-   A 3-D flip needs transform-style:preserve-3d to survive on .card, which also
-   carries container-type:size; a browser that reads that as containment
-   flattens the context, and then backface-visibility hides nothing — both
-   faces paint at once and the one turned away comes out mirrored. scaleX has
-   no such dependency: it is a plain 2-D transform, a zero-width box paints
-   nothing, and no text can ever render backwards. The two halves are staggered
-   so one face has finished collapsing before the other opens, which reads as a
-   flip without needing a third dimension. */
-.face{
-  position:absolute;inset:0;display:flex;flex-direction:column;
-  transform-origin:50% 50%;transition:transform .24s ease-in-out;
-}
-.face.back{transform:scaleX(0)}
-.face.front{transform:scaleX(1);transition-delay:.24s}
-.card.flipped .face.front{transform:scaleX(0);transition-delay:0s}
-.card.flipped .face.back{transform:scaleX(1);transition-delay:.24s}
-@media (prefers-reduced-motion:reduce){.face{transition:none}}
-/* The header turns the card over, so it has to look like it does. */
 /* The flip button is a hint that a card does something, and the one part a
-   keyboard can reach. It was hidden on the TV for a while as clutter; the
-   owner preferred it back. */
-/* Forecast and Internet act on a tap anywhere, but they are draggable cards
-   first, so they keep the grab cursor; the flip button lighting up on hover
-   is the hint. The outlook is not draggable, so it can say "click" outright. */
+   keyboard can reach. Forecast, Records and Internet act on a tap anywhere,
+   but they are draggable cards first, so they keep the grab cursor; the
+   button lighting up on hover is the hint. The pages are not draggable, so
+   they can say "click" outright. */
 body:not(.tv) #card-fc:hover .flipbtn,
-body:not(.tv) #card-internet.flip:hover .flipbtn{color:var(--accent)}
+body:not(.tv) #card-records:hover .flipbtn,
+body:not(.tv) #card-internet:hover .flipbtn{color:var(--accent)}
 body:not(.tv) #outlook .card{cursor:pointer}
 body:not(.tv) #outlook .card:hover .flipbtn{color:var(--accent)}
 
@@ -2774,15 +2747,11 @@ const FIT_MIN = 0.6;
 
 function fitCards(){
   for (const card of document.querySelectorAll(".card")) {
-    // A two-sided card holds two bodies; only the one facing out is worth
-    // measuring, and each side is sized on its own.
-    const flipped = card.classList.contains("flipped");
-    const body = card.querySelector(flipped ? ".face.back .card-body"
-                                            : ".card-body");
+    const body = card.querySelector(".card-body");
     if (!body) continue;
     const w = card.clientWidth, h = card.clientHeight;
     if (!w || !h) continue;
-    const key = card.id + (flipped ? "#back" : "");
+    const key = card.id;
     const cached = fitCache.get(key);
     let fit = (cached && cached.w === w && cached.h === h) ? cached.fit : 1;
     card.style.setProperty("--fit", fit);
@@ -3216,26 +3185,6 @@ const BLOAT_BAD = 100;                 // ms added under load — matches the se
 const netMb = v => v == null ? DASH
   : (v >= 100 ? String(Math.round(v)) : v.toFixed(1));
 
-/* Which side of the internet card is showing. The grid is rebuilt every two
-   seconds, so this cannot live in the DOM: the class is put on the live node
-   when you press the button, which is what runs the transition, and put back
-   on each rebuilt node, which is what makes it survive. */
-let netFlipped = false;
-let netFlipTimer = null;
-const NET_FLIP_SEC = 30;    // a wall display finds its way back on its own
-
-function netFlip(on){
-  netFlipped = on;
-  const live = document.getElementById("card-internet");
-  if (live) live.classList.toggle("flipped", on);
-  clearTimeout(netFlipTimer);
-  if (on) netFlipTimer = setTimeout(() => netFlip(false), NET_FLIP_SEC*1000);
-  // The two sides are fitted independently but share the card's --fit, so
-  // refit at the half-turn, while the card is edge-on: doing it now would
-  // resize the face still facing the room. Sooner than the 2 s re-render.
-  setTimeout(fitCards, 250);        // half of the CSS transition
-}
-
 const FLIP_ICON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
@@ -3394,59 +3343,8 @@ function netPlot(pts, tone){
 }
 
 /* The back of the card: what the line has actually been doing, test by test. */
-function netDetail(b, n){
-  const pts = Array.isArray(n.history) ? n.history : [];
-  if (!pts.length) {
-    b.appendChild(el("div","mid"));
-    b.appendChild(caption("No test history yet"));
-    b.appendChild(el("div","mid"));
-    return;
-  }
-  const worst = (key) => {
-    const vals = pts.map(p => p[key]).filter(v => v != null);
-    return vals.length ? Math.max(...vals) : null;
-  };
-  const bloats = pts.filter(p => p.ping != null && p.loaded != null)
-                    .map(p => p.loaded - p.ping);
-  const peak = bloats.length ? Math.max(...bloats) : null;
-  const tone = peak != null && peak > BLOAT_BAD ? "red" : "accent";
-  const failed = pts.filter(p => !p.ok && !p.tool).length;
-  const skipped = pts.filter(p => p.tool).length;
-  const loss = worst("loss");
-  const downs = pts.map(p => p.down).filter(v => v != null);
-  const ups = pts.map(p => p.up).filter(v => v != null);
-  const range = (a) => a.length < 2 ? null
-    : netMb(Math.min(...a)) + "–" + netMb(Math.max(...a));
-
-  b.appendChild(caption("Latency — idle vs under load", "faint"));
-  b.appendChild(netPlot(pts, tone));
-  // Short labels: three of them share a card, and a phone card is narrow.
-  // The qualifier goes on the sub-line rather than into the label.
-  b.appendChild(cells([
-    {k:"Load", v:peak == null ? DASH : sign(peak, 0), u:"ms", small:true,
-     sub:"worst", tone:(peak != null && peak > BLOAT_BAD) ? "red" : null},
-    {k:"Loss", v:loss == null ? DASH : fg(loss), u:"%", small:true,
-     sub:"worst", tone:loss ? "red" : null},
-    {k:"Failed", v:String(failed), small:true,
-     sub:"of " + pts.length + (skipped ? " · " + skipped + " didn't run" : ""),
-     tone:failed ? "red" : null},
-  ]));
-  b.appendChild(cells([
-    {k:"Down", v:downs.length ? netMb(n.avg_down) : DASH, u:"Mbps", small:true,
-     sub:range(downs)},
-    {k:"Up",   v:ups.length ? netMb(n.avg_up) : DASH, u:"Mbps", small:true,
-     sub:range(ups)},
-  ]));
-  const bits = [pts.length + " test" + (pts.length === 1 ? "" : "s") +
-                " over " + spanWords(n.window_h)];
-  if (n.server) bits.push("via " + n.server);
-  b.appendChild(caption(bits.join(" · "), "faint"));
-}
-
-/* A way into Speedtest Tracker itself, for the detail this card will not
-   show. It belongs on the back whether or not there is any history yet —
-   with none, it is the only thing there worth tapping. Not on the TV, where
-   a second browser tab is no use to a remote. */
+/* A way into Speedtest Tracker itself, for the detail the page will not
+   show. Not on the TV, where a second browser tab is no use to a remote. */
 function netLink(n){
   const href = lanLink(n.url);
   if (!href) return null;
@@ -3455,8 +3353,7 @@ function netLink(n){
   a.target = "_blank";
   a.rel = "noopener noreferrer";
   a.textContent = "Speedtest Tracker \u2197";
-  // The card turns over when tapped anywhere, so this keeps its own tap,
-  // exactly as the flip button does.
+  // The page closes on a tap anywhere, so this keeps its own tap.
   a.addEventListener("click", (e) => e.stopPropagation());
   a.draggable = false;
   return a;
@@ -3486,35 +3383,12 @@ function buildInternet(s){
     return c;
   }
 
-  // Two faces in one card. card() builds a head and a body, which is exactly
-  // what a face needs, so borrow its children and drop the wrapper it came in.
-  const c = el("div","card flip");
+  // One face. It used to turn over to a second, which no other card did;
+  // a tap opens the Internet page now, as the Forecast card opens the
+  // outlook and the Records card the almanac.
+  const {card:c, body:b} = card("internet","Internet","\u21c5","cold",srcHealth(n));
   c.id = "card-internet";
-  if (netFlipped) c.classList.add("flipped");
-  const flipper = el("div","flipper");
-  c.appendChild(flipper);
-  // The back carries no glyph: the arrows say "this is the internet card",
-  // which the face you just turned over already told you.
-  const face = (cls, glyph, label, to) => {
-    const {card:tmp, body} = card("internet","Internet",glyph,"cold",srcHealth(n));
-    const f = el("div","face " + cls);
-    while (tmp.firstChild) f.appendChild(tmp.firstChild);
-    // A tap anywhere on the card turns it over — the grid listener below the
-    // outlook's. Header-only was the first version, on the reasoning that a
-    // card which turns over when brushed is worse than one that needs aiming;
-    // on the TV's pointer the header proved too small a target, and the owner
-    // chose the whole card. Nothing on either face is clickable, so a tap
-    // cannot have meant anything else. The button stays, off the TV — a hint,
-    // and the part a keyboard can reach.
-    const head = f.querySelector(".card-head");
-    head.title = label;
-    head.appendChild(flipBtn(label, () => netFlip(to)));
-    flipper.appendChild(f);
-    return body;
-  };
-
-  const b = face("front", "\u21c5", "Show the test history", true);
-  const back = face("back", "", "Back to the summary", false);
+  headAction(c, "Show the last week", () => toggleNet(true));
 
   const tone = NET_TONE[n.status] || "muted";
   const pct = (v, plan) => (v == null || !plan) ? null
@@ -3564,16 +3438,6 @@ function buildInternet(s){
   if (n.avg_down != null)
     bits.push("avg " + netMb(n.avg_down) + " Mbps / " + n.tests + " tests");
   b.appendChild(caption(bits.join(" · ") || "Speedtest Tracker", "faint"));
-
-  netDetail(back, n);
-  const week = el("a", "linkbtn week");
-  week.href = "#";
-  week.textContent = "The last week";
-  week.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); toggleNet(true); });
-  week.draggable = false;
-  back.appendChild(week);
-  const link = netLink(n);
-  if (link) back.appendChild(link);
   return c;
 }
 
@@ -4800,11 +4664,13 @@ function renderNetPage(){
   const worstBloat = bloats.length ? Math.max(...bloats) : null;
   const worstLoss = ok.reduce((m, p) => p.loss != null && p.loss > m ? p.loss : m, 0);
 
+  const range = (vals) => { const v = vals.filter(x => x != null);
+    return v.length < 2 ? "" : netMb(Math.min(...v)) + "–" + netMb(Math.max(...v)); };
   b.appendChild(cells([
     {k: "Down", v: netMb(netMed(ok.map(p => p.down))), u: "Mbps", small: true,
-     sub: "median of " + ok.length},
+     sub: "median of " + ok.length + (range(ok.map(p => p.down)) ? " · " + range(ok.map(p => p.down)) : "")},
     {k: "Up", v: netMb(netMed(ok.map(p => p.up))), u: "Mbps", small: true,
-     sub: "median"},
+     sub: "median" + (range(ok.map(p => p.up)) ? " · " + range(ok.map(p => p.up)) : "")},
     {k: "Under load", v: worstBloat == null ? DASH : sign(worstBloat, 0), u: "ms",
      small: true, sub: "worst", tone: (worstBloat != null && worstBloat > BLOAT_BAD) ? "red" : null},
     {k: "Loss", v: worstLoss ? fg(worstLoss) : "0", u: "%", small: true,
@@ -4842,6 +4708,7 @@ function renderNetPage(){
 
   const bits = [pts.length + " tests over " + spanWords(w.days * 24)];
   if (n.isp) bits.push(n.isp);
+  if (n.server) bits.push("via " + n.server);
   // Figures the tool got wrong are left out rather than shown; say how many.
   const botched = pts.filter(p => p.dropped && p.dropped.length).length;
   if (botched) bits.push(botched + (botched === 1 ? " reading" : " readings") +
@@ -5353,10 +5220,6 @@ const TESTALL_STEPS = [
   {label: "Wind — a breeze", wind: 3.5},
   {label: "Wind — strong", wind: 9},
   {label: "Wind — a gale", wind: 19},
-  // Turned over without the half-minute timer that turns it back, since a
-  // step now lasts until the next click.
-  {label: "Internet card, turned over",
-   enter: () => { netFlip(true); clearTimeout(netFlipTimer); }, leave: () => netFlip(false)},
   // Before the outlook, and without a history entry of its own. Leaving a
   // page goes back through history, which lands a moment later; a page that
   // pushed its own entry in that moment would be closed by the other's Back.
@@ -5892,12 +5755,17 @@ grid.addEventListener("click", (e) => {
   }
 }, true);
 
-/* The Internet card turns over from a tap anywhere on it, either face. Only a
-   card that can turn: when Speedtest is unavailable it is a single face. The
-   headers are part of it; the flip buttons stop their own clicks. */
+/* The Internet card opens its page from a tap anywhere on it, like the
+   Forecast and Records cards do theirs. */
 document.getElementById("grid").addEventListener("click", (e) => {
-  if (!e.target.closest("#card-internet.flip")) return;
-  netFlip(!netFlipped);
+  if (!e.target.closest("#card-internet")) return;
+  toggleNet(true);
+});
+/* And the whole page is the way back, as the outlook is — except its links,
+   which are the one thing on it that a tap means something else by. */
+document.getElementById("netpage").addEventListener("click", (e) => {
+  if (e.target.closest("a")) return;
+  toggleNet(false);
 });
 
 // Any input counts as someone still looking.

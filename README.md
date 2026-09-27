@@ -65,7 +65,7 @@ the grid rearranges itself for however many you choose.
 | **Radar** | Live radar for your location |
 | **Air quality** | US AQI on a banded scale, with PM2.5, PM10 and ozone (Open-Meteo, no key) |
 | **Pollen** | Tree, grass and weed indices with the season's active allergens (Google Pollen, key needed) |
-| **Internet** | Download and upload from a self-hosted Speedtest Tracker, with a health word driven by packet loss, jitter and latency under load rather than by speed. Turns over to a plot of the last day's tests |
+| **Internet** | Download and upload from a self-hosted Speedtest Tracker, with a health word driven by packet loss, jitter and latency under load rather than by speed. A tap opens the Internet page |
 | **Station** | Battery voltage and charge, station and hub firmware, uptime, signal strength, and any sensor faults |
 
 Four more pages, each behind an icon in the footer:
@@ -360,6 +360,12 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The Internet card opens its page instead of turning over.** It was the
+  one card with a second face, reached by a flip no other card had, while
+  the Forecast and Records cards open a page on a tap. A tap on it opens the
+  Internet page now, and a tap anywhere on that page comes back. What the
+  back face alone had — the week's range of speeds and the server that
+  answered — is on the page.
 - The Internet page's and the almanac's plots keep their scale and legend
   in a row above the drawing rather than laid over it. On a phone the lines
   reach the top of a short plot, and "Down — Up —" with a card behind it was

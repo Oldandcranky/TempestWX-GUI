@@ -71,15 +71,16 @@ guess them.
 in `web/fonts/`. Edit it directly.
 
 - **`render()` calls `grid.replaceChildren()` every two seconds.** Any UI state
-  that must survive — a flipped card, a cached measurement — lives in a
+  that must survive — an open page, a cached measurement — lives in a
   module-level variable, never in the DOM.
 - **The `--fit` pass** (`fitCards()`) measures each card and shrinks its type
   until the content fits. It checks *both* axes; it did not always, and a word
   running off the side went unnoticed until a screenshot caught it.
 - **`.card` has `container-type: size`**, which flattens 3-D transform contexts
   in some browsers. A card flip built on `rotateY` + `backface-visibility`
-  worked headless and painted both faces on the real display. The flip is 2-D
-  now. Be wary of anything needing a preserved 3-D context.
+  once worked headless and painted both faces on the real display. There is
+  no flipping card any more (every card that has more to show opens a page),
+  but be wary of anything needing a preserved 3-D context.
 - **Give a card's spare room to flex**, do not reason about it. The Pollen face
   overlapped its own caption because the space was calculated rather than
   handed over. The fix, used since by the Temperature trace, is a flex child

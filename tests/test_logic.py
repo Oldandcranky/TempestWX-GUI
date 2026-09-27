@@ -371,7 +371,10 @@ class OneBannerPerStatement(unittest.TestCase):
                                "description": text, "areaDesc": "Boone; McHenry; Lake"}}
 
     def parse(self, *feats):
-        return server.AlertsFetcher.parse({"features": list(feats)})
+        # As seen at 8 that morning: these are the real fog statement's times,
+        # and it ended at 9:30, after which the expiry filter rightly drops it.
+        then = __import__("time").mktime((2026, 9, 27, 8, 0, 0, 0, 0, -1))
+        return server.AlertsFetcher.parse({"features": list(feats)}, now=then)
 
     def test_the_same_statement_twice_is_one_banner_the_newer_kept(self):
         out = self.parse(self.feat("2026-09-27T07:04:00-05:00", "Fog over northwets Indiana."),

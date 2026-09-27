@@ -38,7 +38,7 @@
  * a tap anywhere on it, the idle return — and that two exits at once go back
  * one step, not two. Two would take the wall display off the dashboard. And
  * the way in: a tap anywhere on the Forecast card, on the TV and off it. And
- * the Internet card turning over, and back, from a tap anywhere on it.
+ * the Internet card opening its page from a tap anywhere on it.
  *
  * What it cannot check: whether any of it looks right. A card can pass every
  * assertion here and still be ugly, or say something untrue. Look at a
@@ -405,14 +405,16 @@ console.log = (...args) => {
       }));
       await page.goto(BASE + (tv ? '/?tv' : '/'), { waitUntil: 'networkidle' });
       await page.waitForTimeout(SETTLE_MS);
-      await page.$eval('#card-internet .face.front .card-body', el => el.click());
-      await page.waitForTimeout(900);
+      await page.$eval('#card-internet .card-body', el => el.click());
+      await page.waitForTimeout(1500);
       const at = w + 'x' + h + (tv ? ' TV' : '');
+      if (!await page.evaluate(() => document.body.classList.contains('show-net')))
+        bad.push(at + ': a tap on the Internet card did not open its page');
       const r = await page.evaluate(() => {
-        const a = document.querySelector('#card-internet .face.back .linkbtn.out');
+        const a = document.querySelector('#netpage .linkbtn.out');
         if (!a) return {missing: true};
         const ar = a.getBoundingClientRect();
-        const cr = document.getElementById('card-internet').getBoundingClientRect();
+        const cr = document.querySelector('#netpage .card').getBoundingClientRect();
         return {href: a.href, target: a.target, rel: a.rel,
                 shown: ar.width > 0 && ar.height > 0,
                 inside: ar.left >= cr.left - 1 && ar.right <= cr.right + 1 &&
@@ -429,14 +431,14 @@ console.log = (...args) => {
         if (!r.href.includes(want + ':8080')) bad.push(at + ': link points at ' + r.href);
         if (r.target !== '_blank' || !/noopener/.test(r.rel))
           bad.push(at + ': link opens unsafely (' + r.target + ', ' + r.rel + ')');
-        // Tapping it must not turn the card over.
-        await page.$eval('#card-internet .face.back .linkbtn.out', a => {
+        // Tapping it must not close the page.
+        await page.$eval('#netpage .linkbtn.out', a => {
           a.addEventListener('click', e => e.preventDefault(), {once: true});
           a.click();
         });
         await page.waitForTimeout(700);
-        if (!await page.evaluate(() => document.querySelector('#card-internet.flipped')))
-          bad.push(at + ': tapping the link turned the card back');
+        if (!await page.evaluate(() => document.body.classList.contains('show-net')))
+          bad.push(at + ': tapping the link closed the page');
       }
       await page.close();
     }
@@ -1345,12 +1347,12 @@ console.log = (...args) => {
     const r = await page.evaluate(() => ({
       trace: !!document.querySelector('#card-temp svg path'),
       presTrace: !!document.querySelector('#card-pres svg path'),
-      backHistory: (() => { const c = [...document.querySelectorAll('#card-internet .face.back .cell')]
-        .find(x => /Failed/i.test(x.textContent)); return c ? c.textContent : ''; })(),
+      backHistory: (() => { const c = [...document.querySelectorAll('#card-internet .caption')]
+        .find(x => /tests/i.test(x.textContent)); return c ? c.textContent : ''; })(),
     }));
     if (!r.trace) bad.push('the temperature trace did not draw from the slow half');
     if (!r.presTrace) bad.push('the pressure trace did not draw from the slow half');
-    if (!/of 25/.test(r.backHistory)) bad.push('the Internet back lacks its history: "' + r.backHistory + '"');
+    if (!/25 tests/.test(r.backHistory)) bad.push('the Internet card lacks its test count: "' + r.backHistory + '"');
     await page.evaluate(() => toggleOutlook(true));
     await page.waitForTimeout(1500);
     const words = await page.evaluate(() => document.querySelectorAll('#outlook .nwswords .period').length);
@@ -1464,7 +1466,7 @@ console.log = (...args) => {
           return {
             label: st.label, tag: document.getElementById('testtag').textContent,
             want: { rain: st.rain || null, alerts: st.alerts ? Math.min(3, st.alerts.length) : 0,
-                    pollen: st.pollen, wind: st.wind, flip: /Internet/.test(st.label),
+                    pollen: st.pollen, wind: st.wind,
                     outlook: /outlook/.test(st.label), almanac: /Almanac/.test(st.label), winter: st.winter || null },
             rain: sky ? sky.dataset.tier : null,
             hail: !!document.querySelector('#card-rain .drop.hail'),
@@ -1473,7 +1475,6 @@ console.log = (...args) => {
                       : document.querySelector('#card-pollen .pollenface') ? false : null,
             lean: (document.querySelector('#card-wind .tree') || {style: {getPropertyValue: () => ''}})
                     .style.getPropertyValue('--lean'),
-            flipped: !!document.querySelector('#card-internet.flipped'),
             outlook: document.body.classList.contains('show-outlook'),
             almanac: document.body.classList.contains('show-almanac'),
             winterLine: (document.querySelector('#card-temp .caption') || {}).textContent || '',
@@ -1488,7 +1489,6 @@ console.log = (...args) => {
         if (r.alerts !== w.alerts) bad.push(at + ': ' + r.alerts + ' alerts, expected ' + w.alerts);
         if (w.pollen != null && r.pollenCalm !== (w.pollen === 0)) bad.push(at + ': pollen face is wrong');
         if (w.wind != null) { if (!r.lean) bad.push(at + ': no tree'); else leans.push(parseFloat(r.lean)); }
-        if (w.flip !== r.flipped) bad.push(at + ': Internet card ' + (r.flipped ? 'turned' : 'not turned'));
         if (w.outlook !== r.outlook) bad.push(at + ': outlook ' + (r.outlook ? 'open' : 'closed'));
         if (w.almanac !== r.almanac) bad.push(at + ': almanac ' + (r.almanac ? 'open' : 'closed'));
         if (w.winter === 'ahead' && !/Hard freeze/.test(r.winterLine)) bad.push(at + ': no freeze line');
@@ -1811,8 +1811,7 @@ console.log = (...args) => {
       await page.waitForTimeout(800);
       return isOpen();
     };
-    const flipped = () => page.evaluate(() =>
-      document.getElementById('card-internet').classList.contains('flipped'));
+    const netOpen = () => page.evaluate(() => document.body.classList.contains('show-net'));
     const onDashboard = () => page.evaluate(
       (base) => location.href.startsWith(base) && !!document.getElementById('grid'), BASE);
     try {
@@ -1889,8 +1888,8 @@ console.log = (...args) => {
       await page.goBack(); await page.waitForTimeout(800);
       await press('#card-fc .card-body', 800);
       if (await isOpen()) bad.push('a press held on the Forecast card opened it — a hold is a grab, not a tap');
-      await press('#card-internet .face.front .card-body', 800);
-      if (await flipped()) bad.push('a press held on the Internet card turned it over');
+      await press('#card-internet .card-body', 800);
+      if (await netOpen()) bad.push('a press held on the Internet card opened its page — a hold is a grab');
       await page.evaluate(() => { window.__dragged = false;
         document.addEventListener('dragend', () => { window.__dragged = true; }, { once: true }); });
       const [x0, y0] = await centre('#card-fc'), [x1, y1] = await centre('#card-temp');
@@ -1901,16 +1900,14 @@ console.log = (...args) => {
       if (!await page.evaluate(() => window.__dragged)) bad.push('the Forecast card could not be dragged');
       if (await isOpen()) bad.push('dragging the Forecast card opened the outlook');
 
-      // The Internet card turns over from a tap anywhere on either face.
-      await page.$eval('#card-internet .face.front .card-body', el => el.click());
-      await page.waitForTimeout(600);
-      if (!await flipped()) bad.push('a tap on the Internet card front did not turn it over');
-      await page.$eval('#card-internet .face.back .card-body', el => el.click());
-      await page.waitForTimeout(600);
-      if (await flipped()) bad.push('a tap on the Internet card back did not turn it back');
-      await page.$eval('#card-internet .face.front .card-head', el => el.click());
-      await page.waitForTimeout(600);
-      if (!await flipped()) bad.push('the Internet header turned it twice, or not at all');
+      // The Internet card opens its page from a tap anywhere, and the page
+      // closes from a tap anywhere on itself, like the outlook.
+      await page.$eval('#card-internet .card-body', el => el.click());
+      await page.waitForTimeout(1200);
+      if (!await netOpen()) bad.push('a tap on the Internet card did not open its page');
+      await page.$eval('#netpage .card-body', el => el.click());
+      await page.waitForTimeout(900);
+      if (await netOpen()) bad.push('a tap on the Internet page did not close it');
       // Settings on the TV, where the footer's buttons are hidden and there is
       // no "s" key: the clock, held for a second, or clicked three times. This
       // lives in the solo section because it times a press.

@@ -508,6 +508,20 @@ console.log = (...args) => {
       if (!r.open) bad.push(at + ': the page did not open');
       if (r.top > 80) bad.push(at + ': the page starts ' + Math.round(r.top) + 'px down the screen');
       if (r.plots !== 2) bad.push(at + ': ' + r.plots + ' plots, expected 2');
+      // The legend and the scale sit above the drawing, never on it — the
+      // lines reach the top of a short plot on a phone — and the drawing
+      // keeps most of the height.
+      const over = await page.evaluate(() => [...document.querySelectorAll('#netpage .netplot')].map(p => {
+        const svg = p.querySelector('svg').getBoundingClientRect();
+        const labels = [...p.querySelectorAll('.plothead .ax, .plothead .tag')].map(l => l.getBoundingClientRect());
+        return { onDrawing: labels.filter(l => l.bottom > svg.top + 1 && l.top < svg.bottom).length,
+                 share: svg.height / p.getBoundingClientRect().height,
+                 cut: [...p.querySelectorAll('.plothead .tag')].some(t => t.scrollWidth > t.clientWidth + 1) }; }));
+      over.forEach((o, i) => {
+        if (o.onDrawing) bad.push(at + ': plot ' + (i + 1) + ' has ' + o.onDrawing + ' label(s) on the drawing');
+        if (o.share < 0.6) bad.push(at + ': plot ' + (i + 1) + ' keeps only ' + Math.round(o.share * 100) + '% for the drawing');
+        if (o.cut) bad.push(at + ': plot ' + (i + 1) + ' legend is cut off');
+      });
       // The charts are the page: between them, at least a third of the card.
       const share = await page.evaluate(() => {
         const c = document.querySelector('#netpage .card').getBoundingClientRect();
@@ -1122,7 +1136,9 @@ console.log = (...args) => {
           for (let i = 1; i < kids.length; i++)
             overlap = Math.max(overlap, kids[i - 1].getBoundingClientRect().bottom -
                                         kids[i].getBoundingClientRect().top);
-          const labels = [...host.querySelectorAll('.yearplot .ax, .yearplot .tag')]
+          const labels = [...host.querySelectorAll('.yearplot .plotarea .ax')]
+            .map(n => n.getBoundingClientRect());
+          const head = [...host.querySelectorAll('.yearplot .plothead .ax, .yearplot .plothead .tag')]
             .map(n => n.getBoundingClientRect());
           const p = plot ? plot.getBoundingClientRect() : null;
           return {open: document.body.classList.contains('show-almanac'),
@@ -1136,6 +1152,7 @@ console.log = (...args) => {
                   spill: b ? Math.max(frame.top - b.top, b.bottom - frame.bottom,
                                       frame.left - b.left, b.right - frame.right) : 0,
                   stray: p ? labels.filter(l => l.left < p.left - 1 || l.right > p.right + 1).length : 0,
+                  onDrawing: b ? head.filter(l => l.bottom > b.top + 1 && l.top < b.bottom).length : 0,
                   top: host.getBoundingClientRect().top,
                   ghosts: ['outlook', 'netpage', 'map', 'settings'].filter(id =>
                     document.getElementById(id).getBoundingClientRect().height > 0),
@@ -1156,6 +1173,7 @@ console.log = (...args) => {
         if (r.clipped.length) bad.push(at + ': cut off: ' + r.clipped.join(' | '));
         if (r.spill > 1) bad.push(at + ': the plot paints ' + r.spill.toFixed(0) + 'px outside the card');
         if (r.stray) bad.push(at + ': ' + r.stray + ' plot label(s) outside the plot');
+        if (r.onDrawing) bad.push(at + ': ' + r.onDrawing + ' legend label(s) sit on the year drawing');
         if (payload.available === false) {
           if (!/Collecting/.test(r.text)) bad.push(at + ': an empty record does not say so');
         } else {

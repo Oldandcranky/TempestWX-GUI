@@ -360,6 +360,11 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- The Internet page's and the almanac's plots keep their scale and legend
+  in a row above the drawing rather than laid over it. On a phone the lines
+  reach the top of a short plot, and "Down — Up —" with a card behind it was
+  hiding the very peaks it was naming; the almanac's legend sat on its rain
+  bars the same way.
 - **The big numbers are no longer buttons.** Tapping a card's hero figure
   cycled its unit, which was for a long time the only way to change one and
   a thing nobody would find. Every setting lives on the settings page now,

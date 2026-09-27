@@ -360,6 +360,32 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **An alert opens to what it says.** The banner gave the event and the end
+  time and nothing more; the statement's own words — "locally dense fog will
+  reduce visibilities to one quarter mile or less" — were fetched and thrown
+  away. A tap on a banner opens them, with any instruction in bold, when it
+  was issued, the office and the counties; a second tap, or Escape, closes
+  it, and a wall display closes it by itself after a minute and a half.
+  `?testalert` previews carry sample text.
+- **One banner per statement.** The office issued a fog statement at 7:04,
+  then again at 7:08 with a typo fixed, and never withdrew the first; the
+  wall showed two identical banners. Alerts for the same event from the
+  same office ending at the same time, whose text says the same thing, are
+  folded into one — the newest — which says how many times it was issued.
+  Two different statements ending together stay two.
+- The server accepts a burst of connections instead of resetting the sixth:
+  the standard library's default backlog is five, and a household of screens
+  reloading after a deploy, or the test suite, opens more than that at once.
+- **The Internet page no longer believes the tool's impossible numbers.**
+  The Ookla CLI recorded an upload latency of 3,251,667,954 ms — thirty-seven
+  days — on a test that moved 816 Mbps, and a packet loss of 86.6% on one
+  that moved 754 Mbps. Both were taken at face value: the first set the
+  week's "worst under load" and flattened the latency chart onto the floor,
+  the second its "worst loss". A latency over ten seconds is not one the
+  line could have; heavy loss on a test fast enough to prove the packets
+  got through is the probe's mistake, not the line's. Both are left out,
+  the page says how many it left out, and the card's verdict uses the same
+  rules. Light loss, and heavy loss on a slow test, are still believed.
 - **Striking a record asks first, and cannot cascade.** One press struck it,
   and the Hottest row's button then sat in the same place with the next
   hottest day behind it: four presses in a row struck a July heatwave and a

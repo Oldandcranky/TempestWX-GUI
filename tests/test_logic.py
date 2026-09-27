@@ -357,6 +357,46 @@ class FetcherWording(unittest.TestCase):
         self.assertEqual(fc.backoff(1), 15)
 
 
+class OneBannerPerStatement(unittest.TestCase):
+    """The office issued a fog statement twice, four minutes apart, the
+    second with a typo fixed, and never withdrew the first."""
+
+    def feat(self, sent, text, event="Special Weather Statement",
+             sender="NWS Chicago IL", expires="2026-09-27T09:30:00-05:00", ends=None):
+        return {"properties": {"id": "urn:" + sent, "event": event, "senderName": sender,
+                               "sent": sent, "expires": expires, "ends": ends,
+                               "headline": event + " issued", "severity": "Moderate",
+                               "description": text, "areaDesc": "Boone; McHenry; Lake"}}
+
+    def parse(self, *feats):
+        return server.AlertsFetcher.parse({"features": list(feats)})
+
+    def test_the_same_statement_twice_is_one_banner_the_newer_kept(self):
+        out = self.parse(self.feat("2026-09-27T07:04:00-05:00", "Fog over northwets Indiana."),
+                         self.feat("2026-09-27T07:08:00-05:00", "Fog over northwest Indiana."))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["copies"], 2)
+        self.assertEqual(out[0]["sent"], "2026-09-27T07:08:00-05:00")
+        self.assertIn("northwest", out[0]["description"])
+
+    def test_two_different_statements_ending_together_stay_two(self):
+        out = self.parse(self.feat("2026-09-27T07:04:00-05:00", "Dense fog this morning across the area."),
+                         self.feat("2026-09-27T07:08:00-05:00", "A line of strong storms will move through late tonight."))
+        self.assertEqual(len(out), 2)
+
+    def test_different_events_never_fold(self):
+        out = self.parse(self.feat("2026-09-27T07:04:00-05:00", "Snow.", event="Winter Weather Advisory"),
+                         self.feat("2026-09-27T07:08:00-05:00", "Snow.", event="Winter Storm Warning"))
+        self.assertEqual(len(out), 2)
+
+    def test_the_text_is_unwrapped_but_keeps_its_paragraphs(self):
+        out = self.parse(self.feat("2026-09-27T07:04:00-05:00",
+            "Locally dense fog will reduce\nvisibilities to a quarter\nmile.\n\nUse your low beams if\nfog is encountered."))
+        self.assertEqual(out[0]["description"],
+            "Locally dense fog will reduce visibilities to a quarter mile.\n\nUse your low beams if fog is encountered.")
+        self.assertEqual(out[0]["areas"], ["Boone", "McHenry", "Lake"])
+
+
 class AlertTimes(unittest.TestCase):
     """The banner says when an alert stops, which needs the hazard's end kept
     alongside the message's expiry — they differ, most of all for warnings."""
@@ -475,6 +515,56 @@ class ToolErrors(unittest.TestCase):
         h = self.parse("tool", "fail", "ok")["history"]
         self.assertEqual([(x["ok"], x["tool"]) for x in h],
                          [(True, False), (False, False), (False, True)])
+
+
+class ToolsMistakes(unittest.TestCase):
+    """Figures the Ookla CLI reports that the line cannot have produced. They
+    were taken at face value, and one of them set a week's "worst" latency
+    to thirty-seven days."""
+
+    def parse(self, *rs):
+        return server.SpeedtestFetcher.parse(rows(*rs))
+
+    def test_a_latency_of_thirty_seven_days_is_not_a_latency(self):
+        out = self.parse(result(idle=10.3, loaded=3251667954.1))
+        self.assertIsNone(out["bloat"])
+        self.assertEqual(out["history"][0]["loaded"], None)
+        self.assertFalse(any("under load" in i for i in out["issues"]))
+        self.assertIn("download latency", out["dropped"])
+
+    def test_one_leg_overflowing_leaves_the_other(self):
+        r = result(idle=10.0, loaded=25.0)
+        r["data"]["upload"]["latency"]["iqm"] = 3251667954.1
+        out = self.parse(r)
+        self.assertEqual(out["bloat"], 15.0)
+        self.assertEqual(out["dropped"], ["upload latency"])
+
+    def test_heavy_loss_on_a_fast_test_is_the_probe_not_the_line(self):
+        out = self.parse(result(down_mbps=754.0, loss=86.6))
+        self.assertIsNone(out["loss"])
+        self.assertFalse(any("loss" in i for i in out["issues"]))
+        self.assertEqual(out["dropped"], ["loss"])
+        self.assertEqual(out["status"], "good")
+
+    def test_heavy_loss_on_a_slow_test_is_believed(self):
+        out = self.parse(result(down_mbps=12.0, loss=40.0))
+        self.assertEqual(out["loss"], 40.0)
+        self.assertIn("Packet loss 40.0%", out["issues"])
+
+    def test_light_loss_on_a_fast_test_is_still_believed(self):
+        out = self.parse(result(down_mbps=800.0, loss=2.5))
+        self.assertEqual(out["loss"], 2.5)
+        self.assertIn("Packet loss 2.5%", out["issues"])
+
+    def test_loss_outside_a_percentage_is_nothing(self):
+        self.assertIsNone(self.parse(result(down_mbps=5.0, loss=140.0))["loss"])
+
+    def test_the_week_says_what_it_left_out(self):
+        week = server.SpeedtestFetcher.window(
+            rows(result(loss=86.6), result(idle=10.0, loaded=3251667954.1, at="2026-09-14T11:00:00Z")),
+            7, now=__import__("time").mktime((2026, 9, 14, 13, 0, 0, 0, 0, -1)))
+        dropped = [p["dropped"] for p in week["points"]]
+        self.assertEqual(sorted(map(str, dropped)), sorted(["['loss']", "['download latency', 'upload latency']"]))
 
 
 class TwoStations(unittest.TestCase):

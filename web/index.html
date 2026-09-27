@@ -642,6 +642,21 @@ body.show-map #map{display:block}
 .alert.sev-moderate{color:var(--accent)}
 .alert.sev-minor{color:var(--yellow)}
 .alert.sev-unknown{color:var(--muted)}
+/* A banner opens on a tap to what the statement says. The words are set in
+   the page's text colour, not the alert's, so a long paragraph of orange is
+   not the result; the outline keeps the severity. On a phone the body scrolls
+   inside itself rather than pushing the footer off the screen. */
+.alert{cursor:pointer;-webkit-tap-highlight-color:transparent;min-height:44px;box-sizing:border-box}
+.alert .more{flex:0 0 auto;opacity:.55;font-weight:400;font-size:.9em}
+.alert .body{flex:1 0 100%;display:none;text-align:left;font-weight:400;
+             color:var(--text);line-height:1.45;font-size:.95em;
+             max-height:40vh;overflow:auto;padding-top:.35em;
+             border-top:1px solid color-mix(in srgb,currentColor 35%,transparent);margin-top:.25em}
+.alert.open .body{display:block}
+.alert.sev-extreme .body{color:var(--bg)}
+.alert .body p{margin:0 0 .6em}
+.alert .body .meta{opacity:.7;font-size:.9em}
+.alert:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @keyframes alertpulse{50%{opacity:.72}}
 @media (prefers-reduced-motion:reduce){.alert.sev-extreme{animation:none}}
 body.tv .alert{font-size:clamp(15px,1.5vw,26px)}
@@ -3506,11 +3521,17 @@ const CARD_BUILDERS = {
    waiting for real weather. ?testalert alone shows one of every severity
    (worst three fit); ?testalert=minor,unknown picks specific ones. */
 const SAMPLE_ALERTS = {
-  extreme:  ["Tornado Warning",      "Tornado warning for northern McHenry County until 9:15 PM"],
-  severe:   ["Severe Thunderstorm Warning", "Sixty mph gusts and quarter-size hail moving east at 40 mph"],
-  moderate: ["Winter Weather Advisory", "Three to five inches of snow expected through Tuesday morning"],
-  minor:    ["Flood Advisory",       "Minor flooding of low-lying roads along the Kishwaukee River"],
-  unknown:  ["Special Weather Statement", "Patchy dense fog reducing visibility below a quarter mile"],
+  extreme:  ["Tornado Warning",      "Tornado warning for northern McHenry County until 9:15 PM",
+    "At 8:41 PM CDT, a severe thunderstorm capable of producing a tornado was located near Harvard, moving east at 35 mph.\n\nFlying debris will be dangerous to those caught without shelter. Mobile homes will be damaged or destroyed.",
+    "TAKE COVER NOW! Move to a basement or an interior room on the lowest floor of a sturdy building."],
+  severe:   ["Severe Thunderstorm Warning", "Sixty mph gusts and quarter-size hail moving east at 40 mph",
+    "At 6:12 PM CDT, a severe thunderstorm was located over Huntley, moving east at 40 mph. Hazards: 60 mph wind gusts and quarter size hail.", ""],
+  moderate: ["Winter Weather Advisory", "Three to five inches of snow expected through Tuesday morning",
+    "Snow expected. Total snow accumulations of 3 to 5 inches. Winds gusting as high as 35 mph.\n\nPlan on slippery road conditions. The hazardous conditions could impact the morning commute.", ""],
+  minor:    ["Flood Advisory",       "Minor flooding of low-lying roads along the Kishwaukee River",
+    "Minor flooding of low-lying and poor drainage areas is occurring along the Kishwaukee River.", ""],
+  unknown:  ["Special Weather Statement", "Patchy dense fog reducing visibility below a quarter mile",
+    "Locally dense fog will reduce visibilities down to one quarter mile or less early this morning. Fog will gradually erode through mid-morning.", ""],
 };
 let TEST_ALERTS = (() => {          // let: /testall changes it as it loops
   const q = new URLSearchParams(location.search);
@@ -3527,6 +3548,9 @@ function sampleAlerts(keys){
   const rank = {extreme:4, severe:3, moderate:2, minor:1, unknown:0};
   const hours = {extreme:1, severe:2, moderate:20, minor:50, unknown:0};
   return keys.map(k => ({
+    id: "preview-" + k, description: sample[k][2] || "", instruction: sample[k][3] || "",
+    areas: ["McHenry", "Kane", "DuPage", "Lake", "Boone"], copies: k === "unknown" ? 2 : 1,
+    sent: new Date().toISOString(),
     event: sample[k][0], headline: sample[k][1], preview: true,
     ends: hours[k] ? new Date(Date.now() + hours[k] * 36e5).toISOString() : null,
     sender: "NWS Chicago IL",
@@ -3551,24 +3575,73 @@ function alertUntil(a){
   return "until " + day + t;
 }
 
+/* Which banner is open to its text. Module-level, since the banners are
+   rebuilt with every snapshot. A wall display closes it again by itself. */
+let alertOpen = null;
+let alertOpenTimer = null;
+const ALERT_OPEN_MS = 90 * 1000;
+const alertKey = (a) => a.id || (a.event + "|" + (a.sent || a.onset || ""));
+
+function toggleAlert(key){
+  alertOpen = alertOpen === key ? null : key;
+  clearTimeout(alertOpenTimer);
+  if (alertOpen) alertOpenTimer = setTimeout(() => { alertOpen = null; if (last) renderAlerts(last); }, ALERT_OPEN_MS);
+  if (last) renderAlerts(last);
+}
+
+function alertBody(a){
+  const body = el("div", "body");
+  const paras = String(a.description || "").split(/\n\s*\n/).filter(Boolean);
+  for (const p of paras) body.appendChild(el("p", null, esc(p)));
+  if (a.instruction) body.appendChild(el("p", null, "<b>" + esc(a.instruction) + "</b>"));
+  if (!paras.length && !a.instruction) body.appendChild(el("p", null, esc(a.headline || "No further detail was issued.")));
+  const meta = [];
+  if (a.sent) meta.push("Issued " + dayClock(new Date(a.sent).getTime() / 1000) +
+                        (a.copies > 1 ? ", " + a.copies + " times" : ""));
+  if (a.sender) meta.push(a.sender);
+  const areas = a.areas || [];
+  if (areas.length) meta.push("for " + areas.slice(0, 3).join(", ") +
+    (areas.length > 3 ? " and " + (areas.length - 3) + " more" : ""));
+  if (meta.length) body.appendChild(el("p", "meta", esc(meta.join(" · "))));
+  return body;
+}
+
 function renderAlerts(s){
   const host = document.getElementById("alerts");
   const list = TEST_ALERTS || (s.alerts && s.alerts.alerts) || [];
-  if (!list.length) { host.className = ""; host.replaceChildren(); measureChrome(); return; }
+  if (!list.length) { host.className = ""; host.replaceChildren(); alertOpen = null; measureChrome(); return; }
   host.className = "show";
   host.replaceChildren(...list.slice(0, 3).map(a => {
-    const n = el("div", "alert sev-" + (a.severity || "unknown").toLowerCase());
+    const key = alertKey(a);
+    const open = alertOpen === key;
+    const n = el("div", "alert sev-" + (a.severity || "unknown").toLowerCase() + (open ? " open" : ""));
+    n.dataset.key = key;
+    n.tabIndex = 0;
+    n.setAttribute("role", "button");
+    n.setAttribute("aria-expanded", open ? "true" : "false");
     // Our own short line rather than NWS's sentence. With no end time at all,
     // the headline is the only thing left to say, so it stands in. A preview
     // says so in the part that never gives way.
     const what = (a.preview ? "PREVIEW · " : "") + (alertUntil(a) || a.headline || "");
     n.innerHTML = '<span class="ev">' + esc(a.event) + '</span>' +
       (what ? '<span class="hl">' + esc(what) + '</span>' : '') +
-      (a.sender ? '<span class="src">' + esc(a.sender) + '</span>' : '');
+      (a.sender ? '<span class="src">' + esc(a.sender) + '</span>' : '') +
+      '<span class="more" aria-hidden="true">' + (open ? "▴" : "▾") + '</span>';
+    n.appendChild(alertBody(a));
     return n;
   }));
   measureChrome();
 }
+// One listener for all of them, since they are rebuilt every two seconds.
+document.getElementById("alerts").addEventListener("click", (e) => {
+  const n = e.target.closest(".alert");
+  if (n) toggleAlert(n.dataset.key);
+});
+document.getElementById("alerts").addEventListener("keydown", (e) => {
+  const n = e.target.closest(".alert");
+  if (!n || (e.key !== "Enter" && e.key !== " ")) return;
+  e.preventDefault(); toggleAlert(n.dataset.key);
+});
 
 /* ── settings: card order, which cards, and the token ────────────────── */
 let cfg = null;                     // last /api/config payload
@@ -4618,6 +4691,10 @@ function renderNetPage(){
 
   const bits = [pts.length + " tests over " + spanWords(w.days * 24)];
   if (n.isp) bits.push(n.isp);
+  // Figures the tool got wrong are left out rather than shown; say how many.
+  const botched = pts.filter(p => p.dropped && p.dropped.length).length;
+  if (botched) bits.push(botched + (botched === 1 ? " reading" : " readings") +
+                         " the tool botched, left out");
   b.appendChild(caption(bits.join(" · "), "faint"));
   const link = netLink(n);
   if (link) b.appendChild(link);
@@ -4638,12 +4715,16 @@ function netWeekPlot(pts, kind, n){
   const series = speed
     ? [["down", "cold"], ["up", "accent"]]
     : [["ping", "green"], ["loaded", "red"]];
+  // The scale comes from the readings, so one impossible reading — a
+  // latency of thirty-seven days — flattened a week of real ones onto the
+  // floor. The server drops those now; this is the belt to its braces.
+  const CEILING = speed ? Infinity : 10000;
   let hi = 0;
   for (const p of pts) for (const [key] of series)
-    if (p[key] != null) hi = Math.max(hi, p[key]);
+    if (p[key] != null && p[key] <= CEILING) hi = Math.max(hi, p[key]);
   if (speed && n.plan_down) hi = Math.max(hi, n.plan_down);
   if (!isFinite(hi) || hi <= 0) hi = 1;
-  const y = (v) => H - pad - (v / hi) * (H - 2 * pad);
+  const y = (v) => H - pad - (Math.min(v, hi) / hi) * (H - 2 * pad);
   const line = (key, tone) => {
     let d = "", pen = false;
     for (const p of pts) {
@@ -5677,6 +5758,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "d") toggleOutlook();
   if (e.key === "n") toggleNet();
   if (e.key === "a") toggleAlmanac();
+  if (e.key === "Escape" && alertOpen) { alertOpen = null; if (last) renderAlerts(last); }
   if (e.key === "Escape" && document.body.classList.contains("show-almanac"))
     toggleAlmanac(false);
   if (e.key === "Escape" && document.body.classList.contains("show-net"))

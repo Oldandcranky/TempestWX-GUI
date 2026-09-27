@@ -24,6 +24,7 @@
 # =============================================================================
 
 import argparse
+import difflib
 import hashlib
 import json
 import math
@@ -242,8 +243,9 @@ class PollingFetcher(threading.Thread):
                 "up": rnd(cls._mbps(r.get("upload_bits"), r.get("upload"))),
                 "ping": rnd(idle),
                 "loaded": rnd(load),
-                "jitter": rnd(cls._num((d.get("ping") or {}).get("jitter")), 2),
-                "loss": rnd(cls._num(d.get("packetLoss")), 2),
+                "jitter": rnd(cls._ms((d.get("ping") or {}).get("jitter")), 2),
+                "loss": rnd(cls._loss(r), 2),
+                "dropped": cls._dropped(r) or None,
                 "server": ((d.get("server") or {}).get("name") or "") or None,
                 "url": ((d.get("result") or {}).get("url") or "") or None,
             })
@@ -592,6 +594,18 @@ class SpeedtestFetcher(PollingFetcher):
     # What counts as a problem worth putting on a wall display.
     LOSS_PCT = 1.0            # packet loss above this is not noise
     BLOAT_MS = 100.0          # added latency under load
+    # What the tool can report and mean. The Ookla CLI once recorded an upload
+    # latency of 3,251,667,954 ms — thirty-seven days — with a jitter of 2.9
+    # million, on a test that moved 816 Mbps: a broken measurement, not a
+    # slow line, and it set the week's "worst" and stretched the chart to
+    # match. No latency the line could have is over ten seconds. And its
+    # packet-loss probe, a separate UDP stream, said 86.6% on a test that
+    # moved 754 Mbps: TCP cannot do that through real loss on that scale
+    # (a few Mbps per flow at 20%), so past LOSS_ABSURD_PCT the figure is
+    # believed only when the test itself was slow enough to be consistent.
+    LATENCY_MAX_MS = 10000.0
+    LOSS_ABSURD_PCT = 10.0
+    LOSS_CREDIBLE_BELOW_MBPS = 100.0
     JITTER_MS = 30.0
     PLAN_FRAC = 0.5           # this fraction of the advertised rate
 
@@ -699,15 +713,56 @@ class SpeedtestFetcher(PollingFetcher):
         The gap between the two is the bufferbloat, which is what actually
         makes a connection feel broken."""
         d = row.get("data") or {}
-        idle = cls._num((d.get("ping") or {}).get("latency"))
+        idle = cls._ms((d.get("ping") or {}).get("latency"))
         if idle is None:
-            idle = cls._num(row.get("ping"))
+            idle = cls._ms(row.get("ping"))
         loaded = None
         for leg in ("download", "upload"):
-            iqm = cls._num(((d.get(leg) or {}).get("latency") or {}).get("iqm"))
+            iqm = cls._ms(((d.get(leg) or {}).get("latency") or {}).get("iqm"))
             if iqm is not None and (loaded is None or iqm > loaded):
                 loaded = iqm
         return idle, loaded
+
+    @classmethod
+    def _ms(cls, v):
+        """A latency or jitter in ms, or None when the tool's figure is not
+        one the line could produce. A leg that overflowed is simply absent;
+        the other leg still counts."""
+        v = cls._num(v)
+        return None if v is None or v < 0 or v > cls.LATENCY_MAX_MS else v
+
+    @classmethod
+    def _loss(cls, row):
+        """Packet loss in percent, or None when the probe's figure cannot be
+        believed: outside 0–100, or heavy loss on a test that was fast enough
+        to prove the packets were getting through."""
+        d = row.get("data") or {}
+        loss = cls._num(d.get("packetLoss"))
+        if loss is None or loss < 0 or loss > 100:
+            return None
+        if loss > cls.LOSS_ABSURD_PCT:
+            down = cls._mbps(row.get("download_bits"), row.get("download"))
+            if down is not None and down >= cls.LOSS_CREDIBLE_BELOW_MBPS:
+                return None
+        return loss
+
+    @classmethod
+    def _dropped(cls, row):
+        """Which of a test's figures were thrown out as the tool's mistake,
+        so the page can say so rather than quietly showing a dash."""
+        d = row.get("data") or {}
+        out = []
+        raw_loss = cls._num(d.get("packetLoss"))
+        if raw_loss is not None and cls._loss(row) is None:
+            out.append("loss")
+        for leg in ("download", "upload"):
+            raw = cls._num(((d.get(leg) or {}).get("latency") or {}).get("iqm"))
+            if raw is not None and cls._ms(raw) is None:
+                out.append(leg + " latency")
+        if cls._num((d.get("ping") or {}).get("jitter")) is not None \
+                and cls._ms((d.get("ping") or {}).get("jitter")) is None:
+            out.append("jitter")
+        return out
 
     # -- fetch ------------------------------------------------------------
     def fetch_once(self):
@@ -773,7 +828,7 @@ class SpeedtestFetcher(PollingFetcher):
                 "tool": cls._tool_error(r),
                 "ping": rnd(idle),
                 "loaded": rnd(load),
-                "loss": rnd(cls._num((r.get("data") or {}).get("packetLoss")), 2),
+                "loss": rnd(cls._loss(r), 2),
                 "down": rnd(cls._mbps(r.get("download_bits"), r.get("download"))),
                 "up": rnd(cls._mbps(r.get("upload_bits"), r.get("upload")))})
         out["history"] = history
@@ -791,8 +846,9 @@ class SpeedtestFetcher(PollingFetcher):
                                 latest.get("download"))
         out["up"] = cls._mbps(latest.get("upload_bits"), latest.get("upload"))
         out["ping"], loaded = cls._latency(latest)
-        out["jitter"] = cls._num(ping.get("jitter"))
-        out["loss"] = cls._num(d.get("packetLoss"))
+        out["jitter"] = cls._ms(ping.get("jitter"))
+        out["loss"] = cls._loss(latest)
+        out["dropped"] = cls._dropped(latest)
         out["isp"] = d.get("isp") or ""
         out["server"] = ((d.get("server") or {}).get("name") or "")
         out["healthy"] = latest.get("healthy")
@@ -1136,6 +1192,7 @@ class AlertsFetcher(PollingFetcher):
             if not event and not headline:
                 continue  # nothing to render; skip rather than show a blank banner
             out.append({
+                "id": p.get("id") or feat.get("id") or "",
                 "event": event or "Weather alert",
                 "severity": p.get("severity") or "Unknown",
                 "urgency": p.get("urgency") or "",
@@ -1143,12 +1200,71 @@ class AlertsFetcher(PollingFetcher):
                 # "ends" is when the hazard is over; "expires" only when this
                 # message lapses. The banner shows ends, falling back to expires.
                 "onset": p.get("onset"), "expires": p.get("expires"),
-                "ends": p.get("ends"),
+                "ends": p.get("ends"), "sent": p.get("sent"),
                 "sender": p.get("senderName") or "",
+                # What the statement actually says. The banner shows the
+                # event and the end time; this is behind a tap.
+                "description": cls._prose(p.get("description")),
+                "instruction": cls._prose(p.get("instruction")),
+                "areas": cls._areas(p.get("areaDesc")),
+                "copies": 1,
                 "rank": cls.RANK.get(p.get("severity") or "Unknown", 0),
             })
-        out.sort(key=lambda a: a["rank"], reverse=True)
+        out = cls._fold(out)
+        out.sort(key=lambda a: (a["rank"], a.get("sent") or ""), reverse=True)
         return out
+
+    @staticmethod
+    def _prose(text):
+        """NWS text is wrapped at sixty-odd columns with a blank line between
+        paragraphs. Unwrap the lines; keep the paragraphs."""
+        if not text:
+            return ""
+        paras = []
+        for para in str(text).replace("\r", "").split("\n\n"):
+            words = " ".join(line.strip() for line in para.split("\n"))
+            words = " ".join(words.split())
+            if words:
+                paras.append(words)
+        return "\n\n".join(paras)
+
+    @staticmethod
+    def _areas(text):
+        return [a.strip() for a in str(text or "").split(";") if a.strip()]
+
+    @classmethod
+    def _fold(cls, alerts):
+        """One banner for one statement.
+
+        The office issued a fog statement at 7:04, then again at 7:08 with a
+        typo fixed, and never withdrew the first; both were active and the
+        wall showed two identical banners. Alerts for the same event from
+        the same office ending at the same time, whose text says the same
+        thing, are one alert: the newest is kept and it says how many times
+        it was issued. Two different statements ending together stay two.
+        """
+        kept = []
+        for a in alerts:
+            twin = None
+            for k in kept:
+                if (k["event"], k["sender"], k["ends"] or k["expires"]) != \
+                        (a["event"], a["sender"], a["ends"] or a["expires"]):
+                    continue
+                if a["description"] and k["description"]:
+                    alike = difflib.SequenceMatcher(
+                        None, a["description"], k["description"]).ratio()
+                    if alike < 0.8:
+                        continue
+                twin = k
+                break
+            if twin is None:
+                kept.append(a)
+                continue
+            twin["copies"] += 1
+            if (a.get("sent") or "") > (twin.get("sent") or ""):
+                copies = twin["copies"]
+                twin.clear(); twin.update(a); twin["copies"] = copies
+        return kept
 
     def snapshot(self):
         with self.lock:
@@ -2374,6 +2490,12 @@ def main(argv):
         return 2
 
     dashboard = Dashboard(args)
+    # Five is the standard library's default backlog: the sixth connection
+    # arriving while the others are still being accepted gets a reset, not a
+    # wait. The test suite opens a dozen pages at once, and a house with a
+    # television, two phones and a laptop all reloading after a deploy is
+    # not far off that.
+    ThreadingHTTPServer.request_queue_size = 64
     httpd = ThreadingHTTPServer((args.host, args.http_port), Handler)
     httpd.daemon_threads = True
     httpd.dashboard = dashboard

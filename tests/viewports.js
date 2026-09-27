@@ -1531,8 +1531,11 @@ console.log = (...args) => {
   section("the alert banner: centred, and the end time never cut off", async () => {
     const soon = (h) => new Date(Date.now() + h * 36e5).toISOString();
     const alerts = { checked: true, error: '', alerts: [
-      { event: 'Tornado Warning', severity: 'Extreme', rank: 4, ends: soon(1),
-        expires: soon(1), sender: 'NWS Chicago IL', headline: 'x' },
+      { id: 'a1', event: 'Tornado Warning', severity: 'Extreme', rank: 4, ends: soon(1),
+        expires: soon(1), sender: 'NWS Chicago IL', headline: 'x', copies: 2, sent: new Date().toISOString(),
+        areas: ['McHenry', 'Kane', 'DuPage', 'Lake', 'Boone'],
+        description: 'At 8:41 PM CDT, a severe thunderstorm capable of producing a tornado was located near Harvard, moving east at 35 mph.\n\nFlying debris will be dangerous to those caught without shelter.',
+        instruction: 'TAKE COVER NOW! Move to a basement or an interior room on the lowest floor of a sturdy building.' },
       { event: 'Severe Thunderstorm Warning', severity: 'Severe', rank: 3,
         ends: soon(20), expires: soon(3), sender: 'NWS Chicago IL', headline: 'x' },
       { event: 'Flood Watch', severity: 'Moderate', rank: 2, ends: null,
@@ -1550,9 +1553,16 @@ console.log = (...args) => {
       const found = await page.evaluate(() => [...document.querySelectorAll('#alerts .alert')].map(a => {
         const r = a.getBoundingClientRect(), cs = getComputedStyle(a);
         const inner = [r.left + parseFloat(cs.paddingLeft), r.right - parseFloat(cs.paddingRight)];
-        const kids = [...a.children].map(k => k.getBoundingClientRect());
-        const lines = {};
-        for (const k of kids) (lines[Math.round(k.top)] ||= []).push(k);
+        const kids = [...a.children].map(k => k.getBoundingClientRect()).filter(r => r.width > 0);   // not the folded-away text
+        // Rows by overlap, not by exact top: a smaller glyph on the same
+        // baseline sits a pixel or two lower than the words beside it.
+        const rows = [];
+        for (const k of [...kids].sort((p, q) => p.top - q.top)) {
+          const row = rows.find(r => k.top < r.bottom - 4 && k.bottom > r.top + 4);
+          if (row) { row.items.push(k); row.top = Math.min(row.top, k.top); row.bottom = Math.max(row.bottom, k.bottom); }
+          else rows.push({top: k.top, bottom: k.bottom, items: [k]});
+        }
+        const lines = Object.fromEntries(rows.map((r, i) => [i, r.items]));
         const offCentre = Math.max(...Object.values(lines).map(row => {
           const mid = (Math.min(...row.map(k => k.left)) + Math.max(...row.map(k => k.right))) / 2;
           return Math.abs(mid - (inner[0] + inner[1]) / 2);
@@ -1597,6 +1607,43 @@ console.log = (...args) => {
         if (!/^NWS /.test(f.src)) bad.push(where + ': "' + f.ev + '" does not name the office');
         if (f.offCentre > 3) bad.push(where + ': "' + f.ev + '" sits ' + f.offCentre.toFixed(0) + 'px off centre');
       }
+      // A tap opens the statement's own words; a second tap, or Escape, closes
+      // them; and nothing about it pushes the page wider or the footer off.
+      const openState = () => page.evaluate(() => {
+        const a = document.querySelector('#alerts .alert');
+        const body = a.querySelector('.body');
+        const r = a.getBoundingClientRect(), f = document.querySelector('footer').getBoundingClientRect();
+        return { open: a.classList.contains('open'), aria: a.getAttribute('aria-expanded'),
+                 shown: getComputedStyle(body).display !== 'none', text: body.textContent,
+                 sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                 bannerBottom: r.bottom, footerTop: f.top, vh: innerHeight, h: r.height,
+                 others: [...document.querySelectorAll('#alerts .alert.open')].length };
+      });
+      let st = await openState();
+      if (st.shown || st.aria !== 'false') bad.push(where + ': the statement is open before anyone tapped');
+      if (st.h < 44) bad.push(where + ': the banner is ' + Math.round(st.h) + 'px tall, a poor tap target');
+      await page.$eval('#alerts .alert', el => el.click());
+      await page.waitForTimeout(400);
+      st = await openState();
+      if (!st.shown || st.aria !== 'true') bad.push(where + ': a tap did not open the statement');
+      if (st.others !== 1) bad.push(where + ': ' + st.others + ' banners open after one tap');
+      for (const want of ['Harvard', 'TAKE COVER', 'Issued', '2 times', 'NWS Chicago IL', 'McHenry, Kane, DuPage and 2 more'])
+        if (!st.text.includes(want)) bad.push(where + ': the open statement lacks "' + want + '"');
+      if (st.sideways > 1) bad.push(where + ': opening it made the page ' + st.sideways + 'px too wide');
+      if (w <= 720 && st.bannerBottom > st.vh + 1) bad.push(where + ': the open banner runs off the bottom of the phone');
+      // It survives the two-second rebuild.
+      await page.waitForTimeout(2300);
+      st = await openState();
+      if (!st.shown) bad.push(where + ': the statement closed by itself on the next render');
+      await page.$eval('#alerts .alert', el => el.click());
+      await page.waitForTimeout(400);
+      st = await openState();
+      if (st.shown) bad.push(where + ': a second tap did not close it');
+      await page.$eval('#alerts .alert', el => el.click());
+      await page.waitForTimeout(300);
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      if ((await openState()).shown) bad.push(where + ': Escape did not close it');
       await page.close();
     }
     failures += bad.length;

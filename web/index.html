@@ -64,7 +64,6 @@ body{
   overflow:hidden;
 }
 body.tv{cursor:none}
-body.tv .unit-toggle{cursor:default}
 
 #app{display:flex;flex-direction:column;height:100%;padding:var(--gap);gap:var(--gap)}
 #grid{
@@ -116,8 +115,6 @@ body.tv .unit-toggle{cursor:default}
 .hero .u{font-size:var(--fs-unit);font-weight:500;color:var(--label);margin-left:.14em}
 .hero.amber .v{color:var(--amber)} .hero.cold .v{color:var(--cold)}
 .hero.yellow .v{color:var(--yellow)}
-.unit-toggle{cursor:pointer;-webkit-tap-highlight-color:transparent}
-.unit-toggle:hover .v{filter:brightness(1.12)}
 
 .row{
   background:var(--inset); border:1px solid var(--inset-edge);
@@ -1300,12 +1297,6 @@ function loadPrefs(serverUnits){
     prefs[k] = v;
   }
 }
-function cycle(kind){
-  const list = UNITS[kind];
-  prefs[kind] = list[(list.indexOf(prefs[kind]) + 1) % list.length];
-  try { localStorage.setItem("unit."+kind, prefs[kind]); } catch (e) {}
-  if (last) render(last);
-}
 
 const temp = (c) => c == null ? null
   : prefs.temp === "°F" ? c*9/5+32 : prefs.temp === "K" ? c+273.15 : c;
@@ -1372,10 +1363,13 @@ const el = (tag, cls, html) => {
 const esc = (s) => String(s).replace(/[&<>]/g, (c) =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
-function hero(value, unit, tone, kind){
-  const n = el("div", "hero" + (tone ? " "+tone : "") + (kind ? " unit-toggle" : ""));
+/* The big number. It used to be a button that cycled its unit, which was
+   the only way to change one and a thing nobody would find; every setting
+   lives on the settings page now, and a tap on a card means what the card
+   says it means. The fourth argument is kept so the callers need not change. */
+function hero(value, unit, tone, _kind){
+  const n = el("div", "hero" + (tone ? " "+tone : ""));
   n.innerHTML = '<span class="v">'+esc(value)+'</span><span class="u">'+esc(unit)+'</span>';
-  if (kind) n.addEventListener("click", () => cycle(kind));
   return n;
 }
 function cells(items, opts){
@@ -4187,7 +4181,7 @@ function setUnit(kind, value){
 function screenPanel(panel){
   const units = el("div", "sheet");
   units.innerHTML = '<h2>Units</h2><p class="note">For this browser only, so the TV and ' +
-    'your phone can differ. On a card, tapping the big number cycles its unit too.</p>';
+    'your phone can differ.</p>';
   const kv = el("div", "kv");
   for (const [kind, label] of [["temp", "Temperature"], ["wind", "Wind"], ["pres", "Pressure"],
                                ["rain", "Rain"], ["dist", "Distance"]]) {

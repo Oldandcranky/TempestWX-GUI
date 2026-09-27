@@ -16,10 +16,9 @@ Built to run on a NAS. It runs on a Synology DS723+.
 
 ![The dashboard running on a Synology NAS](docs/dashboard.png)
 
-*Live station data, twelve cards, dark and light themes. Every hero number
-is a unit toggle — click it to cycle °F / °C / K, mph / km/h / m/s / kts,
-and so on. The choice is remembered per browser, so the TV and your phone
-can disagree.*
+*Live station data, thirteen cards, dark and light themes. Units — °F / °C /
+K, mph / km/h / m/s / kts, and so on — are chosen on the settings page and
+remembered per browser, so the TV and your phone can disagree.*
 
 ---
 
@@ -361,6 +360,10 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The big numbers are no longer buttons.** Tapping a card's hero figure
+  cycled its unit, which was for a long time the only way to change one and
+  a thing nobody would find. Every setting lives on the settings page now,
+  and a tap on a card means what the card says it means.
 - **Check now, on every data source.** The status lines say whether the
   last scheduled fetch worked; this asks for one right now and says what
   happened — how long it took, one line on what came back ("10 days; now

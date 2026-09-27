@@ -107,6 +107,19 @@ one caption slot; `winterLine()` decides what wins it (frostbite, then below
 freezing, then the cold night coming, else comfort). `?testwinter` and
 `?testwinter=now` preview it out of season.
 
+## Logging
+
+Everything goes through `core.log(tag, text, level)`: stdout with a time, a
+ring the settings page shows (`/api/log`), and syslog when configured
+(`Config.syslog`, applied by `Dashboard.apply_syslog`). Use it rather than
+`print`. Levels are syslog's; pick the one Log Center should treat it as.
+Fetchers log their first failure and the recovery, never every retry — keep
+it that way, a flapping source must not fill the log. `docker logs -t
+tempest-dashboard` on the NAS has the same lines with Docker's timestamps.
+The page reports its own errors and watchdog reloads to `POST /api/log`,
+which is the one write accepted without the settings header (a beacon
+cannot send one); it is capped at ten a minute per address.
+
 ## The daily record
 
 `History.days` holds one summary per day — gust, pressure range, strikes,

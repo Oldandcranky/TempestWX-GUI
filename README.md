@@ -264,6 +264,7 @@ and sunshine — back to the day the station was installed.
 | `/api/days.csv` | The whole daily record, one row a day. `?temp=F&wind=mph&pres=inHg&rain=in` choose the units |
 | `/api/record` | The all-time records, what has been struck from them, and whether the record is being saved |
 | `/api/check` | `POST {"source": …}` with the settings header: fetch one source now and report what happened |
+| `/api/log` | The last few hundred log lines and the syslog status; `POST` a page error report, or `{"test": true}` for a test line |
 | `/api/almanac` | Streaks, season marks, records, a row per month and a year of daily rows. `?warm=&hot=&frost=` set the thresholds, in °C |
 | `/api/config` | The card layout, whether each key is set (never the key), and what the server was started with |
 | `/healthz` | `{"ok": true, "health": "live", "saving": true}` — `saving` is false when history cannot be written |
@@ -360,6 +361,27 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **A log worth reading, and a syslog to send it to.** The container's log
+  was twelve lines a day, all from start-up: a data source failing for six
+  hours left no trace, nothing the page did was ever heard of, and settings
+  changes went unrecorded. Every line now carries a time and a syslog
+  severity, and there are lines for what matters: a source's first failure
+  and its recovery with how long it was down, but not every retry; alerts
+  appearing at their own severity — a tornado warning is critical, an
+  advisory a notice — and ending; the hub going quiet and coming back;
+  lightning within five kilometres; the frost line lighting and the first
+  time below freezing each day; every settings change and record strike
+  with the address it came from; and the page's own script errors and
+  watchdog reloads, reported by the browser, so a broken television shows up
+  in the log. Settings → Record and about → Logging shows the last few
+  hundred lines without an SSH session.
+- **Syslog**, from the same panel: a server, port and protocol, off by
+  default and pointing at the NAS when switched on, with a "Send a test
+  line" button. RFC 3164 over UDP or TCP, standard library only, fire and
+  forget. A Synology's Log Center listens on UDP 514 and can search, keep
+  and mail on the lines by severity. Optionally one line a minute with the
+  station's readings as key=value pairs, for a syslog server used as a
+  store.
 - **The Internet card opens its page instead of turning over.** It was the
   one card with a second face, reached by a flip no other card had, while
   the Forecast and Records cards open a page on a tap. A tap on it opens the

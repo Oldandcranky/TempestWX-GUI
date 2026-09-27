@@ -718,6 +718,133 @@ class CheckNow(unittest.TestCase):
         self.assertNotIn("http", json.dumps(out).lower().replace("http 4", ""))
 
 
+class Logging(unittest.TestCase):
+    """One log: to stdout with a time, into a ring, and on to syslog."""
+
+    def setUp(self):
+        self.saved = (core.LOG.syslog, list(core.LOG.lines))
+        core.LOG.syslog = None
+        core.LOG.lines.clear()
+
+    def tearDown(self):
+        core.LOG.syslog = self.saved[0]
+
+    def listener(self):
+        import socket
+        r = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        r.bind(("127.0.0.1", 0)); r.settimeout(2)
+        self.addCleanup(r.close)
+        return r
+
+    def test_a_line_is_kept_with_its_level(self):
+        core.log("hub", "no packets for 2m", "warning")
+        last = core.LOG.recent(1)[0]
+        self.assertEqual((last["tag"], last["level"], last["text"]), ("hub", "warning", "no packets for 2m"))
+
+    def test_an_unknown_level_is_info(self):
+        core.log("x", "y", "loud")
+        self.assertEqual(core.LOG.recent(1)[0]["level"], "info")
+
+    def test_the_syslog_line_is_rfc_3164_with_the_right_priority(self):
+        r = self.listener()
+        core.LOG.syslog = core.Syslog("127.0.0.1", r.getsockname()[1])
+        core.log("alert", "Tornado Warning (Extreme)", "critical")
+        line = r.recv(2048).decode()
+        self.assertTrue(line.startswith("<130>"), line)          # local0 (16*8) + critical (2)
+        self.assertRegex(line, r"^<130>[A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d \S+ tempest\[\d+\]: alert: Tornado Warning")
+        self.assertEqual(core.LOG.syslog.sent, 1)
+
+    def test_debug_lines_stay_local(self):
+        r = self.listener()
+        core.LOG.syslog = core.Syslog("127.0.0.1", r.getsockname()[1])
+        core.log("x", "quiet", "debug")
+        self.assertEqual(core.LOG.syslog.sent, 0)
+        self.assertEqual(core.LOG.recent(1)[0]["text"], "quiet")
+
+    def test_a_server_that_is_not_there_is_counted_not_raised(self):
+        sl = core.Syslog("127.0.0.1", 9, proto="tcp")         # discard port, nothing listens
+        self.assertFalse(sl.send("info", "x", "y"))
+        self.assertEqual(sl.failed, 1)
+        self.assertTrue(sl.last_error)
+
+    def test_the_status_says_where_it_goes(self):
+        core.LOG.syslog = core.Syslog("10.0.0.101", 514)
+        st = core.LOG.syslog_status()
+        self.assertEqual((st["enabled"], st["host"], st["port"], st["proto"]), (True, "10.0.0.101", 514, "udp"))
+        core.LOG.syslog = None
+        self.assertEqual(core.LOG.syslog_status(), {"enabled": False})
+
+
+class FetcherLogLines(unittest.TestCase):
+    """The first failure and the recovery, not every retry."""
+
+    class Flaky(server.PollingFetcher):
+        LABEL = "Forecast"
+        REFRESH = 0.01; RETRY = 0.01
+        def __init__(self, outcomes):
+            server.PollingFetcher.__init__(self, threading.Event())
+            self.outcomes = list(outcomes)
+        def fetch_once(self):
+            o = self.outcomes.pop(0) if self.outcomes else {"ok": True}
+            if o is None:
+                self.stop_event.set(); return {"ok": True}
+            if isinstance(o, Exception): raise o
+            return o
+        def backoff(self, fails): return 0.01
+
+    def test_three_failures_are_one_warning_and_one_recovery(self):
+        core.LOG.lines.clear()
+        import urllib.error, io
+        boom = urllib.error.HTTPError("https://x", 503, "nope", {}, io.BytesIO(b""))
+        f = self.Flaky([boom, boom, boom, {"ok": True}, None])
+        f.run()
+        lines = [l for l in core.LOG.recent() if l["tag"] == "forecast"]
+        self.assertEqual([l["level"] for l in lines], ["warning", "notice"])
+        self.assertIn("HTTP 503", lines[0]["text"])
+        self.assertIn("back after 3 failures", lines[1]["text"])
+
+
+class AlertLogLines(unittest.TestCase):
+    def test_an_alert_appearing_and_ending_at_its_severity(self):
+        core.LOG.lines.clear()
+        f = server.AlertsFetcher(0, 0, threading.Event())
+        f.store([{"id": "a", "event": "Tornado Warning", "severity": "Extreme", "ends": "2026-09-27T21:15:00-05:00", "copies": 1}])
+        f.store([])
+        lines = [l for l in core.LOG.recent() if l["tag"] == "alert"]
+        self.assertEqual([(l["level"], l["text"][:20]) for l in lines],
+                         [("critical", "Tornado Warning (Ext"), ("notice", "Tornado Warning ende")])
+
+
+class SyslogSettings(unittest.TestCase):
+    def cfg(self):
+        import tempfile
+        return server.Config(os.path.join(tempfile.mkdtemp(), "c.json"), {})
+
+    def test_off_by_default_pointing_at_the_nas(self):
+        self.assertEqual(self.cfg().syslog, {"enabled": False, "host": "127.0.0.1", "port": 514, "proto": "udp", "obs": False})
+
+    def test_a_good_block_is_saved_and_survives_a_reload(self):
+        c = self.cfg()
+        changed, err = c.apply({"syslog": {"enabled": True, "host": "10.0.0.101", "port": "514", "proto": "udp", "obs": True}})
+        self.assertEqual((changed, err), (["syslog"], ""))
+        again = server.Config(c.path, {})
+        self.assertEqual(again.syslog["host"], "10.0.0.101")
+        self.assertTrue(again.syslog["enabled"] and again.syslog["obs"])
+
+    def test_nonsense_is_refused_with_a_reason(self):
+        c = self.cfg()
+        self.assertIn("port", c.apply({"syslog": {"port": "lots"}})[1])
+        self.assertIn("port", c.apply({"syslog": {"port": 70000}})[1])
+        self.assertIn("protocol", c.apply({"syslog": {"proto": "carrier pigeon"}})[1])
+        self.assertIn("host", c.apply({"syslog": {"host": "two words"}})[1])
+        self.assertEqual(c.syslog["port"], 514)
+
+    def test_nothing_secret_is_in_the_public_view(self):
+        c = self.cfg()
+        self.assertIn("syslog", c.public())
+        self.assertNotIn("token", c.public())
+
+
 class TwoStations(unittest.TestCase):
     """DuPage and DeKalb, merged into one answer for the card."""
 

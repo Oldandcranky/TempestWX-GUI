@@ -98,6 +98,119 @@ def plausible(key, value):
     return math.isfinite(v) and limits[0] <= v <= limits[1]
 
 
+# ─────────────────────────────────────────────────────────── Logging ───────
+#
+# One place everything worth knowing is said: to stdout with a time, into a
+# ring the settings page can show, and on to a syslog server when one is set.
+# Levels are syslog's. The wording is the old "  tag      : message" style,
+# because the container's log has read that way since the start.
+
+LEVELS = {"debug": 7, "info": 6, "notice": 5, "warning": 4, "error": 3,
+          "critical": 2, "alert": 1, "emerg": 0}
+
+
+class Syslog:
+    """A syslog sender, RFC 3164 over UDP or TCP. Standard library only.
+
+    Fire and forget: a line that cannot be sent is counted, never raised,
+    and never retried — the container's own log still has it. TCP reconnects
+    on the next line after a failure.
+    """
+
+    def __init__(self, host, port=514, proto="udp", facility=16, app="tempest"):
+        self.host, self.port = host, int(port)
+        self.proto = "tcp" if str(proto).lower() == "tcp" else "udp"
+        self.facility = int(facility)
+        self.app = app
+        self.hostname = (socket.gethostname() or "tempest").split(".")[0]
+        self.sent = 0
+        self.failed = 0
+        self.last_error = ""
+        self._sock = None
+        self._lock = threading.Lock()
+
+    def message(self, level, tag, text, when=None):
+        pri = self.facility * 8 + LEVELS.get(level, 6)
+        stamp = time.strftime("%b %e %H:%M:%S", time.localtime(when or time.time()))
+        body = "%s: %s" % (tag, text) if tag else text
+        return "<%d>%s %s %s[%d]: %s" % (pri, stamp, self.hostname, self.app,
+                                          os.getpid(), body)
+
+    def send(self, level, tag, text, when=None):
+        data = self.message(level, tag, text, when).encode("utf-8", "replace")[:2048]
+        with self._lock:
+            try:
+                if self.proto == "udp":
+                    if self._sock is None:
+                        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    self._sock.sendto(data, (self.host, self.port))
+                else:
+                    if self._sock is None:
+                        self._sock = socket.create_connection((self.host, self.port), timeout=3)
+                    self._sock.sendall(data + b"\n")
+                self.sent += 1
+                self.last_error = ""
+                return True
+            except OSError as e:
+                self.failed += 1
+                self.last_error = e.strerror or e.__class__.__name__
+                try:
+                    if self._sock is not None:
+                        self._sock.close()
+                except OSError:
+                    pass
+                self._sock = None
+                return False
+
+    def close(self):
+        with self._lock:
+            try:
+                if self._sock is not None:
+                    self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+
+
+class Log:
+    def __init__(self, keep=400):
+        self.lines = deque(maxlen=keep)
+        self.lock = threading.Lock()
+        self.syslog = None            # a Syslog, or None
+        self.min_syslog = "info"      # debug lines stay local
+
+    def __call__(self, tag, text, level="info"):
+        level = level if level in LEVELS else "info"
+        now = time.time()
+        line = {"t": now, "level": level, "tag": tag, "text": str(text)}
+        with self.lock:
+            self.lines.append(line)
+            sl = self.syslog
+        print("%s  %-8s : %s" % (time.strftime("%H:%M:%S", time.localtime(now)),
+                                 tag, text), flush=True)
+        if sl is not None and LEVELS[level] <= LEVELS[self.min_syslog]:
+            sl.send(level, tag, text, now)
+
+    def recent(self, n=300):
+        with self.lock:
+            return list(self.lines)[-n:]
+
+    def syslog_status(self):
+        sl = self.syslog
+        if sl is None:
+            return {"enabled": False}
+        return {"enabled": True, "host": sl.host, "port": sl.port,
+                "proto": sl.proto, "sent": sl.sent, "failed": sl.failed,
+                "last_error": sl.last_error}
+
+
+LOG = Log()
+
+
+def log(tag, text, level="info"):
+    LOG(tag, text, level)
+
+
 # ────────────────────────────────────────────────── Unit conversions ───────
 
 def deg_to_compass(deg):
@@ -580,7 +693,7 @@ class History:
     def _note(self, text):
         self.notices.append(text)
         del self.notices[:-5]
-        print("  storage  : " + text, flush=True)
+        log("storage", text, "warning")
 
     def _load_tables(self, raw):
         """The daily tables out of a parsed file. True if it held any."""
@@ -719,10 +832,10 @@ class History:
             if self.save_failing_since is None:
                 self.save_failing_since = time.time()
             if first:
-                print("  storage  : " + self._save_errors[name], flush=True)
+                log("storage", self._save_errors[name], "error")
             return False
         if self._save_errors.pop(name, None):
-            print("  storage  : saving %s again" % name, flush=True)
+            log("storage", "saving %s again" % name, "notice")
         if not self._save_errors:
             self.save_failing_since = None
         return True
@@ -1470,6 +1583,7 @@ class StationState:
         self._jumping = {}               # key → readings in a row that jumped
         self.rejected_today = 0
         self.last_rejected = None
+        self._last_near_log = 0.0
         self.last_precip_time = None
         self.device_status = {}     # firmware, uptime, signal, sensor health
         self.hub_status = {}
@@ -1642,6 +1756,14 @@ class StationState:
                 del self.strike_events[:-200]
                 self._count_strikes(1)
                 self._strikes_heard += 1
+                try:
+                    km = float(evt[1])
+                except (TypeError, ValueError):
+                    km = None
+                if km is not None and km <= 5 and \
+                        time.time() - self._last_near_log > 60:
+                    self._last_near_log = time.time()
+                    log("lightning", "strike %.1f km away" % km, "notice")
 
         elif mtype == "evt_precip":
             evt = msg.get("evt") or []
@@ -1732,7 +1854,7 @@ class StationState:
         self.rejected_today += 1
         self.last_rejected = {"key": key, "value": value, "why": why,
                               "ts": time.time()}
-        print("  sensor   : dropped %s=%s (%s)" % (key, value, why), flush=True)
+        log("sensor", "dropped %s=%s (%s)" % (key, value, why))
 
     def _count_strikes(self, n):
         self.strikes_today += n
@@ -1788,6 +1910,9 @@ class StationState:
         })
 
     # ── read side ─────────────────────────────────────────────────────────
+
+    def snapshot_age(self):
+        return None if self.last_packet is None else time.time() - self.last_packet
 
     def health(self):
         """'waiting' | 'live' | 'stale' | 'offline'."""

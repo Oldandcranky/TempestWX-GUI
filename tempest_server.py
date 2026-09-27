@@ -255,6 +255,7 @@ class PollingFetcher(threading.Thread):
 
     def run(self):
         fails = 0
+        down_since = None
         while not self.stop_event.is_set():
             try:
                 fresh = self.fetch_once()
@@ -262,12 +263,26 @@ class PollingFetcher(threading.Thread):
                     self.store(fresh)
                     self.error = ""
                 self.after_success(fresh)
+                if fails:
+                    core.log(self.LABEL.lower(), "back after %d failure%s, %s"
+                             % (fails, "" if fails == 1 else "s",
+                                core.format_uptime(time.time() - down_since) or "a moment"),
+                             "notice")
                 fails = 0
+                down_since = None
                 wait = self.REFRESH
             except Exception as e:          # never let the thread die
                 with self.lock:
                     self.error = self.describe(e)
                 fails += 1
+                if fails == 1:
+                    # The first failure, not every retry: a flapping source
+                    # must not fill the log. The recovery line says how many.
+                    down_since = time.time()
+                    code = getattr(e, "code", None)
+                    core.log(self.LABEL.lower(), "%s — %s%s" % (
+                        self.error, e.__class__.__name__,
+                        " HTTP %s" % code if code else ""), "warning")
                 wait = self.backoff(fails)
             self.stop_event.wait(wait)
 
@@ -1166,9 +1181,25 @@ class AlertsFetcher(PollingFetcher):
         self.alerts = []
         self.fetched_at = None
 
+    # Syslog severities for NWS ones: a tornado warning is critical, an
+    # advisory is a notice. Log Center can mail on the former alone.
+    SYSLOG_LEVEL = {"Extreme": "critical", "Severe": "error",
+                    "Moderate": "warning", "Minor": "notice", "Unknown": "notice"}
+
     def store(self, fresh):
         # No alerts is a perfectly good answer, so an empty list must still
         # count as having been asked — hence fetched_at rather than truthiness.
+        before = {a.get("id"): a for a in self.alerts if a.get("id")}
+        after = {a.get("id"): a for a in fresh if a.get("id")}
+        for aid, a in after.items():
+            if aid not in before:
+                core.log("alert", "%s (%s) until %s%s" % (
+                    a["event"], a["severity"], (a.get("ends") or a.get("expires") or "?")[:16],
+                    " · issued %d times" % a["copies"] if a.get("copies", 1) > 1 else ""),
+                    self.SYSLOG_LEVEL.get(a["severity"], "notice"))
+        for aid, a in before.items():
+            if aid not in after:
+                core.log("alert", "%s ended" % a["event"], "notice")
         self.alerts = fresh
         self.fetched_at = time.time()
 
@@ -1577,10 +1608,9 @@ class Backfill(threading.Thread):
         if not cut_short:
             self.history.meta["sweep_keeps"] = self.SWEEP_KEEPS
         self.history.save(force=True)
-        print("  backfill : swept back to %s in %d requests — %d rain days, "
-              "%d temperature days, %d daily summaries"
-              % (reached_back.isoformat(), requests, added, warm, filled))
-        sys.stdout.flush()
+        core.log("backfill", "swept back to %s in %d requests — %d rain days, "
+                 "%d temperature days, %d daily summaries"
+                 % (reached_back.isoformat(), requests, added, warm, filled))
         return added
 
     def run(self):
@@ -1601,9 +1631,7 @@ class Backfill(threading.Thread):
                     self.added += added
                     self.status = "ok"
                     self.error = ""
-                print("  backfill : merged %d observations from WeatherFlow"
-                      % added)
-                sys.stdout.flush()
+                core.log("backfill", "merged %d observations from WeatherFlow" % added)
                 self.sweep_daily(device)
                 wait = self.REFRESH
             except Exception as e:
@@ -1642,6 +1670,8 @@ class Config:
         self.token = defaults.get("token") or ""
         self.pollen_key = defaults.get("pollen_key") or ""
         self.speedtest_token = defaults.get("speedtest_token") or ""
+        self.syslog = {"enabled": False, "host": "127.0.0.1", "port": 514,
+                       "proto": "udp", "obs": False}
         self.load()
 
     def load(self):
@@ -1661,6 +1691,9 @@ class Config:
             if isinstance(saved.get("speedtest_token"), str) \
                     and saved["speedtest_token"]:
                 self.speedtest_token = saved["speedtest_token"]
+            got = saved.get("syslog")
+            if isinstance(got, dict):
+                self.syslog.update(self.clean_syslog(got, self.syslog))
 
     def save(self):
         try:
@@ -1668,7 +1701,8 @@ class Config:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"slots": self.slots, "token": self.token,
                            "pollen_key": self.pollen_key,
-                           "speedtest_token": self.speedtest_token},
+                           "speedtest_token": self.speedtest_token,
+                           "syslog": self.syslog},
                           f, indent=2)
             os.chmod(tmp, 0o600)          # it holds a token
             os.replace(tmp, self.path)
@@ -1694,7 +1728,37 @@ class Config:
                     "cards": CARD_NAMES,
                     "token_set": bool(self.token),
                     "pollen_key_set": bool(self.pollen_key),
-                    "speedtest_token_set": bool(self.speedtest_token)}
+                    "speedtest_token_set": bool(self.speedtest_token),
+                    "syslog": dict(self.syslog)}
+
+    @staticmethod
+    def clean_syslog(raw, current):
+        """A syslog block from a browser, checked field by field."""
+        out = dict(current)
+        if "enabled" in raw:
+            out["enabled"] = bool(raw["enabled"])
+        if "obs" in raw:
+            out["obs"] = bool(raw["obs"])
+        host = raw.get("host")
+        if isinstance(host, str) and host.strip():
+            host = host.strip()
+            if len(host) > 253 or any(c.isspace() for c in host):
+                raise ValueError("that host name looks wrong")
+            out["host"] = host
+        if "port" in raw:
+            try:
+                port = int(raw["port"])
+            except (TypeError, ValueError):
+                raise ValueError("the port must be a number")
+            if not 1 <= port <= 65535:
+                raise ValueError("the port must be between 1 and 65535")
+            out["port"] = port
+        proto = raw.get("proto")
+        if proto is not None:
+            if proto not in ("udp", "tcp"):
+                raise ValueError("the protocol is udp or tcp")
+            out["proto"] = proto
+        return out
 
     def apply(self, patch):
         """Returns (changed_fields, error)."""
@@ -1727,6 +1791,16 @@ class Config:
                         changed.append(label + "_set")
                 else:
                     return [], "key must be text"
+            if "syslog" in patch:
+                if not isinstance(patch["syslog"], dict):
+                    return [], "syslog must be an object"
+                try:
+                    fresh = self.clean_syslog(patch["syslog"], self.syslog)
+                except ValueError as e:
+                    return [], str(e)
+                if fresh != self.syslog:
+                    self.syslog = fresh
+                    changed.append("syslog")
             if "token" in patch:
                 tok = patch.get("token")
                 if tok is None or (isinstance(tok, str) and not tok.strip()):
@@ -1799,6 +1873,8 @@ class Dashboard:
         self.speedtest = None
         self.start_speedtest()
 
+        self.apply_syslog()
+
         self.alerts = None
         if args.alerts and args.lat is not None and args.lon is not None:
             self.alerts = AlertsFetcher(args.lat, args.lon, self.stop)
@@ -1846,6 +1922,24 @@ class Dashboard:
         self.speedtest.start()
         return True
 
+    def apply_syslog(self):
+        """Point the log at the syslog server the settings name, or at none."""
+        cfg = self.config.syslog
+        old = core.LOG.syslog
+        if cfg.get("enabled"):
+            same = old is not None and (old.host, old.port, old.proto) == \
+                (cfg["host"], int(cfg["port"]), cfg["proto"])
+            if same:
+                return
+            core.LOG.syslog = core.Syslog(cfg["host"], cfg["port"], cfg["proto"])
+            core.log("syslog", "sending to %s:%s over %s" % (cfg["host"], cfg["port"], cfg["proto"]))
+        else:
+            core.LOG.syslog = None
+            if old is not None:
+                core.log("syslog", "switched off")
+        if old is not None:
+            old.close()
+
     def start_backfill(self):
         """Start the backfill thread if a token is configured and it is not
         already running. Called at boot and again when a token is saved."""
@@ -1868,7 +1962,7 @@ class Dashboard:
             return
         if self.state.load_state(saved):
             when = datetime.fromtimestamp(saved["saved_at"]).strftime("%H:%M:%S")
-            print("  restored : last observation from %s" % when)
+            core.log("restored", "last observation from %s" % when)
 
     def _save(self):
         try:
@@ -1880,11 +1974,53 @@ class Dashboard:
             pass
 
     def _housekeeping(self):
+        last_health, quiet_since = None, None
+        last_winter, froze_on = None, None
+        next_obs_line = 0.0
         while not self.stop.wait(30.0):
             self.state.roll_day()
             self.history.save()
             self._save()
             self._watch_source()
+            # The hub going quiet and coming back, once each, not every tick.
+            health = self.state.health()
+            if health != last_health and last_health is not None:
+                if health in ("stale", "offline"):
+                    if quiet_since is None:
+                        quiet_since = time.time()
+                    core.log("hub", "no packets for %s" % core.format_uptime(
+                        self.state.snapshot_age() or 0), "warning" if health == "stale" else "error")
+                elif health == "live" and quiet_since is not None:
+                    core.log("hub", "packets again after %s" % core.format_uptime(
+                        time.time() - quiet_since), "notice")
+                    quiet_since = None
+            last_health = health
+            # Winter's firsts, once a day each: the frost line lighting, and
+            # the temperature going below freezing.
+            try:
+                snap = self.state.snapshot(self.args.lat, self.args.lon, series_points=2)
+                fc = self.forecast.snapshot() if self.forecast else {}
+                winter = core.winter_outlook(fc.get("days") or []) if fc.get("available") else None
+                key = (winter["kind"], winter["date"]) if winter else None
+                if key and key != last_winter:
+                    core.log("winter", "%s %s, low %.1f °C" % (
+                        winter["kind"], winter["when"], winter["low_c"]), "notice")
+                last_winter = key
+                since = snap["derived"].get("freezing_since")
+                today = date.today().isoformat()
+                if since and froze_on != today:
+                    froze_on = today
+                    core.log("winter", "below freezing since %s" %
+                             time.strftime("%H:%M", time.localtime(since)), "notice")
+                # The minute's observation for a syslog store, when asked.
+                if self.config.syslog.get("obs") and core.LOG.syslog and time.time() >= next_obs_line:
+                    next_obs_line = time.time() + 60
+                    o = snap["obs"]
+                    core.log("obs", " ".join("%s=%s" % (k, o[k]) for k in
+                             ("temp_c", "rh", "pres_mb", "wind_avg_ms", "wind_gust_ms",
+                              "wind_dir", "rain_mm", "uv", "solar", "battery") if o.get(k) is not None))
+            except Exception as e:
+                core.log("housekeeping", "%s: %s" % (e.__class__.__name__, e), "warning")
 
     def _watch_source(self):
         """Restart the packet source if its thread has died.
@@ -1907,9 +2043,8 @@ class Dashboard:
         self._source_restart_at = now
         self._source_restarts = getattr(self, "_source_restarts", 0) + 1
         err = getattr(self.source, "error", "") or "thread exited"
-        print("  watchdog : packet source stopped (%s) — restart #%d"
-              % (err, self._source_restarts))
-        sys.stdout.flush()
+        core.log("watchdog", "packet source stopped (%s) — restart #%d"
+                 % (err, self._source_restarts), "error")
         try:
             if self.args.demo:
                 self.source = core.DemoSource(self.state.handle, self.stop)
@@ -1918,8 +2053,7 @@ class Dashboard:
                                                self.state.handle, self.stop)
             self.source.start()
         except Exception as e:
-            print("  watchdog : restart failed (%s)" % e.__class__.__name__)
-            sys.stdout.flush()
+            core.log("watchdog", "restart failed (%s)" % e.__class__.__name__, "error")
 
     # What changes slowly is served slowly. The 24-hour series and the
     # Internet card's week of tests were 28 KB of a 35 KB snapshot sent every
@@ -2222,13 +2356,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if path not in ("/api/config", "/api/record", "/api/check"):
+        if path not in ("/api/config", "/api/record", "/api/check", "/api/log"):
             self._send(404, "Not found\n", "text/plain; charset=utf-8")
             return
         # There is no login on this dashboard, so require a header a plain
         # cross-site form cannot set. That blocks another page on the network
         # from quietly reconfiguring this one.
-        if self.headers.get("X-Tempest-Config") != "1":
+        # sendBeacon cannot carry the header, and a page's error report is
+        # the one write worth accepting without it: it changes nothing, the
+        # Origin check below still holds, and it is capped per address.
+        if self.headers.get("X-Tempest-Config") != "1" and path != "/api/log":
             self._send(403, "Missing X-Tempest-Config header\n",
                        "text/plain; charset=utf-8")
             return
@@ -2256,6 +2393,29 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         dash = self.server.dashboard
+        who = self.client_address[0] if self.client_address else "?"
+        if path == "/api/log":
+            # The page's own troubles — a script error, a watchdog reload — or
+            # a test line from the settings page. Capped and rate-limited: a
+            # page in a loop must not fill the log by itself.
+            body = patch if isinstance(patch, dict) else {}
+            if body.get("test"):
+                core.log("syslog", "test line from the settings page (%s)" % who, "notice")
+                out = core.LOG.syslog_status()
+                out["ok"] = True
+                self._send(200, json.dumps(out), "application/json; charset=utf-8")
+                return
+            kind = str(body.get("kind") or "error")[:20]
+            text = " ".join(str(body.get("text") or "").split())[:300]
+            if not text:
+                self._send(400, json.dumps({"ok": False, "error": "Nothing to log"}),
+                           "application/json; charset=utf-8")
+                return
+            if self.server.page_log_allowed(who):
+                core.log("page", "%s %s: %s" % (who, kind, text),
+                         "warning" if kind == "error" else "notice")
+            self._send(200, json.dumps({"ok": True}), "application/json; charset=utf-8")
+            return
         if path == "/api/check":
             # A fetch on demand costs the outside service a call — Google
             # bills for pollen — so it sits behind the same header as a write.
@@ -2278,6 +2438,10 @@ class Handler(BaseHTTPRequestHandler):
                 err = dash.history.strike(str(what.get("date") or ""),
                                           str(what.get("field") or ""),
                                           restore="restore" in patch)
+            if not err:
+                core.log("record", "%s %s on %s (%s)" % (
+                    "restored" if "restore" in patch else "struck",
+                    what.get("field"), what.get("date"), who), "notice")
             body = dash.record()
             body["ok"], body["error"] = not err, err or ""
             self._send(400 if err else 200, json.dumps(body, allow_nan=False),
@@ -2288,6 +2452,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, json.dumps({"ok": False, "error": err}),
                        "application/json; charset=utf-8")
             return
+        if changed:
+            core.log("settings", "%s (%s)" % (", ".join(changed), who), "notice")
+        if "syslog" in changed:
+            dash.apply_syslog()
         if "token_set" in changed:
             dash.start_backfill()
         if "pollen_key_set" in changed:
@@ -2393,6 +2561,13 @@ class Handler(BaseHTTPRequestHandler):
                 dash = self.server.dashboard
                 body = dash.almanac(**self._thresholds(query))
                 self._send(200, json.dumps(body, allow_nan=False),
+                           "application/json; charset=utf-8")
+            elif path == "/api/log":
+                # The last few hundred lines, for the settings page: what the
+                # container's log has, without an SSH session to read it.
+                body = {"lines": core.LOG.recent(300),
+                        "syslog": core.LOG.syslog_status()}
+                self._send(200, json.dumps(body, allow_nan=False, default=str),
                            "application/json; charset=utf-8")
             elif path == "/api/record":
                 # The records as they stand, what has been struck from them,
@@ -2652,6 +2827,21 @@ def main(argv):
     # not far off that.
     ThreadingHTTPServer.request_queue_size = 64
     httpd = ThreadingHTTPServer((args.host, args.http_port), Handler)
+    page_log_seen = {}
+    page_log_lock = threading.Lock()
+
+    def page_log_allowed(who, limit=10, per=60.0):
+        """At most `limit` page reports a minute from one address."""
+        now = time.time()
+        with page_log_lock:
+            times = [t for t in page_log_seen.get(who, []) if now - t < per]
+            if len(times) >= limit:
+                page_log_seen[who] = times
+                return False
+            times.append(now)
+            page_log_seen[who] = times
+            return True
+    httpd.page_log_allowed = page_log_allowed
     httpd.daemon_threads = True
     httpd.dashboard = dashboard
     httpd.verbose = args.verbose

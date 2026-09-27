@@ -1038,6 +1038,10 @@ body.tv .checknow{display:none}
                     border-top:0}
 .sheet .recrow .confirm{display:flex;gap:6px;justify-content:flex-end}
 .sheet button.danger{background:var(--red);color:#fff;border-color:transparent;font-weight:600}
+.logview{font:.82em/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--label);
+         background:var(--inset);border:1px solid var(--inset-edge);border-radius:var(--inset-radius);
+         padding:.7em .9em;max-height:50vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:.4em 0 0}
+.sheet .row .note{font-size:.85em;color:var(--label)}
 .sheet .recordsec .tools{margin:.2em 0 .6em}
 .sheet .linkbtn{display:inline-flex;align-items:center;min-height:40px;align-self:auto;
                 margin:.2em .4em .4em 0;font-size:clamp(11px,.95vw,14px)}
@@ -4314,6 +4318,118 @@ function secretField(opts){
 }
 
 /* ── Record and about ────────────────────────────────────────────────── */
+/* Logging: the log the container keeps, readable here without an SSH
+   session, and where else to send it. Syslog is one line per event over the
+   network; a Synology's Log Center listens on UDP 514 and can search, keep
+   and mail on them by severity. Fire and forget: a line that cannot be sent
+   is counted, not retried. */
+let logLines = null, logSyslog = null;
+let logSaid = null;            // the last save or test result, kept across the panel's redraws
+
+async function loadLog(){
+  try {
+    const r = await fetch("api/log", {cache: "no-store"});
+    const body = await r.json();
+    logLines = body.lines || []; logSyslog = body.syslog || null;
+  } catch (e) { logLines = []; }
+  const live = document.getElementById("logsec");
+  if (live) live.replaceWith(loggingPanel());
+}
+
+function loggingPanel(){
+  const wrap = el("div", "sheet wide");
+  wrap.id = "logsec";
+  wrap.innerHTML = '<h2>Logging</h2>';
+  const sl = Object.assign({enabled: false, host: "127.0.0.1", port: 514, proto: "udp", obs: false},
+                           (cfg && cfg.syslog) || {});
+
+  // ── syslog ──
+  wrap.appendChild(el("p", "note", "Send the log to a syslog server as well: one line per event, with a " +
+    "severity — a tornado warning is critical, an advisory a notice, a dropped reading informational. " +
+    "A Synology's Log Center listens on UDP 514 and can search, keep and mail on them."));
+  const form = el("div", "kv");
+  const onOff = el("span", "v2");
+  onOff.appendChild(segmented([["off", "Off"], ["on", "On"]], sl.enabled ? "on" : "off",
+    (v) => { sl.enabled = v === "on"; }, "Syslog"));
+  form.append(el("span", "k2", "Syslog"), onOff);
+  const host = document.createElement("input"); host.type = "text"; host.value = sl.host;
+  host.spellcheck = false; host.setAttribute("aria-label", "Syslog server"); host.style.maxWidth = "16em";
+  const port = document.createElement("input"); port.type = "text"; port.value = sl.port;
+  port.inputMode = "numeric"; port.setAttribute("aria-label", "Port"); port.style.maxWidth = "6em"; port.style.minWidth = "5em";
+  const hostCell = el("span", "v2 row"); hostCell.append(host, port);
+  form.append(el("span", "k2", "Server and port"), hostCell);
+  const protoCell = el("span", "v2");
+  protoCell.appendChild(segmented([["udp", "UDP"], ["tcp", "TCP"]], sl.proto, (v) => { sl.proto = v; }, "Protocol"));
+  form.append(el("span", "k2", "Protocol"), protoCell);
+  const obsCell = el("span", "v2");
+  obsCell.appendChild(segmented([["off", "Off"], ["on", "On"]], sl.obs ? "on" : "off",
+    (v) => { sl.obs = v === "on"; }, "Send the observation every minute"));
+  obsCell.appendChild(el("small", null, "One line a minute with the station's readings as key=value pairs, " +
+    "for a syslog server used as a store. Off, only events are sent."));
+  form.append(el("span", "k2", "Every minute's reading"), obsCell);
+  wrap.appendChild(form);
+  const status = el("div", "state");
+  if (logSaid) { status.className = logSaid.cls; status.textContent = logSaid.text; }
+  const say = (cls, text) => { logSaid = {cls, text}; status.className = cls; status.textContent = text; };
+  const tools = el("div", "row");
+  tools.style.marginTop = ".8em";
+  const save = el("button", "primary", "Save");
+  save.type = "button";
+  save.addEventListener("click", async () => {
+    const patch = {syslog: {enabled: sl.enabled, host: host.value.trim(), port: port.value.trim(),
+                            proto: sl.proto, obs: sl.obs}};
+    const ok = await saveConfig(patch, status);
+    say(status.className, status.textContent);
+    if (ok) { await loadConfig(); await loadLog(); }
+  });
+  const test = el("button", "", "Send a test line");
+  test.type = "button";
+  test.addEventListener("click", async () => {
+    test.disabled = true;
+    try {
+      const r = await fetch("api/log", {method: "POST",
+        headers: {"Content-Type": "application/json", "X-Tempest-Config": "1"},
+        body: JSON.stringify({test: true})});
+      const b = await r.json();
+      say("state " + (b.enabled && !b.failed ? "ok" : b.enabled ? "bad" : ""),
+        !b.enabled ? "Logged here; syslog is off, so it went no further."
+        : b.failed ? "Sent " + b.sent + ", failed " + b.failed + (b.last_error ? " — " + b.last_error : "")
+        : "Sent to " + b.host + ":" + b.port + " over " + b.proto.toUpperCase() + " · " + b.sent + " lines so far");
+    } catch (e) { say("state bad", "Could not reach the dashboard server"); }
+    test.disabled = false;
+    loadLog();
+  });
+  tools.append(save, test, status);
+  wrap.appendChild(tools);
+  if (logSyslog && logSyslog.enabled)
+    wrap.appendChild(el("p", "note", esc("Syslog: " + logSyslog.sent + " sent, " + logSyslog.failed + " failed" +
+      (logSyslog.last_error ? " · last error " + logSyslog.last_error : ""))));
+
+  // ── the recent log ──
+  const fold = el("details", "fold");
+  fold.id = "recentLog";
+  if (logOpen) fold.open = true;
+  fold.addEventListener("toggle", () => { logOpen = fold.open; if (fold.open && logLines == null) loadLog(); });
+  fold.appendChild(el("summary", null, "Recent log"));
+  const bar = el("div", "row");
+  const refresh = el("button", "", "Refresh");
+  refresh.type = "button";
+  refresh.addEventListener("click", loadLog);
+  bar.appendChild(refresh);
+  bar.appendChild(el("span", "note", "The last few hundred lines the server has said. The container's own log " +
+    "has all of them: docker logs -t tempest-dashboard."));
+  fold.appendChild(bar);
+  const pre = el("pre", "logview");
+  if (logLines == null) pre.textContent = "Loading…";
+  else if (!logLines.length) pre.textContent = "Nothing yet.";
+  else pre.textContent = logLines.map(l => new Date(l.t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) +
+    "  " + l.level.padEnd(8) + " " + l.tag.padEnd(9) + " " + l.text).join("\n");
+  fold.appendChild(pre);
+  wrap.appendChild(fold);
+  return wrap;
+}
+let logOpen = false;
+
 function recordPanel(panel){
   const rec = el("div", "sheet");
   rec.appendChild(recordSection());
@@ -4355,7 +4471,7 @@ function recordPanel(panel){
     links.appendChild(a);
   }
   about.appendChild(links);
-  panel.append(rec, srv, about);
+  panel.append(rec, srv, about, loggingPanel());
 }
 
 /* Drag the cards on the dashboard itself. */
@@ -5413,12 +5529,43 @@ function lastReloadAt(){
   catch (e) { return 0; }
 }
 
+/* What goes wrong on the page goes to the server's log, where it can be
+   read: a script error on the television dies in a console nobody can open.
+   sendBeacon, so a report survives the reload that may follow it; a cap of a
+   few a minute, so a page in a loop cannot flood. The server caps it too. */
+let pageReports = [];
+function reportToServer(kind, text){
+  const now = Date.now();
+  pageReports = pageReports.filter(t => now - t < 60000);
+  if (pageReports.length >= 5) return;
+  pageReports.push(now);
+  const body = JSON.stringify({kind, text: String(text).slice(0, 300)});
+  try {
+    if (navigator.sendBeacon) {
+      // A beacon cannot carry the custom header the write guard wants, so
+      // the server accepts this one route on Origin alone.
+      navigator.sendBeacon("api/log", new Blob([body], {type: "application/json"}));
+    } else {
+      fetch("api/log", {method: "POST", keepalive: true,
+        headers: {"Content-Type": "application/json", "X-Tempest-Config": "1"}, body});
+    }
+  } catch (e) { /* nothing more to be done */ }
+}
+window.addEventListener("error", (e) => {
+  reportToServer("error", (e.message || "error") + (e.filename ? " @" + e.lineno : ""));
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const r = e.reason;
+  reportToServer("error", "unhandled: " + (r && r.message ? r.message : String(r)));
+});
+
 function watchdogReload(why){
   const since = Date.now() - lastReloadAt();
   if (since < WATCH.minGapMs) return;       // do not spin
   if (document.visibilityState === "hidden") return;   // pointless while hidden
   try { sessionStorage.setItem("reloadedAt", String(Date.now())); } catch (e) {}
   console.warn("watchdog: reloading —", why);
+  reportToServer("reload", "watchdog: " + why);
   location.reload();
 }
 

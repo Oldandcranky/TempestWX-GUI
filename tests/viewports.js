@@ -904,6 +904,38 @@ console.log = (...args) => {
         if (level > 6) bad.push(at + ': the TV layout label is ' + Math.round(level) + 'px off its buttons');
         if (await page.$eval('.settabs button[data-tab="screen"]', el => el.textContent) !== 'Display')
           bad.push(at + ': the second tab is not called Display');
+        // Logging: the test line says where it went; the recent log opens to
+        // the lines the server has said.
+        await tab('record');
+        let logPosts = 0;
+        await page.route('**/api/log', route => {
+          if (route.request().method() === 'POST') { logPosts++;
+            return route.fulfill({ status: 200, contentType: 'application/json',
+              body: JSON.stringify({ok: true, enabled: false}) }); }
+          return route.fulfill({ status: 200, contentType: 'application/json',
+            body: JSON.stringify({syslog: {enabled: false}, lines: [
+              {t: Date.now() / 1000 - 60, level: 'warning', tag: 'forecast', text: 'Forecast unavailable (HTTPError) — HTTPError HTTP 503'},
+              {t: Date.now() / 1000, level: 'notice', tag: 'forecast', text: 'back after 3 failures, 12m'}]}) });
+        });
+        await page.waitForTimeout(400);
+        const logSec = await page.evaluate(() => { const e = document.getElementById('logsec');
+          return { there: !!e, inputs: e ? e.querySelectorAll('input').length : 0,
+                   buttons: e ? [...e.querySelectorAll('button')].map(b => b.textContent) : [] }; });
+        if (!logSec.there) bad.push(at + ': no Logging panel');
+        if (logSec.inputs !== 2) bad.push(at + ': the Logging panel has ' + logSec.inputs + ' inputs, expected host and port');
+        if (!logSec.buttons.includes('Send a test line')) bad.push(at + ': no test-line button');
+        await page.$eval('#logsec button:not(.primary)', () => {});
+        await page.$$eval('#logsec button', bs => bs.find(b => b.textContent === 'Send a test line').click());
+        await page.waitForTimeout(600);
+        if (logPosts !== 1) bad.push(at + ': the test line made ' + logPosts + ' requests');
+        const said = await page.$eval('#logsec .state', el => el.textContent);
+        if (!/syslog is off/.test(said)) bad.push(at + ': after the test line it says "' + said + '"');
+        await page.$eval('#recentLog summary', el => el.click());
+        await page.waitForTimeout(600);
+        const shown = await page.$eval('#recentLog .logview', el => el.textContent);
+        if (!/HTTP 503/.test(shown) || !/back after 3 failures/.test(shown)) bad.push(at + ': the recent log shows "' + shown.slice(0, 60) + '"');
+        const wideLog = await page.$eval('#recentLog .logview', el => el.scrollWidth - el.clientWidth);
+        if (wideLog > 1) bad.push(at + ': the log view scrolls sideways by ' + wideLog + 'px');
         await tab('sources');                      // the checks below expect it
 
         // Data sources: what is working, not what was once typed.

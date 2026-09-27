@@ -619,6 +619,11 @@ body.show-map #map{display:block}
 
 #alerts{display:none;flex-direction:column;gap:6px}
 #alerts.show{display:flex}
+/* Alerts belong to the cards. On the outlook, the almanac, the Internet page
+   or settings only an Extreme one — a tornado warning — stays, because being
+   on another page is no reason not to be told that. */
+body:is(.show-outlook,.show-net,.show-almanac,.show-settings,.show-map) #alerts .alert:not(.sev-extreme){display:none}
+body:is(.show-outlook,.show-net,.show-almanac,.show-settings,.show-map) #alerts.show:not(.has-extreme){display:none}
 .alert{
   padding:.5em .9em;border-radius:var(--inset-radius);
   font-size:clamp(12px,1.05vw,17px);font-weight:600;
@@ -3668,11 +3673,20 @@ function alertBody(a){
   return body;
 }
 
+/* An alert whose end has passed is over, whatever the feed still lists: the
+   service sometimes keeps a statement a while past its end, and a failed
+   fetch keeps the last list. The page's own clock decides. */
+function alertLive(a, now){
+  const end = new Date(a.ends || a.expires || NaN);
+  return isNaN(end) || end.getTime() > now;
+}
+
 function renderAlerts(s){
   const host = document.getElementById("alerts");
-  const list = TEST_ALERTS || (s.alerts && s.alerts.alerts) || [];
+  const now = Date.now();
+  const list = (TEST_ALERTS || (s.alerts && s.alerts.alerts) || []).filter(a => alertLive(a, now));
   if (!list.length) { host.className = ""; host.replaceChildren(); alertOpen = null; measureChrome(); return; }
-  host.className = "show";
+  host.className = "show" + (list.some(a => (a.severity || "").toLowerCase() === "extreme") ? " has-extreme" : "");
   host.replaceChildren(...list.slice(0, 3).map(a => {
     const key = alertKey(a);
     const open = alertOpen === key;

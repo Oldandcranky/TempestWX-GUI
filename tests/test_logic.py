@@ -389,6 +389,14 @@ class OneBannerPerStatement(unittest.TestCase):
                          self.feat("2026-09-27T07:08:00-05:00", "Snow.", event="Winter Storm Warning"))
         self.assertEqual(len(out), 2)
 
+    def test_an_alert_past_its_end_is_over_whatever_the_feed_says(self):
+        import time as _t
+        late = _t.mktime((2026, 9, 27, 9, 45, 0, 0, 0, -1))          # 9:45 local, after a 9:30 end
+        out = server.AlertsFetcher.parse({"features": [self.feat("2026-09-27T07:08:00-05:00", "Fog.")]}, now=late)
+        self.assertEqual(out, [])
+        early = _t.mktime((2026, 9, 27, 9, 0, 0, 0, 0, -1))
+        self.assertEqual(len(server.AlertsFetcher.parse({"features": [self.feat("2026-09-27T07:08:00-05:00", "Fog.")]}, now=early)), 1)
+
     def test_the_text_is_unwrapped_but_keeps_its_paragraphs(self):
         out = self.parse(self.feat("2026-09-27T07:04:00-05:00",
             "Locally dense fog will reduce\nvisibilities to a quarter\nmile.\n\nUse your low beams if\nfog is encountered."))
@@ -406,7 +414,9 @@ class AlertTimes(unittest.TestCase):
                 "senderName": "NWS Chicago IL",
                 "expires": "2026-09-20T07:00:00-05:00"}
         base.update(props)
-        return server.AlertsFetcher.parse({"features": [{"properties": base}]})[0]
+        # As seen from the morning these samples were written, before they end.
+        then = __import__("time").mktime((2026, 9, 20, 6, 0, 0, 0, 0, -1))
+        return server.AlertsFetcher.parse({"features": [{"properties": base}]}, now=then)[0]
 
     def test_keeps_the_hazard_end(self):
         a = self.one(ends="2026-09-20T13:00:00-05:00")

@@ -360,6 +360,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Alerts stay on the cards, and stop when they end.** A banner showed on
+  every page — settings, the almanac, the outlook — and stayed until the
+  weather service dropped it, which can be a while after its end time. Now
+  only the cards page carries them, except an Extreme one, which stays on
+  every page because being on the almanac is no reason not to hear about a
+  tornado; and an alert is gone the moment its end passes, by the page's own
+  clock, whatever the feed still lists.
 - **Winter readiness.** Northern Illinois, and the first frost due.
   - **The frost line.** The Temperature card's last line turns to winter
     when winter has something to say, on the weather service's thresholds:

@@ -1624,6 +1624,9 @@ console.log = (...args) => {
         ends: soon(20), expires: soon(3), sender: 'NWS Chicago IL', headline: 'x' },
       { event: 'Flood Watch', severity: 'Moderate', rank: 2, ends: null,
         expires: soon(50), sender: 'NWS Quad Cities IA IL', headline: 'x' },
+      // Over ten minutes ago, still listed: must not show.
+      { event: 'Dense Fog Advisory', severity: 'Minor', rank: 1, ends: soon(-1 / 6),
+        expires: soon(-1 / 6), sender: 'NWS Chicago IL', headline: 'x' },
     ]};
     const bad = [];
     for (const [w, h, tv] of [[414, 896, false], [1024, 768, false], [1920, 1080, true]]) {
@@ -1682,7 +1685,17 @@ console.log = (...args) => {
         }
         await page.evaluate(() => window.scrollTo(0, 0));
       }
-      if (found.length !== 3) bad.push(where + ': expected 3 alerts, found ' + found.length);
+      if (found.length !== 3) bad.push(where + ': expected 3 live alerts, found ' + found.length);
+      if (found.some(f => /Fog/.test(f.ev))) bad.push(where + ': an alert past its end is still showing');
+      // On another page only the Extreme one stays.
+      await page.keyboard.press('a');
+      await page.waitForTimeout(1200);
+      const onPage = await page.evaluate(() => [...document.querySelectorAll('#alerts .alert')]
+        .filter(a => a.getBoundingClientRect().height > 0).map(a => a.querySelector('.ev').textContent));
+      if (onPage.join() !== 'TORNADO WARNING' && onPage.join() !== 'Tornado Warning')
+        bad.push(where + ': on the almanac the banners showing are [' + onPage + '], expected the tornado warning alone');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(800);
       for (const f of found) {
         if (f.overflow > 1) bad.push(where + ': "' + f.ev + '" overflows by ' + f.overflow + 'px');
         if (f.cut.includes('ev') || f.cut.includes('hl'))

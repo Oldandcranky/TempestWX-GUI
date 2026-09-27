@@ -1183,7 +1183,7 @@ class AlertsFetcher(PollingFetcher):
             return self.parse(json.loads(r.read().decode("utf-8")))
 
     @classmethod
-    def parse(cls, raw):
+    def parse(cls, raw, now=None):
         """Reduce the GeoJSON to what the banner needs, worst first. Split
         from the request so it can be run against real alerts rather than
         waiting for weather."""
@@ -1216,8 +1216,25 @@ class AlertsFetcher(PollingFetcher):
                 "rank": cls.RANK.get(p.get("severity") or "Unknown", 0),
             })
         out = cls._fold(out)
+        out = [a for a in out if cls._live(a, now)]
         out.sort(key=lambda a: (a["rank"], a.get("sent") or ""), reverse=True)
         return out
+
+    @staticmethod
+    def _live(alert, now=None):
+        """False once the alert's end — or, with no end, its expiry — has
+        passed. The feed sometimes lists a statement a while after."""
+        when = alert.get("ends") or alert.get("expires")
+        if not when:
+            return True
+        try:
+            end = datetime.fromisoformat(str(when))
+        except ValueError:
+            return True
+        if end.tzinfo is None:
+            return True
+        now = now if now is not None else time.time()
+        return end.timestamp() > now
 
     @staticmethod
     def _prose(text):

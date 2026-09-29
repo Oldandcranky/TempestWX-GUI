@@ -488,15 +488,21 @@ STATUS_RANK = {"operational": 0, "under_maintenance": 1, "degraded_performance":
 
 
 class StatusFeed(PollingFetcher):
-    """A public status page read as JSON, and turned by `parse` into a word."""
+    """A public status page read as JSON, and turned by `parse` into a word.
+    The address can be replaced from the settings, in case a page moves."""
 
     REFRESH = 120
     RETRY = 60
     ENDPOINT = ""
+    NAME = ""
+
+    def __init__(self, stop_event, url=None):
+        PollingFetcher.__init__(self, stop_event)
+        self.url = url or self.ENDPOINT
 
     def fetch_once(self):
         req = urllib.request.Request(
-            self.ENDPOINT, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
+            self.url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
                                     "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=20) as r:
             return self.parse(json.loads(r.read().decode("utf-8")))
@@ -514,8 +520,7 @@ class StatuspageFetcher(StatusFeed):
     rather than subscribed to: a webhook would need the status page to reach
     this server, and this one lives on a LAN address.
 
-    The result is one word, the worst state among the components that count,
-    and the title of an open incident when there is one.
+    The result is one word: the worst state among the components that count.
     """
 
     PARTS = None          # the names of the components that count; None is all
@@ -530,21 +535,13 @@ class StatuspageFetcher(StatusFeed):
             raise ValueError("none of its components were found")
         worst = max((c.get("status") or "operational" for c in comps),
                     key=lambda st: STATUS_RANK.get(st, 2))
-        ids = {c.get("id") for c in comps}
-        incident = ""
-        if worst != "operational":
-            for i in raw.get("incidents") or []:
-                on = {c.get("id") for c in i.get("components") or []}
-                if not on or on & ids:
-                    incident = i.get("name") or ""
-                    break
-        return {"fetched_at": time.time() if now is None else now,
-                "status": worst, "incident": incident}
+        return {"fetched_at": time.time() if now is None else now, "status": worst}
 
 
 class ClaudeStatusFetcher(StatuspageFetcher):
     ENDPOINT = "https://status.claude.com/api/v2/summary.json"
     LABEL = "Claude status"
+    NAME = "Claude"
 
 
 class ChatGptStatusFetcher(StatuspageFetcher):
@@ -555,6 +552,7 @@ class ChatGptStatusFetcher(StatuspageFetcher):
 
     ENDPOINT = "https://status.openai.com/api/v2/summary.json"
     LABEL = "ChatGPT status"
+    NAME = "ChatGPT"
     PARTS = frozenset({"Conversations", "Voice mode", "GPTs", "Image Generation",
                        "File uploads", "Connectors/Apps", "Search", "Agent",
                        "Deep Research", "ChatGPT Atlas", "Login"})
@@ -573,18 +571,13 @@ class GeminiStatusFetcher(StatusFeed):
     ENDPOINT = "https://www.google.com/appsstatus/dashboard/incidents.json"
     PRODUCT = "npdyhgECDJ6tB66MxXyo"
     LABEL = "Gemini status"
-
-    @staticmethod
-    def headline(text):
-        """The summary line of an incident update, which begins "**Summary:**"."""
-        m = re.search(r"\*\*Summary:\*\*\s*(.+)", text or "")
-        return (m.group(1) if m else text or "").strip()[:140]
+    NAME = "Gemini"
 
     @classmethod
     def parse(cls, raw, now=None):
         if not isinstance(raw, list):
             raise ValueError("unexpected response")
-        worst, incident = "operational", ""
+        worst = "operational"
         for i in raw:
             if not any(p.get("id") == cls.PRODUCT for p in i.get("affected_products") or []):
                 continue
@@ -595,9 +588,11 @@ class GeminiStatusFetcher(StatusFeed):
                 else "degraded_performance"
             if STATUS_RANK[level] > STATUS_RANK[worst]:
                 worst = level
-                incident = cls.headline(last.get("text") or i.get("external_desc"))
-        return {"fetched_at": time.time() if now is None else now,
-                "status": worst, "incident": incident}
+        return {"fetched_at": time.time() if now is None else now, "status": worst}
+
+
+AI_SERVICES = {"claude": ClaudeStatusFetcher, "chatgpt": ChatGptStatusFetcher,
+               "gemini": GeminiStatusFetcher}
 
 
 class PollenFetcher(PollingFetcher):
@@ -1790,6 +1785,9 @@ class Config:
         self.token = defaults.get("token") or ""
         self.pollen_key = defaults.get("pollen_key") or ""
         self.speedtest_token = defaults.get("speedtest_token") or ""
+        # Whether each AI service is watched, and where from; an empty address
+        # is the built-in one.
+        self.ai_status = {k: {"enabled": True, "url": ""} for k in AI_SERVICES}
         self.syslog = {"enabled": False, "host": "127.0.0.1", "port": 514,
                        "proto": "udp", "obs": False}
         self.load()
@@ -1811,6 +1809,11 @@ class Config:
             if isinstance(saved.get("speedtest_token"), str) \
                     and saved["speedtest_token"]:
                 self.speedtest_token = saved["speedtest_token"]
+            if isinstance(saved.get("ai_status"), dict):
+                try:
+                    self.ai_status = self.clean_ai(saved["ai_status"], self.ai_status)
+                except ValueError:
+                    pass
             got = saved.get("syslog")
             if isinstance(got, dict):
                 self.syslog.update(self.clean_syslog(got, self.syslog))
@@ -1822,6 +1825,7 @@ class Config:
                 json.dump({"slots": self.slots, "token": self.token,
                            "pollen_key": self.pollen_key,
                            "speedtest_token": self.speedtest_token,
+                           "ai_status": self.ai_status,
                            "syslog": self.syslog},
                           f, indent=2)
             os.chmod(tmp, 0o600)          # it holds a token
@@ -1841,6 +1845,28 @@ class Config:
                     out.append(name)
         return out[:cls.MAX_SLOTS]
 
+    @staticmethod
+    def clean_ai(raw, current):
+        """An ai_status block from a browser, checked service by service."""
+        out = {}
+        for key in AI_SERVICES:
+            got = raw.get(key) or {}
+            if not isinstance(got, dict):
+                raise ValueError("%s must be an object" % key)
+            cur = current[key]
+            enabled = bool(got["enabled"]) if "enabled" in got else cur["enabled"]
+            url = got.get("url", cur["url"])
+            if not isinstance(url, str):
+                raise ValueError("the address must be text")
+            url = url.strip()
+            if url:
+                parts = urllib.parse.urlparse(url)
+                if (len(url) > 300 or parts.scheme not in ("http", "https")
+                        or not parts.netloc or any(c.isspace() for c in url)):
+                    raise ValueError("that does not look like a web address")
+            out[key] = {"enabled": enabled, "url": url}
+        return out
+
     def public(self):
         """Everything a browser may see — note the token itself is absent."""
         with self.lock:
@@ -1849,6 +1875,8 @@ class Config:
                     "token_set": bool(self.token),
                     "pollen_key_set": bool(self.pollen_key),
                     "speedtest_token_set": bool(self.speedtest_token),
+                    "ai_status": {k: dict(v) for k, v in self.ai_status.items()},
+                    "ai_defaults": {k: c.ENDPOINT for k, c in AI_SERVICES.items()},
                     "syslog": dict(self.syslog)}
 
     @staticmethod
@@ -1911,6 +1939,16 @@ class Config:
                         changed.append(label + "_set")
                 else:
                     return [], "key must be text"
+            if "ai_status" in patch:
+                if not isinstance(patch["ai_status"], dict):
+                    return [], "ai_status must be an object"
+                try:
+                    fresh = self.clean_ai(patch["ai_status"], self.ai_status)
+                except ValueError as e:
+                    return [], str(e)
+                if fresh != self.ai_status:
+                    self.ai_status = fresh
+                    changed.append("ai_status")
             if "syslog" in patch:
                 if not isinstance(patch["syslog"], dict):
                     return [], "syslog must be an object"
@@ -1993,11 +2031,8 @@ class Dashboard:
         self.speedtest = None
         self.start_speedtest()
 
-        self.claude = ClaudeStatusFetcher(self.stop)
-        self.chatgpt = ChatGptStatusFetcher(self.stop)
-        self.gemini = GeminiStatusFetcher(self.stop)
-        for f in (self.claude, self.chatgpt, self.gemini):
-            f.start()
+        self.ai = {}
+        self.apply_ai_status()
 
         self.apply_syslog()
 
@@ -2047,6 +2082,22 @@ class Dashboard:
                                           plan_up=self.args.plan_up)
         self.speedtest.start()
         return True
+
+    def apply_ai_status(self):
+        """Start, stop or repoint the AI status fetchers to match the settings.
+        Called at boot and when they are saved, so it needs no restart. A
+        thread cannot be pointed elsewhere, so a changed address is a new one."""
+        for key, cls in AI_SERVICES.items():
+            want = self.config.ai_status[key]
+            url = want["url"] or cls.ENDPOINT
+            f = self.ai.get(key)
+            if f is not None and (not want["enabled"] or f.url != url):
+                f.stop_event.set()
+                del self.ai[key]
+                f = None
+            if f is None and want["enabled"]:
+                self.ai[key] = cls(threading.Event(), url)
+                self.ai[key].start()
 
     def apply_syslog(self):
         """Point the log at the syslog server the settings name, or at none."""
@@ -2225,9 +2276,7 @@ class Dashboard:
         # Where the tracker's own page lives, so the card can offer a way in.
         # It is a LAN address and no secret; the token stays server-side.
         snap["internet"]["url"] = self.args.speedtest_url or ""
-        snap["ai_status"] = {"claude": self.claude.snapshot(),
-                             "chatgpt": self.chatgpt.snapshot(),
-                             "gemini": self.gemini.snapshot()}
+        snap["ai_status"] = {k: f.snapshot() for k, f in list(self.ai.items())}
         snap["nws"] = (self.nws.snapshot() if self.nws
                        else {"available": False, "error": ""})
         snap["precip_obs"] = (self.observations.snapshot() if self.observations
@@ -2353,21 +2402,22 @@ class Dashboard:
                         out["error"] = "Token accepted, but no Tempest device on the account"
             elif source == "ai":
                 parts, failed = [], False
-                for name, f in (("Claude", self.claude), ("ChatGPT", self.chatgpt),
-                                ("Gemini", self.gemini)):
+                for f in list(self.ai.values()):
                     try:
                         fresh = f.fetch_once()
                     except Exception as e:
                         failed = True
-                        parts.append("%s: %s" % (name, f.describe(e)))
+                        parts.append("%s: %s" % (f.NAME, f.describe(e)))
                         continue
                     with f.lock:
                         f.store(fresh); f.error = ""
-                    parts.append("%s %s" % (name, fresh["status"].replace("_", " ")))
-                out["ok"] = not failed
+                    parts.append("%s %s" % (f.NAME, fresh["status"].replace("_", " ")))
+                out["ok"] = bool(parts) and not failed
                 out["summary"] = " · ".join(parts)
                 if failed:
                     out["error"] = out["summary"]
+                elif not parts:
+                    out["error"] = "All three services are switched off"
             elif source == "nws":
                 parts = []
                 for name, f in (("alerts", self.alerts), ("forecast text", self.nws)):
@@ -2609,6 +2659,8 @@ class Handler(BaseHTTPRequestHandler):
             dash.start_pollen()
         if "speedtest_token_set" in changed:
             dash.start_speedtest()
+        if "ai_status" in changed:
+            dash.apply_ai_status()
         body = dash.config.public()
         body["ok"] = True
         body["changed"] = changed

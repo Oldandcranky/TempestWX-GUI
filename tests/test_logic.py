@@ -662,8 +662,9 @@ class CheckNow(unittest.TestCase):
         d = server.Dashboard.__new__(server.Dashboard)
         d.args = Args()
         d.state = core.StationState(history=blank_history())
+        d.ai = {}
         for name in ("forecast", "observations", "air", "pollen", "speedtest",
-                     "nws", "alerts", "backfill", "claude", "chatgpt", "gemini"):
+                     "nws", "alerts", "backfill"):
             setattr(d, name, fetchers.get(name))
         return d
 
@@ -694,16 +695,24 @@ class CheckNow(unittest.TestCase):
         self.assertIn("HTTP 503", out["error"])
         self.assertIsNone(f.stored)
 
-    def test_ai_status_reads_all_three_and_names_the_ones_that_fail(self):
-        class F(self.Fake):
-            LABEL = "Claude status"
-        good = F({"status": "major_outage"})
-        bad = F(exc=ValueError("none of its components were found"))
-        out = self.dash(claude=good, chatgpt=F({"status": "operational"}), gemini=bad).check("ai")
+    def test_ai_status_reads_the_ones_that_are_on_and_names_the_ones_that_fail(self):
+        def F(name, **kw):
+            f = self.Fake(**kw)
+            f.NAME = name
+            return f
+        d = self.dash()
+        d.ai = {"claude": F("Claude", result={"status": "major_outage"}),
+                "gemini": F("Gemini", exc=ValueError("none of its components were found"))}
+        out = d.check("ai")
         self.assertFalse(out["ok"])
         self.assertIn("Claude major outage", out["error"])
-        self.assertIn("ChatGPT operational", out["error"])
         self.assertIn("Gemini:", out["error"])
+        self.assertNotIn("ChatGPT", out["error"])          # switched off, so not asked
+
+    def test_ai_status_with_everything_off_says_so(self):
+        out = self.dash().check("ai")
+        self.assertFalse(out["ok"])
+        self.assertIn("switched off", out["error"])
 
     def test_a_source_that_is_off_says_so(self):
         out = self.dash().check("pollen")
@@ -835,22 +844,11 @@ class StatusPages(unittest.TestCase):
 
     def test_claude_is_the_worst_of_its_components(self):
         raw = {"components": [comp("claude.ai"), comp("Claude API", "partial_outage"),
-                              {"id": "g", "name": "Group", "status": "operational", "group": True}],
-               "incidents": [{"name": "Elevated errors", "components": [{"id": "Claude API"}]}]}
-        got = server.ClaudeStatusFetcher.parse(raw, now=1.0)
-        self.assertEqual((got["status"], got["incident"]), ("partial_outage", "Elevated errors"))
+                              {"id": "g", "name": "Group", "status": "operational", "group": True}]}
+        self.assertEqual(server.ClaudeStatusFetcher.parse(raw, now=1.0)["status"], "partial_outage")
 
-    def test_all_operational_names_no_incident(self):
-        raw = {"components": [comp("a"), comp("b")],
-               "incidents": [{"name": "Old news", "components": []}]}
-        got = server.ClaudeStatusFetcher.parse(raw)
-        self.assertEqual((got["status"], got["incident"]), ("operational", ""))
-
-    def test_an_incident_elsewhere_is_not_shown_on_this_row(self):
-        raw = {"components": [comp("Conversations", "degraded_performance"), comp("Images")],
-               "incidents": [{"name": "Images slow", "components": [{"id": "Images"}]},
-                             {"name": "Chats slow", "components": [{"id": "Conversations"}]}]}
-        self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["incident"], "Chats slow")
+    def test_all_operational_is_operational(self):
+        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("a"), comp("b")]})["status"], "operational")
 
     def test_chatgpt_ignores_the_api_and_codex(self):
         raw = {"components": [comp("Conversations"), comp("Realtime", "major_outage"),
@@ -871,34 +869,107 @@ class StatusPages(unittest.TestCase):
         self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("x", "on_fire")]})["status"], "on_fire")
 
     def gemini(self, *incidents):
-        return server.GeminiStatusFetcher.parse(list(incidents), now=1.0)
+        return server.GeminiStatusFetcher.parse(list(incidents), now=1.0)["status"]
 
     @staticmethod
-    def google(status, product="npdyhgECDJ6tB66MxXyo", text="**Summary:**\nErrors with Gemini.\n**Description:**\nx"):
-        return {"id": "i", "external_desc": text, "affected_products": [{"title": "t", "id": product}],
-                "most_recent_update": {"status": status, "text": text}}
+    def google(status, product="npdyhgECDJ6tB66MxXyo"):
+        return {"id": "i", "affected_products": [{"title": "t", "id": product}],
+                "most_recent_update": {"status": status}}
 
     def test_gemini_is_fine_when_every_incident_is_over(self):
-        got = self.gemini(self.google("AVAILABLE"))
-        self.assertEqual((got["status"], got["incident"]), ("operational", ""))
+        self.assertEqual(self.gemini(self.google("AVAILABLE")), "operational")
 
-    def test_an_open_outage_is_red_and_is_named(self):
-        got = self.gemini(self.google("SERVICE_OUTAGE"))
-        self.assertEqual((got["status"], got["incident"]), ("major_outage", "Errors with Gemini."))
+    def test_an_open_outage_is_red(self):
+        self.assertEqual(self.gemini(self.google("SERVICE_OUTAGE")), "major_outage")
 
     def test_an_open_disruption_is_amber(self):
-        self.assertEqual(self.gemini(self.google("SERVICE_DISRUPTION"))["status"], "degraded_performance")
+        self.assertEqual(self.gemini(self.google("SERVICE_DISRUPTION")), "degraded_performance")
 
     def test_the_worst_open_incident_wins(self):
-        got = self.gemini(self.google("SERVICE_DISRUPTION"), self.google("SERVICE_OUTAGE", text="**Summary:**\nDown."))
-        self.assertEqual((got["status"], got["incident"]), ("major_outage", "Down."))
+        self.assertEqual(self.gemini(self.google("SERVICE_DISRUPTION"), self.google("SERVICE_OUTAGE")), "major_outage")
 
     def test_another_google_product_is_not_gemini(self):
-        self.assertEqual(self.gemini(self.google("SERVICE_OUTAGE", product="gmail"))["status"], "operational")
+        self.assertEqual(self.gemini(self.google("SERVICE_OUTAGE", product="gmail")), "operational")
 
     def test_a_feed_that_is_not_a_list_is_an_error(self):
         with self.assertRaises(ValueError):
             server.GeminiStatusFetcher.parse({"error": "nope"})
+
+
+class AiStatusSettings(unittest.TestCase):
+    def cfg(self):
+        import tempfile
+        return server.Config(os.path.join(tempfile.mkdtemp(), "c.json"), {})
+
+    def test_everything_is_on_at_its_built_in_address_by_default(self):
+        c = self.cfg()
+        self.assertEqual(c.ai_status, {k: {"enabled": True, "url": ""} for k in ("claude", "chatgpt", "gemini")})
+        self.assertIn("status.claude.com", c.public()["ai_defaults"]["claude"])
+
+    def test_a_choice_is_saved_and_survives_a_reload(self):
+        c = self.cfg()
+        changed, err = c.apply({"ai_status": {"gemini": {"enabled": False},
+                                              "claude": {"url": " https://example.org/summary.json "}}})
+        self.assertEqual((changed, err), (["ai_status"], ""))
+        again = server.Config(c.path, {})
+        self.assertFalse(again.ai_status["gemini"]["enabled"])
+        self.assertEqual(again.ai_status["claude"]["url"], "https://example.org/summary.json")
+        self.assertTrue(again.ai_status["chatgpt"]["enabled"])
+
+    def test_an_address_that_is_not_a_web_address_is_refused(self):
+        c = self.cfg()
+        for bad in ("ftp://x.example/y", "not a url", "https://", "javascript:alert(1)", 5):
+            self.assertTrue(c.apply({"ai_status": {"claude": {"url": bad}}})[1], bad)
+        self.assertEqual(c.ai_status["claude"]["url"], "")
+
+    def test_an_empty_address_goes_back_to_the_built_in_one(self):
+        c = self.cfg()
+        c.apply({"ai_status": {"claude": {"url": "https://example.org/x"}}})
+        c.apply({"ai_status": {"claude": {"url": ""}}})
+        self.assertEqual(c.ai_status["claude"]["url"], "")
+
+    def dash(self, c):
+        d = server.Dashboard.__new__(server.Dashboard)
+        d.config, d.ai = c, {}
+        return d
+
+    def test_switching_a_service_off_stops_its_fetcher_and_on_starts_a_new_one(self):
+        c = self.cfg()
+        d = self.dash(c)
+        started = []
+        real = server.StatusFeed.start
+        server.StatusFeed.start = lambda self: started.append(self.NAME)   # no network in a test
+        try:
+            d.apply_ai_status()
+            self.assertEqual(sorted(d.ai), ["chatgpt", "claude", "gemini"])
+            old = d.ai["gemini"]
+            c.apply({"ai_status": {"gemini": {"enabled": False}}})
+            d.apply_ai_status()
+            self.assertNotIn("gemini", d.ai)
+            self.assertTrue(old.stop_event.is_set())
+            c.apply({"ai_status": {"gemini": {"enabled": True}}})
+            d.apply_ai_status()
+            self.assertIn("gemini", d.ai)
+            self.assertIsNot(d.ai["gemini"], old)
+        finally:
+            server.StatusFeed.start = real
+
+    def test_a_changed_address_is_a_new_fetcher_reading_from_it(self):
+        c = self.cfg()
+        d = self.dash(c)
+        real = server.StatusFeed.start
+        server.StatusFeed.start = lambda self: None
+        try:
+            d.apply_ai_status()
+            same = d.ai["claude"]
+            d.apply_ai_status()
+            self.assertIs(d.ai["claude"], same)              # nothing changed, nothing restarted
+            c.apply({"ai_status": {"claude": {"url": "https://example.org/x"}}})
+            d.apply_ai_status()
+            self.assertIsNot(d.ai["claude"], same)
+            self.assertEqual(d.ai["claude"].url, "https://example.org/x")
+        finally:
+            server.StatusFeed.start = real
 
 
 class SyslogSettings(unittest.TestCase):

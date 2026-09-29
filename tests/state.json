@@ -30,21 +30,18 @@
    "available": true,
    "error": "",
    "fetched_at": 1789568499.1540258,
-   "incident": "Voice mode and Conversations are responding slowly for some users",
    "status": "degraded_performance"
   },
   "claude": {
    "available": true,
    "error": "",
    "fetched_at": 1789568499.1540258,
-   "incident": "Elevated error rates on Claude Opus and Sonnet models for API customers",
    "status": "partial_outage"
   },
   "gemini": {
    "available": true,
    "error": "",
    "fetched_at": 1789568499.1540258,
-   "incident": "",
    "status": "operational"
   }
  },

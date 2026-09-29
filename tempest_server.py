@@ -491,6 +491,18 @@ STATUS_LEVEL = {"under_maintenance": "notice", "degraded_performance": "notice"}
 PARTS_KEPT = 6        # how many failing components a reading or an incident names
 
 
+def _iso_epoch(text):
+    """ISO 8601 to epoch seconds, or None. A trailing Z and fractional seconds
+    of any length are taken, which Python 3.8's fromisoformat does not."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        return datetime.fromisoformat(
+            re.sub(r"\.\d+", "", text.strip().replace("Z", "+00:00"), count=1)).timestamp()
+    except ValueError:
+        return None
+
+
 class StatusFeed(PollingFetcher):
     """A public status page read as JSON, and turned by `parse` into a word.
     The address can be replaced from the settings, in case a page moves."""
@@ -575,6 +587,9 @@ class StatuspageFetcher(StatusFeed):
     """
 
     PARTS = None          # the names of the components that count; None is all
+    HISTORY = ""          # where the past incidents are listed
+    IMPACT = {"minor": "degraded_performance", "major": "partial_outage",
+              "critical": "major_outage"}
 
     @classmethod
     def parse(cls, raw, now=None, ids=None):
@@ -598,8 +613,55 @@ class StatuspageFetcher(StatusFeed):
                 "via": via, "parts": parts[:PARTS_KEPT]}
 
 
+    @classmethod
+    def parse_history(cls, raw, ids=None):
+        """The past incidents from Statuspage's list: (events, the earliest
+        moment the list is complete from). An event is when one began and
+        ended, how bad it got, and which of this service's components it
+        touched. The list is every service's, so an incident not on this
+        service's components is not this service's."""
+        incidents = raw.get("incidents") or []
+        starts = [_iso_epoch(i.get("started_at") or i.get("created_at")) for i in incidents]
+        starts = [t for t in starts if t is not None]
+        if not starts:
+            raise ValueError("its history has no incidents to go on")
+        if cls.PARTS is not None and not any(i.get("components") for i in incidents):
+            # Nothing says whose an incident was: counting them all, or none,
+            # would be a guess, and none would read as a clean record.
+            raise ValueError("its incidents do not say which components they touched")
+
+        def mine(c):
+            if ids:
+                return c.get("id") in ids or c.get("code") in ids
+            return cls.PARTS is None or c.get("name") in cls.PARTS
+
+        events = []
+        for i in incidents:
+            comps = [c for c in i.get("components") or [] if mine(c)]
+            if cls.PARTS is not None and not comps:
+                continue
+            start = _iso_epoch(i.get("started_at") or i.get("created_at"))
+            end = _iso_epoch(i.get("resolved_at"))         # one still open is the live record's
+            if start is None or end is None or end <= start:
+                continue
+            seen = [ac.get("new_status") for u in i.get("incident_updates") or []
+                    for ac in u.get("affected_components") or []
+                    if mine(ac) and ac.get("new_status") not in (None, "operational")]
+            worst = (max(seen, key=lambda st: STATUS_RANK.get(st, 2)) if seen
+                     else cls.IMPACT.get(i.get("impact")))
+            if worst is None:                              # an impact of "none" is a notice
+                continue
+            events.append({"start": start, "end": end, "worst": worst,
+                           "parts": sorted({c.get("name") or "" for c in comps})[:PARTS_KEPT]})
+        return events, min(starts)
+
+    def history(self):
+        return self.parse_history(self.get(self.HISTORY))
+
+
 class ClaudeStatusFetcher(StatuspageFetcher):
     ENDPOINT = "https://status.claude.com/api/v2/summary.json"
+    HISTORY = "https://status.claude.com/api/v2/incidents.json"
     LABEL = "Claude status"
     NAME = "Claude"
 
@@ -613,6 +675,7 @@ class ChatGptStatusFetcher(StatuspageFetcher):
     its components were found", rather than going green."""
 
     ENDPOINT = "https://status.openai.com/api/v2/summary.json"
+    HISTORY = "https://status.openai.com/api/v2/incidents.json"
     LAYOUT = "https://status.openai.com/proxy/status.openai.com"
     GROUP = "ChatGPT"
     LABEL = "ChatGPT status"
@@ -642,6 +705,14 @@ class ChatGptStatusFetcher(StatuspageFetcher):
             self.note = e.__class__.__name__
         return self.parse(raw, ids=ids)
 
+    def history(self):
+        raw = self.get(self.HISTORY)
+        try:
+            ids = self.group_ids(self.get(self.LAYOUT))
+        except Exception:
+            ids = None
+        return self.parse_history(raw, ids)
+
 
 class GeminiStatusFetcher(StatusFeed):
     """The Gemini app, from Google's Workspace status dashboard.
@@ -657,6 +728,34 @@ class GeminiStatusFetcher(StatusFeed):
     PRODUCT = "npdyhgECDJ6tB66MxXyo"
     LABEL = "Gemini status"
     NAME = "Gemini"
+
+    @classmethod
+    def parse_history(cls, raw):
+        """The past incidents from the same feed: (events, the earliest moment
+        it is complete from). The feed lists every Workspace product's, so the
+        earliest date is taken across all of them, and only Gemini's that are
+        over count."""
+        if not isinstance(raw, list):
+            raise ValueError("unexpected response")
+        begins = [t for t in (_iso_epoch(i.get("begin")) for i in raw) if t is not None]
+        if not begins:
+            raise ValueError("its history has no incidents to go on")
+        events = []
+        for i in raw:
+            if not any(p.get("id") == cls.PRODUCT for p in i.get("affected_products") or []):
+                continue
+            if (i.get("most_recent_update") or {}).get("status") != "AVAILABLE":
+                continue
+            start, end = _iso_epoch(i.get("begin")), _iso_epoch(i.get("end"))
+            if start is None or end is None or end <= start:
+                continue
+            events.append({"start": start, "end": end, "parts": [],
+                           "worst": "major_outage" if i.get("status_impact") == "SERVICE_OUTAGE"
+                           else "degraded_performance"})
+        return events, min(begins)
+
+    def history(self):
+        return self.parse_history(self.get(self.url))
 
     @classmethod
     def parse(cls, raw, now=None):
@@ -730,17 +829,28 @@ class AiHistory:
         days = {}
         for day, row in (d.get("days") or {}).items():
             days[str(day)] = {k: float(row.get(k, 0)) for k in ("ok", "deg", "out")}
-        events = [{"start": float(e["start"]),
-                   "end": None if e.get("end") is None else float(e["end"]),
-                   "worst": str(e["worst"]),
-                   "parts": [str(p) for p in e.get("parts") or []][:PARTS_KEPT],
-                   "approx_start": bool(e.get("approx_start")),
-                   "approx_end": bool(e.get("approx_end"))}
-                  for e in d.get("events") or []]
+        events = []
+        for e in d.get("events") or []:
+            ev = {"start": float(e["start"]),
+                  "end": None if e.get("end") is None else float(e["end"]),
+                  "worst": str(e["worst"]),
+                  "parts": [str(p) for p in e.get("parts") or []][:PARTS_KEPT],
+                  "approx_start": bool(e.get("approx_start")),
+                  "approx_end": bool(e.get("approx_end"))}
+            if e.get("src"):
+                ev["src"] = str(e["src"])
+            events.append(ev)
         last = d.get("last")
         if last is not None:
             last = {"at": float(last["at"]), "status": str(last["status"])}
-        return {"days": days, "events": events, "last": last}
+        bf = d.get("backfill")
+        if bf is not None:
+            bf = {"at": float(bf["at"]), "from": str(bf["from"]), "events": int(bf["events"])}
+        return {"days": days, "events": events, "last": last, "backfill": bf}
+
+    @staticmethod
+    def _blank():
+        return {"days": {}, "events": [], "last": None, "backfill": None}
 
     def load(self):
         raw, problem = self.history._read_json(self.path)
@@ -798,7 +908,7 @@ class AiHistory:
         t, status = fresh["fetched_at"], fresh["status"]
         parts = list(fresh.get("parts") or [])
         with self.lock:
-            s = self.services.setdefault(key, {"days": {}, "events": [], "last": None})
+            s = self.services.setdefault(key, self._blank())
             last = s["last"]
             # A first sighting, a long silence, or a clock that went backwards.
             silent = last is None or not 0 <= t - last["at"] <= self.GAP
@@ -828,6 +938,61 @@ class AiHistory:
             s["last"] = {"at": t, "status": status}
             self._save(changed)
 
+    # ── history ───────────────────────────────────────────────────────────
+    @staticmethod
+    def _day_seconds(day):
+        d = datetime.strptime(day, "%Y-%m-%d").date()
+        return time.mktime((d + timedelta(days=1)).timetuple()) - time.mktime(d.timetuple())
+
+    def backfilled(self, key):
+        with self.lock:
+            return bool((self.services.get(key) or {}).get("backfill"))
+
+    def backfill(self, key, events, covered_from, now=None):
+        """Fill in the days before the live record began, from the service's
+        own list of past incidents. `covered_from` is when that list is
+        complete from: days before it are left alone, since a day with no
+        incident on a list that does not reach it proves nothing.
+
+        Only days before the first live day are written, and they are set, not
+        added to, so doing this twice, or after a crash half way, changes
+        nothing. Overlapping incidents count once, at the worse state. False
+        when the live record has not begun, to be tried again."""
+        with self.lock:
+            if self.since is None:
+                return False
+            s = self.services.setdefault(key, self._blank())
+            first = date.fromtimestamp(covered_from)
+            first_live = date.fromtimestamp(self.since)
+            floor = time.mktime(first.timetuple())
+            ceiling = time.mktime(first_live.timetuple())     # where the live days begin
+            spans = [(max(e["start"], floor), min(e["end"], ceiling), self._bucket(e["worst"]))
+                     for e in events]
+            spans = [x for x in spans if x[1] > x[0]]
+            tmp = {"days": {}}
+            edges = sorted({t for a, b, _ in spans for t in (a, b)})
+            for a, b in zip(edges, edges[1:]):
+                kinds = [k for s0, s1, k in spans if s0 <= a and b <= s1]
+                if kinds:
+                    self._credit(tmp, a, b, "out" if "out" in kinds else "deg")
+            day = first
+            while day < first_live:
+                k = day.strftime("%Y-%m-%d")
+                row = tmp["days"].get(k, {"ok": 0.0, "deg": 0.0, "out": 0.0})
+                row["ok"] = max(0.0, self._day_seconds(k) - row["deg"] - row["out"])
+                s["days"][k] = row
+                day += timedelta(days=1)
+            # History covers whole days. An incident that ran on into the live
+            # days is the live record's; only its part before them is counted.
+            past = [dict(e, approx_start=False, approx_end=False, src="history")
+                    for e in events if e["end"] <= ceiling]
+            s["events"] = sorted(past + [e for e in s["events"] if e.get("src") != "history"],
+                                 key=lambda e: e["start"])
+            s["backfill"] = {"at": time.time() if now is None else now,
+                             "from": first.isoformat(), "events": len(past)}
+            self._save(True)
+            return True
+
     # ── reporting ─────────────────────────────────────────────────────────
     def report(self, now=None, watching=()):
         """Per service: each of the last 90 days, the windows summed, and the
@@ -837,16 +1002,23 @@ class AiHistory:
         keys = [(today - timedelta(days=i)).strftime("%Y-%m-%d")
                 for i in range(max(self.WINDOWS) - 1, -1, -1)]
         out = {"available": False, "error": "Nothing recorded yet", "since": None,
-               "watched_days": 0, "services": {}}
+               "covered_from": None, "watched_days": 0, "services": {}}
         with self.lock:
             if self.since is not None:
+                # As far back as any service has anything: its history's first
+                # day, or the first live one.
+                begins = [date.fromtimestamp(self.since)] + [
+                    date.fromisoformat(v["backfill"]["from"]) for v in self.services.values()
+                    if v.get("backfill")]
+                first = min(begins)
                 out.update(available=True, error="", since=self.since,
-                           watched_days=max(1, int((now - self.since) // 86400) + 1))
+                           covered_from=first.isoformat(),
+                           watched_days=max(1, (today - first).days + 1))
             for key, cls in AI_SERVICES.items():
                 s = self.services.get(key)
                 if s is None and key not in watching:
                     continue
-                s = s or {"days": {}, "events": [], "last": None}
+                s = s or self._blank()
                 rows = [dict(date=k, **s["days"].get(k, {"ok": 0.0, "deg": 0.0, "out": 0.0}))
                         for k in keys]
                 windows = {}
@@ -860,6 +1032,7 @@ class AiHistory:
                     windows[str(w)] = tot
                 out["services"][key] = {
                     "name": cls.NAME, "watching": key in watching,
+                    "backfill": s.get("backfill"),
                     "status": (s["last"] or {}).get("status"),
                     "days": rows, "windows": windows,
                     "incidents": [dict(e, open=e["end"] is None) for e in s["events"][-25:][::-1]]}
@@ -2305,6 +2478,7 @@ class Dashboard:
         self.ai_history = AiHistory(os.path.join(args.data_dir, AiHistory.FILE), self.history)
         self.ai = {}
         self.apply_ai_status(quiet=True)
+        threading.Thread(target=self._backfill_ai, daemon=True).start()
 
         self.apply_syslog()
 
@@ -2584,6 +2758,36 @@ class Dashboard:
             snap["forecast"]["winter"] = core.winter_outlook(
                 snap["forecast"].get("days") or [])
         return snap
+
+    def _backfill_ai(self):
+        """Once per service, fill the days before the live record began from
+        its own list of past incidents. It waits for the live record to begin,
+        tries again if the page cannot be read (the first failure is logged,
+        not every try), and does not ask a service that is switched off."""
+        due, failed = {}, set()
+        while not self.stop.is_set():
+            for key, cls in AI_SERVICES.items():
+                f = self.ai.get(key)
+                if f is None or self.ai_history.backfilled(key) or time.time() < due.get(key, 0):
+                    continue
+                try:
+                    events, covered = f.history()
+                    if not self.ai_history.backfill(key, events, covered):
+                        due[key] = time.time() + 30              # the live record has not begun
+                        continue
+                except Exception as e:
+                    due[key] = time.time() + 1800
+                    if key not in failed:
+                        failed.add(key)
+                        core.log("ai status", "%s history unavailable: %s" % (
+                            cls.NAME, e if isinstance(e, ValueError) else e.__class__.__name__),
+                            "warning")
+                    continue
+                failed.discard(key)
+                core.log("ai status", "%s history: %d incident%s, back to %s" % (
+                    cls.NAME, len(events), "" if len(events) == 1 else "s",
+                    date.fromtimestamp(covered).isoformat()), "notice")
+            self.stop.wait(30)
 
     def reliability(self):
         """How often each AI service has been degraded or down, for its page."""

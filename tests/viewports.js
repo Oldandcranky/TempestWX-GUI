@@ -574,18 +574,23 @@ console.log = (...args) => {
       }));
       const ev = (h, m, worst, parts, open) => ({start: now - h * 3600, end: open ? null : now - h * 3600 + m * 60,
         worst, parts, approx_start: h > 100, approx_end: false, open: !!open});
-      const svc = (name, bad_, status, incidents) => { const r = rows(bad_);
-        return {name, watching: true, status, days: r, windows: windows(r, 3), incidents}; };
-      return {available: true, error: '', since: now - 60 * 86400, watched_days: 61, services: {
+      const svc = (name, bad_, status, incidents, backfill) => { const r = rows(bad_);
+        return {name, watching: true, status, days: r, windows: windows(r, 3), incidents, backfill: backfill || null}; };
+      const hist = {from: iso(now - 60 * 86400), at: now, events: 3};
+      return {available: true, error: '', since: now - 20 * 86400, covered_from: iso(now - 60 * 86400),
+              watched_days: 61, services: {
         claude: svc('Claude', i => i % 17 === 0 ? [3600, 900] : [0, 0], 'operational',
-          [ev(30, 25, 'major_outage', ['claude.ai', 'Claude API', 'Claude Code'])]),
+          [ev(30, 25, 'major_outage', ['claude.ai', 'Claude API', 'Claude Code'])], hist),
         chatgpt: svc('ChatGPT', i => i % 5 === 0 ? [7200, i % 15 === 0 ? 1800 : 0] : [0, 0], 'degraded_performance',
           [ev(0.4, 0, 'degraded_performance', ['Voice mode'], true),
            ev(50, 40, 'partial_outage', ['Conversations', 'Login', 'Voice mode', 'GPTs', 'Search', 'Agent']),
            ev(200, 130, 'degraded_performance', ['Image Generation']),
-           ev(400, 60, 'degraded_performance', [])]),
-        gemini: svc('Gemini', i => i === 70 ? [5400, 0] : [0, 0], 'operational',
-          [ev(500, 90, 'degraded_performance', [])])}};
+           ev(400, 60, 'degraded_performance', [])], hist),
+        gemini: (() => { const g = svc('Gemini', i => i === 70 ? [5400, 0] : [0, 0], 'operational',
+          [ev(500, 90, 'degraded_performance', [])]);
+          // Only a few minutes seen in the week: no share yet, not a harsh one.
+          g.windows['7'] = {ok: 0, deg: 300, out: 0, observed: 300, days: 7, deg_events: 1, out_events: 0};
+          return g; })()}};
     })();
     for (const [w, h] of [[1920, 1080], [1400, 860], [1920, 720], [1024, 768], [414, 896]]) {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
@@ -627,7 +632,10 @@ console.log = (...args) => {
       if (r.rows < 5) bad.push(at + ': the incident list has ' + r.rows + ' rows');
       if (r.strip < 8) bad.push(at + ': the strip is only ' + r.strip.toFixed(0) + 'px tall');
       if (!r.text.includes('ongoing')) bad.push(at + ': the open incident is not marked ongoing');
-      if (!r.text.includes('Watched since')) bad.push(at + ': no note of when watching began');
+      if (!r.text.includes('history until')) bad.push(at + ': no note that the earlier days come from the status pages');
+      // Under an hour seen, a share is a dash; with days seen, it is a number.
+      if (!/^7d\u2014/.test(r.nums[2])) bad.push(at + ': a week with five minutes seen shows "' + r.nums[2] + '", expected a dash');
+      if (!/^7d\d/.test(r.nums[0])) bad.push(at + ': a week with days seen shows "' + r.nums[0] + '", expected a share');
       // A share is rounded down: a day with any time down is never "100%".
       if (/100\.0%/.test(r.nums[0]) || /100\.0%/.test(r.nums[1]))
         bad.push(at + ': a service with time down claims 100.0% (' + r.nums.slice(0, 2) + ')');

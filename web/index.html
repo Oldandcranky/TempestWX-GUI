@@ -5479,8 +5479,11 @@ async function loadRel(force){
   return rel;
 }
 
-/* A share of the time, rounded down: 99.96% is not 100%. */
-const relPct = (part, whole) => whole > 0
+/* A share of the time, rounded down: 99.96% is not 100%. And not at all until
+   an hour has been seen: a service degraded for the five minutes since the
+   record began is not "0.0%" of anything yet. */
+const REL_MIN_S = 60 * 60;
+const relPct = (part, whole) => whole >= REL_MIN_S
   ? (Math.floor(part / whole * 1000) / 10).toFixed(1) + "%" : DASH;
 
 function relDay(row){
@@ -5562,8 +5565,12 @@ function renderRelPage(){
   if (!all.length)
     tbl.appendChild(el("div", "inc", "<span>No incidents recorded yet</span>"));
   b.appendChild(tbl);
-  b.appendChild(caption("Watched since " + shortDate(r.since) + " · as each status page reported it · " +
-    "time not seen is not counted", "faint wrap2"));
+  const back = Object.values(r.services || {}).some(v => v.backfill);
+  b.appendChild(caption(back
+    ? "Since " + niceDay(r.covered_from) + " · history until " + shortDate(r.since) +
+      ", then watched here · time not seen is not counted"
+    : "Watched since " + shortDate(r.since) + " · as each status page reported it · " +
+      "time not seen is not counted", "faint wrap2"));
   host.replaceChildren(c);
   fitCards();
 }

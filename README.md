@@ -365,14 +365,25 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The reliability page starts with history, and shows no share until an hour
+  has been seen.** The days before the dashboard began watching are filled in,
+  once per service, from that service's own list of past incidents (Claude's
+  and OpenAI's Statuspage lists, and Google's feed for Gemini), as far back
+  as each list reaches. Only days before the first live one are written, so
+  it never touches what was watched, and doing it again changes nothing.
+  Overlapping incidents count once, at the worse state. ChatGPT's incidents
+  are only those on its own components; if a list cannot say which components
+  an incident touched, nothing is filled in rather than guessed. And a week
+  that has had five minutes seen shows a dash, not "0.0%": a share appears
+  once an hour is behind it.
 - **AI reliability: how often each service has been degraded or down.**
   Tapping the AI status card opens a page with, for Claude, ChatGPT and
   Gemini: how it is doing now, the share of time it was fine over 7, 30 and
   90 days, ninety days as a strip of coloured days, and the latest incidents
   with how long they lasted and which components were involved. It records
   what the dashboard saw of each status page, every two minutes, in
-  `data/ai_status_log.json`; it starts counting the day this is deployed. Time
-  it could not see, a deploy or an unreachable page, counts as nothing
+  `data/ai_status_log.json`, and fills the days before it began from each
+  status page's own list of past incidents. Time it could not see, a deploy or an unreachable page, counts as nothing
   rather than as up, and an incident whose start or end that hid is marked
   "~". A share is rounded down, so a day with any time down is never 100%. It
   is the status pages' account, which is late and leaves out short blips, not a

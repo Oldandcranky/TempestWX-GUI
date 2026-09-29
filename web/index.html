@@ -172,8 +172,9 @@ body.tv{cursor:none}
            overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aistat .w{font-size:var(--fs-value-sm);font-weight:700;letter-spacing:.06em;
            text-transform:uppercase;white-space:nowrap}
-.aistat .inc{font-size:var(--fs-label);color:var(--label);line-height:1.25;
-             overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.aiset .line2{display:flex;align-items:center;gap:.8em;flex-wrap:wrap;padding:.3em 0}
+.aiset label{display:flex;align-items:center;gap:.5em;min-width:7em;cursor:pointer}
+.aiset input[type=text]{flex:1 1 16em;min-width:0}
 .chip{
   display:inline-block;padding:.15em .6em;border-radius:5px;
   background:var(--inset);border:1px solid var(--inset-edge);
@@ -3200,9 +3201,10 @@ const AI_SERVICES = [["claude", "Claude"], ["chatgpt", "ChatGPT"], ["gemini", "G
 
 function buildClaude(s){
   const ai = s.ai_status || {};
-  const health = AI_SERVICES.map(([k]) => srcHealth(ai[k]));
+  const shown = AI_SERVICES.filter(([k]) => ai[k]);       // the ones not switched off
+  const health = shown.map(([k]) => srcHealth(ai[k]));
   const {card:c, body:b} = card("claude","AI status","na","accent",
-    health.includes("waiting") ? "waiting" : health.includes("stale") ? "stale" : "live");
+    !shown.length || health.includes("waiting") ? "waiting" : health.includes("stale") ? "stale" : "live");
   // no weather glyph suits this; an asterisk, drawn
   const icon = c.querySelector(".card-head .wi");
   if (icon) icon.outerHTML =
@@ -3210,17 +3212,16 @@ function buildClaude(s){
     'style="color:var(--accent)"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9" ' +
     'stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
   const list = el("div", "aistat");
-  for (const [key, name] of AI_SERVICES) {
+  if (!shown.length) list.appendChild(caption("All switched off in settings"));
+  for (const [key, name] of shown) {
     const p = ai[key] || {};
     const [word, tone] = p.available ? statusWord(p.status) : ["Unknown", "muted"];
     const ln = el("div", "ln");
     ln.append(el("span", "n", esc(name)), el("span", "w " + tone, esc(word)));
     list.appendChild(ln);
-    // What is wrong, or why this line cannot be trusted: never both blank
-    // when something is.
+    // Why this line cannot be trusted, when it cannot.
     const note = !p.available ? p.error
-      : p.error ? "Can't reach the status page · as of " + ago(s.now - p.fetched_at) + " ago"
-      : p.status !== "operational" ? p.incident : "";
+      : p.error ? "Can't reach the status page · as of " + ago(s.now - p.fetched_at) + " ago" : "";
     if (note) list.appendChild(el("div", "inc", esc(note)));
   }
   b.appendChild(list);
@@ -4159,8 +4160,10 @@ function screenPanel(panel){
 /* One status line for the three AI services: working only when all are. */
 function aiState(ai){
   ai = ai || {};
-  const trouble = AI_SERVICES.map(([k, name]) => [name, ai[k] || {}])
-                             .filter(([, p]) => !p.available || p.error);
+  const on = AI_SERVICES.filter(([k]) => ai[k]);
+  if (!on.length) return ["waiting", "All switched off"];
+  const trouble = on.map(([k, name]) => [name, ai[k]])
+                    .filter(([, p]) => !p.available || p.error);
   if (!trouble.length) return ["live", "Working"];
   if (trouble.every(([, p]) => !p.error)) return ["waiting", "Waiting for the first status"];
   return ["stale", trouble.map(([name, p]) => name + ": " + (p.error || "waiting")).join(" · ")];
@@ -4216,10 +4219,11 @@ function sourceList(){
      note: 'Only needed for the Pollen card. No free keyless source covers North America. Enable ' +
        'the Pollen API in a <a href="https://console.cloud.google.com/" target="_blank" ' +
        'rel="noopener noreferrer">Google Cloud</a> project and paste the key here.'},
-    {id: "ai", name: "AI status", state: aiState(s.ai_status),
-     note: "The public status pages of Anthropic, OpenAI and Google: status.claude.com, " +
-       "status.openai.com and Google's Workspace status dashboard. No key and no account. ChatGPT is " +
-       "OpenAI's ChatGPT components only, not its API or Codex; Gemini is the Gemini app."},
+    {id: "ai", name: "AI status", state: aiState(s.ai_status), panel: aiPanel,
+     note: "The public status pages of Anthropic, OpenAI and Google. No key and no account. ChatGPT is " +
+       "OpenAI's ChatGPT components only, not its API or Codex; Gemini is the Gemini app. Untick a " +
+       "service to stop watching it. The address is where its status is read from; leave it empty " +
+       "for the built-in one, and change it only if a page has moved."},
     {id: "internet", name: "Internet", secret: {
         field: "speedtest_token", isSet: !!(cfg && cfg.speedtest_token_set),
         placeholder: "Paste your Speedtest Tracker API token", savedText: "Saved. Fetching results."},
@@ -4251,11 +4255,45 @@ function sourcesPanel(panel){
     const inside = el("div", "inside");
     inside.appendChild(el("p", "note", src.note));
     if (src.secret) inside.appendChild(secretField(src.secret));
+    if (src.panel) inside.appendChild(src.panel());
     inside.appendChild(checkNow(src.id));
     d.appendChild(inside);
     sheet.appendChild(d);
   }
   panel.appendChild(sheet);
+}
+
+/* Which AI services the card watches, and where each is read from. An empty
+   address is the built-in one, shown as the placeholder. Saved together. */
+function aiPanel(){
+  const wrap = el("div", "aiset");
+  const cur = (cfg && cfg.ai_status) || {}, defs = (cfg && cfg.ai_defaults) || {};
+  const rows = AI_SERVICES.map(([key, name]) => {
+    const line = el("div", "line2");
+    const label = el("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = (cur[key] || {}).enabled !== false;
+    label.append(box, el("span", null, esc(name)));
+    const url = document.createElement("input");
+    url.type = "text";
+    url.spellcheck = false;
+    url.value = (cur[key] || {}).url || "";
+    url.placeholder = defs[key] || "";
+    url.setAttribute("aria-label", name + " address");
+    line.append(label, url);
+    wrap.appendChild(line);
+    return {key, box, url};
+  });
+  const state = el("div", "state");
+  const save = el("button", "primary", "Save");
+  save.type = "button";
+  save.addEventListener("click", () => saveConfig({ai_status: Object.fromEntries(
+    rows.map(r => [r.key, {enabled: r.box.checked, url: r.url.value.trim()}]))}, state));
+  const bar = el("div", "row");
+  bar.append(save, state);
+  wrap.appendChild(bar);
+  return wrap;
 }
 
 /* Check now: ask the server to fetch this source once, right now, and say

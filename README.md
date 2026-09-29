@@ -365,6 +365,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **AI status: switch each service on or off, and change where it is read
+  from.** Settings → Data sources → AI status has a tick-box and an address
+  for Claude, ChatGPT and Gemini. Unticking one stops fetching it and drops
+  its line from the card; an empty address is the built-in one, and a filled
+  one is for when a status page moves. Saved on the server, so the TV follows.
+  The grey line under a service naming its open incident is gone: a line that
+  is not operational says so in its colour and word, and the incident title
+  could not always be tied to the part of the service that was down.
 - **The Claude card is now an AI status card: Claude, ChatGPT and Gemini.**
   One line each, with the word in green, amber or red. It replaces the
   per-component list, so the tick-boxes in settings are gone. ChatGPT is

@@ -29,6 +29,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import socket
 import sys
@@ -503,7 +504,10 @@ class ClaudeStatusFetcher(PollingFetcher):
     @staticmethod
     def parse(raw, now=None):
         # Component groups are headings, not things that can be down.
-        comps = [{"id": c["id"], "name": c.get("name") or "",
+        # "Claude API (api.anthropic.com)" is too long for a card row; the
+        # bracket is the address, and the name says which one it is.
+        short = lambda n: re.sub(r"\s*\([^)]*\)\s*$", "", n) or n
+        comps = [{"id": c["id"], "name": short(c.get("name") or ""),
                   "status": c.get("status") or "operational"}
                  for c in raw.get("components") or [] if not c.get("group")]
         incidents = [{"name": i.get("name") or "", "impact": i.get("impact") or "",

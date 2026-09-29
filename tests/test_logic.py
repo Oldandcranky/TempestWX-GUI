@@ -845,6 +845,15 @@ class ClaudeStatus(unittest.TestCase):
         self.assertEqual([c["id"] for c in got["components"]], ["a", "b", "c"])
         self.assertEqual(got["incidents"][0]["components"], ["b"])
 
+    def test_the_address_in_brackets_is_left_off_the_name(self):
+        raw = {"components": [
+            {"id": "a", "name": "Claude API (api.anthropic.com)", "status": "operational"},
+            {"id": "b", "name": "Claude Code", "status": "operational"},
+            {"id": "c", "name": "(only brackets)", "status": "operational"}]}
+        got = server.ClaudeStatusFetcher.parse(raw)["components"]
+        self.assertEqual([c["name"] for c in got],
+                         ["Claude API", "Claude Code", "(only brackets)"])
+
     def test_nothing_chosen_reports_the_worst_of_all(self):
         v = self.view([])
         self.assertEqual(v["worst"], "partial_outage")

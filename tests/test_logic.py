@@ -1009,6 +1009,32 @@ class AiStatusSettings(unittest.TestCase):
         finally:
             server.StatusFeed.start = real
 
+    def test_the_log_says_what_was_switched_and_stays_quiet_at_boot(self):
+        c = self.cfg()
+        d = self.dash(c)
+        real = server.StatusFeed.start
+        server.StatusFeed.start = lambda self: None
+        say = lambda: [l["text"] for l in core.LOG.recent() if l["tag"] == "ai status"]
+        try:
+            core.LOG.lines.clear()
+            d.apply_ai_status(quiet=True)
+            self.assertEqual(say(), [])
+            c.apply({"ai_status": {"gemini": {"enabled": False}}}); d.apply_ai_status()
+            c.apply({"ai_status": {"gemini": {"enabled": True}}}); d.apply_ai_status()
+            c.apply({"ai_status": {"claude": {"url": "https://example.org/x"}}}); d.apply_ai_status()
+            c.apply({"ai_status": {"claude": {"url": ""}}}); d.apply_ai_status()
+            d.apply_ai_status()                                   # nothing changed: nothing said
+            self.assertEqual(say(), ["Gemini switched off", "Gemini switched on",
+                                     "Claude reading from https://example.org/x",
+                                     "Claude reading from the built-in address"])
+            core.LOG.lines.clear()
+            c.apply({"ai_status": {"chatgpt": {"url": "https://example.org/y"}}})
+            d2 = self.dash(c)
+            d2.apply_ai_status(quiet=True)                        # a boot with an address set says so
+            self.assertEqual(say(), ["ChatGPT reading from https://example.org/y"])
+        finally:
+            server.StatusFeed.start = real
+
     def test_a_changed_address_is_a_new_fetcher_reading_from_it(self):
         c = self.cfg()
         d = self.dash(c)
@@ -1025,6 +1051,53 @@ class AiStatusSettings(unittest.TestCase):
             self.assertEqual(d.ai["claude"].url, "https://example.org/x")
         finally:
             server.StatusFeed.start = real
+
+
+class AiStatusLogLines(unittest.TestCase):
+    """The log says when a service changes state, not on every poll."""
+
+    def lines(self, f, *results, tag="claude status"):
+        core.LOG.lines.clear()
+        for r in results:
+            f.store(dict({"fetched_at": 1.0}, **r))
+            f.data = f.data or {}
+        return [(l["level"], l["text"]) for l in core.LOG.recent() if l["tag"] == tag]
+
+    def claude(self):
+        return server.ClaudeStatusFetcher(threading.Event())
+
+    def test_a_service_that_stays_fine_says_nothing(self):
+        self.assertEqual(self.lines(self.claude(), *[{"status": "operational"}] * 3), [])
+
+    def test_degrading_worsening_and_recovering_are_lines_at_their_severity(self):
+        got = self.lines(self.claude(), {"status": "operational"}, {"status": "degraded_performance"},
+                         {"status": "degraded_performance"}, {"status": "major_outage"},
+                         {"status": "operational"})
+        self.assertEqual([lv for lv, _ in got], ["notice", "warning", "notice"])
+        self.assertEqual(got[0][1], "operational → degraded performance")
+        self.assertEqual(got[1][1], "degraded performance → major outage")
+        self.assertIn("back to operational after", got[2][1])
+
+    def test_a_service_found_down_at_start_is_news_and_one_found_fine_is_not(self):
+        self.assertEqual(self.lines(self.claude(), {"status": "partial_outage"}),
+                         [("warning", "operational → partial outage")])
+
+    def test_the_fallback_to_names_is_said_once_with_its_reason_and_so_is_the_return(self):
+        f = server.ChatGptStatusFetcher(threading.Event())
+        f.note = "URLError"
+        got = self.lines(f, {"status": "operational", "via": "group"},        # fine: nothing to say
+                         {"status": "operational", "via": "names"},
+                         {"status": "operational", "via": "names"},
+                         {"status": "operational", "via": "group"}, tag="chatgpt status")
+        self.assertEqual([lv for lv, _ in got], ["warning", "notice"])
+        self.assertIn("fixed list of names", got[0][1])
+        self.assertIn("(URLError)", got[0][1])
+        self.assertIn("page's own group", got[1][1])
+
+    def test_starting_on_the_names_is_a_warning(self):
+        f = server.ChatGptStatusFetcher(threading.Event())
+        got = self.lines(f, {"status": "operational", "via": "names"}, tag="chatgpt status")
+        self.assertEqual([lv for lv, _ in got], ["warning"])
 
 
 class SyslogSettings(unittest.TestCase):

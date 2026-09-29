@@ -365,6 +365,11 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Check now says how ChatGPT's components were chosen.** "ChatGPT operational
+  (from the page's own group)" when OpenAI's layout was used, or "(from the
+  fixed list of names: the page's grouping was not usable)" when it fell back,
+  in which case the API's Login counts too. Claude and Gemini count everything
+  there is, so they say nothing.
 - **ChatGPT means exactly what OpenAI's page calls ChatGPT.** Its summary is
   a flat list in which two components are both named "Login" and new ones
   appear over time, so picking ChatGPT's parts by name was wrong twice: it

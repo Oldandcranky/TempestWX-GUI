@@ -160,10 +160,20 @@ record that improves when the NAS restarts is worse than none.
 
 It writes through `History._write_json`, so a failed save lands in
 `_save_errors` and reaches the banner and `/healthz` like the daily record's;
-a file that will not parse is set aside and never treated as empty. Its
-history starts the day it was first deployed and cannot be filled in from
-here. The unit tests are `ReliabilityRecord`; the page has a section of its
-own in `tests/viewports.js`, fed a fixture written there.
+a file that will not parse is set aside and never treated as empty.
+
+The days before the live record began are filled once per service from the
+provider's own incident list (`parse_history`, `AiHistory.backfill`, driven by
+`Dashboard._backfill_ai`). Three rules keep that honest. Only days before the
+first live day are written, and they are **set, not added to**, so it can be
+redone. Days before the list's own earliest incident are left alone: a day with
+no incident on a list that does not reach it proves nothing. And a list that
+cannot say whose incidents they were is **refused, never read as clean**;
+that is the difference between an empty history and a false one. The formats
+were only seen for Google's feed; Claude's and OpenAI's are Statuspage's
+documented shape, so a failure shows as `<service> history unavailable` in the
+log. The unit tests are `ReliabilityRecord` and `ServiceHistory`; the page has
+a section of its own in `tests/viewports.js`, fed a fixture written there.
 
 ## Tests
 

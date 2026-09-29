@@ -1282,6 +1282,232 @@ class ReliabilityRecord(unittest.TestCase):
         self.assertEqual(server.GeminiStatusFetcher.parse([])["parts"], [])
 
 
+class ServiceHistory(unittest.TestCase):
+    """Filling the days before the live record from each service's own list of
+    past incidents."""
+
+    T0 = ReliabilityRecord.T0                      # noon on a day, local
+    DAY = 86400
+
+    def at(self, days_ago, hour):
+        base = datetime.datetime.fromtimestamp(self.T0).replace(hour=0, minute=0, second=0, microsecond=0)
+        return (base - datetime.timedelta(days=days_ago) + datetime.timedelta(hours=hour)).timestamp()
+
+    @staticmethod
+    def iso(t):
+        return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.123Z")
+
+    def incident(self, t0, t1, impact="minor", comps=(("c1", "claude.ai"),), worst=None, name="x"):
+        updates = [{"affected_components": [{"code": c, "name": n, "old_status": "operational", "new_status": worst}
+                                            for c, n in comps]}] if worst else []
+        return {"id": name, "name": name, "impact": impact, "started_at": self.iso(t0),
+                "created_at": self.iso(t0), "resolved_at": None if t1 is None else self.iso(t1),
+                "components": [{"id": c, "name": n} for c, n in comps], "incident_updates": updates}
+
+    # ── the parsers ──
+    def test_a_time_with_a_z_and_milliseconds_is_read(self):
+        self.assertEqual(server._iso_epoch("2026-09-29T17:28:07.123Z"), server._iso_epoch("2026-09-29T17:28:07+00:00"))
+        self.assertEqual(server._iso_epoch("2026-09-29T12:28:07-05:00"), server._iso_epoch("2026-09-29T17:28:07Z"))
+        self.assertIsNone(server._iso_epoch("soon"))
+        self.assertIsNone(server._iso_epoch(None))
+
+    def test_statuspage_incidents_become_events_at_their_worst_state(self):
+        raw = {"incidents": [
+            self.incident(self.at(9, 10), self.at(9, 11.5), impact="minor", worst="partial_outage", name="a"),
+            self.incident(self.at(7, 10), self.at(7, 12), impact="minor", name="b"),            # no component states: the impact
+            self.incident(self.at(5, 10), self.at(5, 11), impact="none", name="notice"),          # a notice, not a fault
+            self.incident(self.at(2, 10), None, impact="major", name="open"),                    # the live record's
+            self.incident(self.at(20, 10), self.at(20, 11), impact="critical", name="old", worst="major_outage")]}
+        events, covered = server.ClaudeStatusFetcher.parse_history(raw)
+        self.assertEqual([(round(e["start"]), e["worst"]) for e in events],
+                         [(round(self.at(9, 10)), "partial_outage"), (round(self.at(7, 10)), "degraded_performance"),
+                          (round(self.at(20, 10)), "major_outage")])
+        self.assertEqual(events[0]["parts"], ["claude.ai"])
+        self.assertEqual(round(covered), round(self.at(20, 10)))      # the oldest incident, skipped or not
+
+    def test_claude_counts_every_incident_on_its_page(self):
+        raw = {"incidents": [dict(self.incident(self.at(3, 1), self.at(3, 2), name="a"), components=[])]}
+        self.assertEqual(len(server.ClaudeStatusFetcher.parse_history(raw)[0]), 1)
+
+    def test_chatgpt_takes_only_the_incidents_on_its_own_components(self):
+        raw = {"incidents": [
+            self.incident(self.at(4, 1), self.at(4, 2), comps=(("chat-conv", "Conversations"),), worst="degraded_performance", name="mine"),
+            self.incident(self.at(3, 1), self.at(3, 2), comps=(("api-rt", "Realtime"),), worst="major_outage", name="api"),
+            self.incident(self.at(2, 1), self.at(2, 2), comps=(("api-login", "Login"), ("chat-login", "Login")), worst="partial_outage", name="both")]}
+        events, _ = server.ChatGptStatusFetcher.parse_history(raw, ids={"chat-conv", "chat-login"})
+        self.assertEqual([e["worst"] for e in events], ["degraded_performance", "partial_outage"])
+        by_name, _ = server.ChatGptStatusFetcher.parse_history(raw)            # no ids: the fixed names
+        self.assertEqual(len(by_name), 2)                                      # Realtime is not in them
+
+    def test_an_incident_list_that_says_nothing_of_components_is_refused_not_read_as_clean(self):
+        raw = {"incidents": [dict(self.incident(self.at(3, 1), self.at(3, 2)), components=[])]}
+        with self.assertRaises(ValueError):
+            server.ChatGptStatusFetcher.parse_history(raw)
+
+    def test_an_empty_or_undated_history_is_refused(self):
+        for raw in ({}, {"incidents": []}, {"incidents": [{"name": "x"}]}):
+            with self.assertRaises(ValueError):
+                server.ClaudeStatusFetcher.parse_history(raw)
+        for raw in ([], {"error": 1}):
+            with self.assertRaises(ValueError):
+                server.GeminiStatusFetcher.parse_history(raw)
+
+    def google(self, t0, t1, product="npdyhgECDJ6tB66MxXyo", status="AVAILABLE", impact="SERVICE_INFORMATION"):
+        stamp = lambda t: datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        return {"id": "i", "begin": stamp(t0), "end": None if t1 is None else stamp(t1),
+                "affected_products": [{"title": "t", "id": product}],
+                "most_recent_update": {"status": status}, "status_impact": impact}
+
+    def test_gemini_history_is_its_own_finished_incidents_across_the_whole_feed(self):
+        raw = [self.google(self.at(3, 1), self.at(3, 2), impact="SERVICE_OUTAGE"),
+               self.google(self.at(4, 1), self.at(4, 3), impact="SERVICE_DISRUPTION"),
+               self.google(self.at(5, 1), self.at(5, 2), product="gmail"),                       # another product
+               self.google(self.at(1, 1), None, status="SERVICE_DISRUPTION"),                    # still open: the live record's
+               self.google(self.at(40, 1), self.at(40, 2), product="gmail")]                     # sets how far back the feed reaches
+        events, covered = server.GeminiStatusFetcher.parse_history(raw)
+        self.assertEqual(sorted(e["worst"] for e in events), ["degraded_performance", "major_outage"])
+        self.assertEqual(round(covered), round(self.at(40, 1)))
+
+    # ── filling the record ──
+    def record(self):
+        rec, h, path = ReliabilityRecord().new()
+        rec.observe("claude", {"fetched_at": self.T0, "status": "operational", "parts": []})    # the live record begins
+        return rec, h, path
+
+    def ev(self, d0, h0, d1, h1, worst="degraded_performance"):
+        return {"start": self.at(d0, h0), "end": self.at(d1, h1), "worst": worst, "parts": []}
+
+    def day(self, rec, days_ago):
+        return rec.services["claude"]["days"].get(
+            datetime.datetime.fromtimestamp(self.at(days_ago, 12)).strftime("%Y-%m-%d"))
+
+    def test_the_days_before_the_live_record_are_filled_and_the_live_days_are_not(self):
+        rec, _, _ = self.record()
+        live = dict(rec.services["claude"]["days"])
+        self.assertTrue(rec.backfill("claude", [self.ev(9, 10, 9, 11.5, "major_outage")], self.at(12, 3)))
+        self.assertEqual(self.day(rec, 9)["out"], 5400.0)
+        self.assertEqual(self.day(rec, 9)["ok"] + 5400.0, server.AiHistory._day_seconds(
+            datetime.datetime.fromtimestamp(self.at(9, 12)).strftime("%Y-%m-%d")))
+        self.assertEqual(self.day(rec, 8), {"ok": server.AiHistory._day_seconds(
+            datetime.datetime.fromtimestamp(self.at(8, 12)).strftime("%Y-%m-%d")), "deg": 0.0, "out": 0.0})
+        self.assertIsNone(self.day(rec, 13))                                # before the list reaches
+        self.assertEqual({k: v for k, v in rec.services["claude"]["days"].items() if k in live}, live)  # today untouched
+        today = datetime.datetime.fromtimestamp(self.T0).strftime("%Y-%m-%d")
+        self.assertNotIn(today, {k for k in rec.services["claude"]["days"] if k not in live})   # nothing written on or after it
+
+    def test_doing_it_twice_changes_nothing(self):
+        rec, _, _ = self.record()
+        rec.backfill("claude", [self.ev(9, 10, 9, 12)], self.at(12, 3))
+        once = json.dumps(rec.services["claude"]["days"], sort_keys=True), len(rec.services["claude"]["events"])
+        rec.backfill("claude", [self.ev(9, 10, 9, 12)], self.at(12, 3))
+        self.assertEqual((json.dumps(rec.services["claude"]["days"], sort_keys=True),
+                          len(rec.services["claude"]["events"])), once)
+
+    def test_overlapping_incidents_count_once_and_the_worse_state_wins(self):
+        rec, _, _ = self.record()
+        rec.backfill("claude", [self.ev(9, 10, 9, 12), self.ev(9, 11, 9, 13, "major_outage")], self.at(12, 3))
+        self.assertEqual((self.day(rec, 9)["deg"], self.day(rec, 9)["out"]), (3600.0, 7200.0))
+
+    def test_an_incident_over_midnight_is_split_between_the_days(self):
+        rec, _, _ = self.record()
+        rec.backfill("claude", [self.ev(5, 23, 4, 1, "partial_outage")], self.at(12, 3))
+        self.assertEqual((self.day(rec, 5)["out"], self.day(rec, 4)["out"]), (3600.0, 3600.0))
+
+    def test_an_incident_running_into_the_live_days_is_cut_at_them_and_left_to_them(self):
+        rec, _, _ = self.record()
+        straddling = {"start": self.at(1, 23), "end": self.T0 + 3 * 3600, "worst": "degraded_performance", "parts": []}
+        rec.backfill("claude", [straddling], self.at(5, 3))
+        self.assertEqual(self.day(rec, 1)["deg"], 3600.0)                    # its part before today
+        self.assertEqual(rec.services["claude"]["events"], [])               # not listed: today's record has it
+        self.assertEqual(rec.services["claude"]["backfill"]["events"], 0)
+
+    def test_an_incident_early_on_the_first_live_day_is_not_listed_without_being_counted(self):
+        # History covers whole days. An incident on the first live day, before
+        # the live record began, would otherwise be listed while its time was
+        # in no day's total.
+        rec, _, _ = self.record()
+        early = {"start": self.at(0, 3), "end": self.at(0, 4), "worst": "major_outage", "parts": []}
+        rec.backfill("claude", [early], self.at(5, 3))
+        self.assertEqual(rec.services["claude"]["events"], [])
+        listed = sum(1 for e in rec.services["claude"]["events"])
+        counted = sum(d["out"] for d in rec.services["claude"]["days"].values())
+        self.assertEqual((listed, counted), (0, 0.0))
+
+    def test_past_events_are_listed_apart_from_the_live_ones_and_the_open_one_stays_last(self):
+        rec, _, _ = self.record()
+        rec.observe("claude", {"fetched_at": self.T0 + 120, "status": "degraded_performance", "parts": ["Login"]})
+        rec.backfill("claude", [self.ev(9, 10, 9, 12), self.ev(20, 1, 20, 2)], self.at(25, 3))
+        ev = rec.services["claude"]["events"]
+        self.assertEqual([e.get("src") for e in ev], ["history", "history", None])
+        self.assertEqual(ev[-1]["end"], None)
+        self.assertLess(ev[0]["start"], ev[1]["start"])
+        rec.observe("claude", {"fetched_at": self.T0 + 240, "status": "operational", "parts": []})   # and it can still close
+        self.assertEqual(rec.services["claude"]["events"][-1]["end"], self.T0 + 240)
+
+    def test_nothing_is_written_until_the_live_record_has_begun(self):
+        rec, _, path = ReliabilityRecord().new()
+        self.assertFalse(rec.backfill("claude", [self.ev(9, 10, 9, 12)], self.at(12, 3)))
+        self.assertEqual(rec.services, {})
+        self.assertFalse(os.path.exists(path))
+
+    def test_it_is_remembered_across_a_restart_and_reported(self):
+        rec, h, path = self.record()
+        self.assertFalse(rec.backfilled("claude"))
+        rec.backfill("claude", [self.ev(9, 10, 9, 12)], self.at(12, 3))
+        again = server.AiHistory(path, h)
+        self.assertTrue(again.backfilled("claude"))
+        got = again.report(now=self.T0, watching={"claude"})
+        first = datetime.datetime.fromtimestamp(self.at(12, 3)).date()
+        self.assertEqual(got["covered_from"], first.isoformat())
+        self.assertEqual(got["watched_days"], (datetime.datetime.fromtimestamp(self.T0).date() - first).days + 1)
+        self.assertEqual(got["services"]["claude"]["backfill"]["events"], 1)
+
+    def test_the_background_pass_fills_each_service_once_and_says_so(self):
+        rec, _, _ = self.record()
+        calls = []
+        class F:
+            def history(self_):
+                calls.append(1)
+                return [self.ev(9, 10, 9, 12)], self.at(12, 3)
+        d = server.Dashboard.__new__(server.Dashboard)
+        d.stop, d.ai, d.ai_history = threading.Event(), {"claude": F()}, rec
+        passes = []
+        d.stop.wait = lambda n: (passes.append(n), d.stop.set() if len(passes) > 1 else None)
+        core.LOG.lines.clear()
+        d._backfill_ai()
+        self.assertEqual(len(calls), 1)                                       # not asked again once it has it
+        self.assertTrue(rec.backfilled("claude"))
+        lines = [l["text"] for l in core.LOG.recent() if l["tag"] == "ai status"]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Claude history: 1 incident, back to", lines[0])
+
+    def test_a_history_that_cannot_be_read_is_said_once_and_retried_later_not_recorded_as_clean(self):
+        rec, _, _ = self.record()
+        class F:
+            def history(self_): raise ValueError("its incidents do not say which components they touched")
+        d = server.Dashboard.__new__(server.Dashboard)
+        d.stop, d.ai, d.ai_history = threading.Event(), {"claude": F()}, rec
+        passes = []
+        d.stop.wait = lambda n: (passes.append(n), d.stop.set() if len(passes) > 2 else None)
+        core.LOG.lines.clear()
+        d._backfill_ai()
+        self.assertFalse(rec.backfilled("claude"))
+        self.assertLessEqual(set(rec.services["claude"]["days"]),        # nothing invented for the days before
+                             {datetime.datetime.fromtimestamp(self.T0).strftime("%Y-%m-%d")})
+        lines = [(l["level"], l["text"]) for l in core.LOG.recent() if l["tag"] == "ai status"]
+        self.assertEqual(len(lines), 1)                                       # once, over three passes
+        self.assertEqual(lines[0][0], "warning")
+        self.assertIn("do not say which components", lines[0][1])
+
+    def test_a_service_that_is_switched_off_is_not_asked(self):
+        rec, _, _ = self.record()
+        d = server.Dashboard.__new__(server.Dashboard)
+        d.stop, d.ai, d.ai_history = threading.Event(), {}, rec
+        d.stop.wait = lambda n: d.stop.set()
+        d._backfill_ai()
+        self.assertFalse(rec.backfilled("claude"))
+
+
 class SyslogSettings(unittest.TestCase):
     def cfg(self):
         import tempfile

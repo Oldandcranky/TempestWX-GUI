@@ -709,6 +709,28 @@ class CheckNow(unittest.TestCase):
         self.assertIn("Gemini:", out["error"])
         self.assertNotIn("ChatGPT", out["error"])          # switched off, so not asked
 
+    def test_ai_status_says_how_each_services_components_were_chosen(self):
+        def F(name, result):
+            f = self.Fake(result)
+            f.NAME = name
+            return f
+        d = self.dash()
+        d.ai = {"claude": F("Claude", {"status": "operational", "via": None}),
+                "chatgpt": F("ChatGPT", {"status": "degraded_performance", "via": "group"})}
+        out = d.check("ai")
+        self.assertTrue(out["ok"])
+        self.assertIn("Claude operational ·", out["summary"])                # counts everything: nothing to say
+        self.assertIn("ChatGPT degraded performance (from the page's own group)", out["summary"])
+        d.ai["chatgpt"] = F("ChatGPT", {"status": "operational", "via": "names"})
+        self.assertIn("(from the fixed list of names", d.check("ai")["summary"])
+
+    def test_the_result_says_how_the_components_were_chosen(self):
+        raw = {"components": [comp("Conversations", id="chat-conv")]}
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw, ids={"chat-conv"})["via"], "group")
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw, ids={"nope"})["via"], "names")
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["via"], "names")
+        self.assertIsNone(server.ClaudeStatusFetcher.parse(raw)["via"])      # it counts everything
+
     def test_ai_status_with_everything_off_says_so(self):
         out = self.dash().check("ai")
         self.assertFalse(out["ok"])

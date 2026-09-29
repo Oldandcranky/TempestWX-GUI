@@ -536,14 +536,16 @@ class StatuspageFetcher(StatusFeed):
         # By id when the page's own grouping is to hand: names can repeat.
         # Otherwise, or if no id matched, by name.
         comps = [c for c in real if c.get("id") in ids] if ids else []
+        via = "group" if comps else None
         if not comps:
             comps = [c for c in real if cls.PARTS is None or c.get("name") in cls.PARTS]
+            via = None if cls.PARTS is None else "names"
         if not comps:
             # Not "operational": a renamed component must not read as fine.
             raise ValueError("none of its components were found")
         worst = max((c.get("status") or "operational" for c in comps),
                     key=lambda st: STATUS_RANK.get(st, 2))
-        return {"fetched_at": time.time() if now is None else now, "status": worst}
+        return {"fetched_at": time.time() if now is None else now, "status": worst, "via": via}
 
 
 class ClaudeStatusFetcher(StatuspageFetcher):
@@ -621,6 +623,10 @@ class GeminiStatusFetcher(StatusFeed):
                 worst = level
         return {"fetched_at": time.time() if now is None else now, "status": worst}
 
+
+# How a service's components were chosen, for Check now to say.
+VIA_WORDS = {"group": "the page's own group",
+             "names": "the fixed list of names: the page's grouping was not usable"}
 
 AI_SERVICES = {"claude": ClaudeStatusFetcher, "chatgpt": ChatGptStatusFetcher,
                "gemini": GeminiStatusFetcher}
@@ -2442,7 +2448,9 @@ class Dashboard:
                         continue
                     with f.lock:
                         f.store(fresh); f.error = ""
-                    parts.append("%s %s" % (f.NAME, fresh["status"].replace("_", " ")))
+                    via = VIA_WORDS.get(fresh.get("via"))
+                    parts.append("%s %s%s" % (f.NAME, fresh["status"].replace("_", " "),
+                                             " (from %s)" % via if via else ""))
                 out["ok"] = bool(parts) and not failed
                 out["summary"] = " · ".join(parts)
                 if failed:

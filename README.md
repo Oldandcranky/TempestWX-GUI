@@ -254,6 +254,10 @@ access token and it fills in your station's real record — daily rainfall,
 daily highs and lows, and each day's peak gust, pressure range, strike count
 and sunshine — back to the day the station was installed.
 
+**Anthropic, OpenAI and Google's status pages**, for the AI status card.
+Public, no key and no account: `status.claude.com`, `status.openai.com`, and
+Google's Workspace status dashboard, polled every two minutes.
+
 ### Endpoints
 
 | Path | Returns |
@@ -361,6 +365,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The Claude card is now an AI status card: Claude, ChatGPT and Gemini.**
+  One line each, with the word in green, amber or red. It replaces the
+  per-component list, so the tick-boxes in settings are gone. ChatGPT is
+  OpenAI's ChatGPT components only, picked out by name because its page lists
+  them flat beside the API and Codex; if OpenAI renames them the line says
+  none were found rather than showing green. Gemini is the Gemini app, read
+  from Google's Workspace status feed, where it is fine unless an incident on
+  it is still open. Each service is fetched on its own, so one page being
+  unreachable greys only its own line. The card keeps its old id, so a saved
+  layout still finds it.
 - **Shorter names on the Claude card.** Statuspage names two components with
   their address in brackets ("Claude API (api.anthropic.com)"), which ran into
   the status word and was cut off. The bracket is dropped where the status is

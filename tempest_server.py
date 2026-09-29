@@ -481,18 +481,18 @@ class AirQualityFetcher(PollingFetcher):
 
 
 
-class ClaudeStatusFetcher(PollingFetcher):
-    """Whether Claude is up, from Anthropic's public status page.
+# Statuspage's component states, mildest first. Anything a page invents later
+# ranks as a minor problem rather than as fine.
+STATUS_RANK = {"operational": 0, "under_maintenance": 1, "degraded_performance": 2,
+               "partial_outage": 3, "major_outage": 4}
 
-    It is a Statuspage site, which serves its summary as keyless JSON. That is
-    polled rather than subscribed to: a webhook would need the status page to
-    reach this server, and this one lives on a LAN address.
-    """
 
-    ENDPOINT = "https://status.claude.com/api/v2/summary.json"
+class StatusFeed(PollingFetcher):
+    """A public status page read as JSON, and turned by `parse` into a word."""
+
     REFRESH = 120
     RETRY = 60
-    LABEL = "Claude status"
+    ENDPOINT = ""
 
     def fetch_once(self):
         req = urllib.request.Request(
@@ -501,50 +501,103 @@ class ClaudeStatusFetcher(PollingFetcher):
         with urllib.request.urlopen(req, timeout=20) as r:
             return self.parse(json.loads(r.read().decode("utf-8")))
 
-    @staticmethod
-    def parse(raw, now=None):
-        # Component groups are headings, not things that can be down.
-        # "Claude API (api.anthropic.com)" is too long for a card row; the
-        # bracket is the address, and the name says which one it is.
-        short = lambda n: re.sub(r"\s*\([^)]*\)\s*$", "", n) or n
-        comps = [{"id": c["id"], "name": short(c.get("name") or ""),
-                  "status": c.get("status") or "operational"}
-                 for c in raw.get("components") or [] if not c.get("group")]
-        incidents = [{"name": i.get("name") or "", "impact": i.get("impact") or "",
-                      "status": i.get("status") or "",
-                      "components": [c.get("id") for c in i.get("components") or []]}
-                     for i in raw.get("incidents") or []]
-        return {"fetched_at": time.time() if now is None else now,
-                "components": comps, "incidents": incidents}
+    def describe(self, exc):
+        if isinstance(exc, ValueError):
+            return "%s: %s" % (self.LABEL, exc)
+        return PollingFetcher.describe(self, exc)
 
 
-# Statuspage's component states, mildest first. Anything it invents later
-# ranks as a minor problem rather than as fine.
-CLAUDE_RANK = {"operational": 0, "under_maintenance": 1, "degraded_performance": 2,
-               "partial_outage": 3, "major_outage": 4}
+class StatuspageFetcher(StatusFeed):
+    """Whether one AI service is up, from its public status page.
 
+    Anthropic and OpenAI both serve Statuspage's keyless JSON. It is polled
+    rather than subscribed to: a webhook would need the status page to reach
+    this server, and this one lives on a LAN address.
 
-def claude_view(snap, picked):
-    """Narrow a Claude status snapshot to the components the reader chose.
-
-    Done when the snapshot is taken, not when it is fetched, because the
-    choice is changed on the settings page without a refetch. Nothing chosen
-    means everything; so does a choice naming only components that no longer
-    exist, which would otherwise report every one of them as fine.
+    The result is one word, the worst state among the components that count,
+    and the title of an open incident when there is one.
     """
-    if not snap.get("available"):
-        return snap
-    picked = set(picked or ())
-    if not picked & {c["id"] for c in snap["components"]}:
-        picked = set()
-    comps = [dict(c, shown=not picked or c["id"] in picked)
-             for c in snap["components"]]
-    snap["components"] = comps
-    snap["worst"] = max((c["status"] for c in comps if c["shown"]),
-                        key=lambda s: CLAUDE_RANK.get(s, 2), default="operational")
-    snap["incidents"] = [i for i in snap["incidents"]
-                         if not picked or picked & set(i["components"])]
-    return snap
+
+    PARTS = None          # the names of the components that count; None is all
+
+    @classmethod
+    def parse(cls, raw, now=None):
+        # Component groups are headings, not things that can be down.
+        comps = [c for c in raw.get("components") or []
+                 if not c.get("group") and (cls.PARTS is None or c.get("name") in cls.PARTS)]
+        if not comps:
+            # Not "operational": a renamed component must not read as fine.
+            raise ValueError("none of its components were found")
+        worst = max((c.get("status") or "operational" for c in comps),
+                    key=lambda st: STATUS_RANK.get(st, 2))
+        ids = {c.get("id") for c in comps}
+        incident = ""
+        if worst != "operational":
+            for i in raw.get("incidents") or []:
+                on = {c.get("id") for c in i.get("components") or []}
+                if not on or on & ids:
+                    incident = i.get("name") or ""
+                    break
+        return {"fetched_at": time.time() if now is None else now,
+                "status": worst, "incident": incident}
+
+
+class ClaudeStatusFetcher(StatuspageFetcher):
+    ENDPOINT = "https://status.claude.com/api/v2/summary.json"
+    LABEL = "Claude status"
+
+
+class ChatGptStatusFetcher(StatuspageFetcher):
+    """OpenAI's page mixes ChatGPT with its API and with Codex, and lists them
+    flat, so ChatGPT's parts are picked out by name. If it renames them this
+    fails loudly, as "none of its components were found", rather than going
+    green."""
+
+    ENDPOINT = "https://status.openai.com/api/v2/summary.json"
+    LABEL = "ChatGPT status"
+    PARTS = frozenset({"Conversations", "Voice mode", "GPTs", "Image Generation",
+                       "File uploads", "Connectors/Apps", "Search", "Agent",
+                       "Deep Research", "ChatGPT Atlas", "Login"})
+
+
+class GeminiStatusFetcher(StatusFeed):
+    """The Gemini app, from Google's Workspace status dashboard.
+
+    That feed is a list of incidents, each naming the products it touches.
+    There is no standing "operational": Gemini is fine unless an incident on
+    it is still open, and an incident is over once its latest update says
+    AVAILABLE. An outage is red; anything else still open, a disruption or
+    a notice, is amber.
+    """
+
+    ENDPOINT = "https://www.google.com/appsstatus/dashboard/incidents.json"
+    PRODUCT = "npdyhgECDJ6tB66MxXyo"
+    LABEL = "Gemini status"
+
+    @staticmethod
+    def headline(text):
+        """The summary line of an incident update, which begins "**Summary:**"."""
+        m = re.search(r"\*\*Summary:\*\*\s*(.+)", text or "")
+        return (m.group(1) if m else text or "").strip()[:140]
+
+    @classmethod
+    def parse(cls, raw, now=None):
+        if not isinstance(raw, list):
+            raise ValueError("unexpected response")
+        worst, incident = "operational", ""
+        for i in raw:
+            if not any(p.get("id") == cls.PRODUCT for p in i.get("affected_products") or []):
+                continue
+            last = i.get("most_recent_update") or {}
+            if last.get("status") == "AVAILABLE":
+                continue
+            level = "major_outage" if last.get("status") == "SERVICE_OUTAGE" \
+                else "degraded_performance"
+            if STATUS_RANK[level] > STATUS_RANK[worst]:
+                worst = level
+                incident = cls.headline(last.get("text") or i.get("external_desc"))
+        return {"fetched_at": time.time() if now is None else now,
+                "status": worst, "incident": incident}
 
 
 class PollenFetcher(PollingFetcher):
@@ -1737,7 +1790,6 @@ class Config:
         self.token = defaults.get("token") or ""
         self.pollen_key = defaults.get("pollen_key") or ""
         self.speedtest_token = defaults.get("speedtest_token") or ""
-        self.claude_components = []       # ids; empty means every component
         self.syslog = {"enabled": False, "host": "127.0.0.1", "port": 514,
                        "proto": "udp", "obs": False}
         self.load()
@@ -1759,8 +1811,6 @@ class Config:
             if isinstance(saved.get("speedtest_token"), str) \
                     and saved["speedtest_token"]:
                 self.speedtest_token = saved["speedtest_token"]
-            if isinstance(saved.get("claude_components"), list):
-                self.claude_components = self.clean_ids(saved["claude_components"])
             got = saved.get("syslog")
             if isinstance(got, dict):
                 self.syslog.update(self.clean_syslog(got, self.syslog))
@@ -1772,7 +1822,6 @@ class Config:
                 json.dump({"slots": self.slots, "token": self.token,
                            "pollen_key": self.pollen_key,
                            "speedtest_token": self.speedtest_token,
-                           "claude_components": self.claude_components,
                            "syslog": self.syslog},
                           f, indent=2)
             os.chmod(tmp, 0o600)          # it holds a token
@@ -1792,14 +1841,6 @@ class Config:
                     out.append(name)
         return out[:cls.MAX_SLOTS]
 
-    @staticmethod
-    def clean_ids(raw):
-        out = []
-        for x in raw:
-            if isinstance(x, str) and 0 < len(x) <= 64 and x not in out:
-                out.append(x)
-        return out[:50]
-
     def public(self):
         """Everything a browser may see — note the token itself is absent."""
         with self.lock:
@@ -1808,7 +1849,6 @@ class Config:
                     "token_set": bool(self.token),
                     "pollen_key_set": bool(self.pollen_key),
                     "speedtest_token_set": bool(self.speedtest_token),
-                    "claude_components": list(self.claude_components),
                     "syslog": dict(self.syslog)}
 
     @staticmethod
@@ -1871,13 +1911,6 @@ class Config:
                         changed.append(label + "_set")
                 else:
                     return [], "key must be text"
-            if "claude_components" in patch:
-                if not isinstance(patch["claude_components"], list):
-                    return [], "claude_components must be a list"
-                ids = self.clean_ids(patch["claude_components"])
-                if ids != self.claude_components:
-                    self.claude_components = ids
-                    changed.append("claude_components")
             if "syslog" in patch:
                 if not isinstance(patch["syslog"], dict):
                     return [], "syslog must be an object"
@@ -1961,7 +1994,10 @@ class Dashboard:
         self.start_speedtest()
 
         self.claude = ClaudeStatusFetcher(self.stop)
-        self.claude.start()
+        self.chatgpt = ChatGptStatusFetcher(self.stop)
+        self.gemini = GeminiStatusFetcher(self.stop)
+        for f in (self.claude, self.chatgpt, self.gemini):
+            f.start()
 
         self.apply_syslog()
 
@@ -2189,8 +2225,9 @@ class Dashboard:
         # Where the tracker's own page lives, so the card can offer a way in.
         # It is a LAN address and no secret; the token stays server-side.
         snap["internet"]["url"] = self.args.speedtest_url or ""
-        snap["claude"] = claude_view(self.claude.snapshot(),
-                                     self.config.claude_components)
+        snap["ai_status"] = {"claude": self.claude.snapshot(),
+                             "chatgpt": self.chatgpt.snapshot(),
+                             "gemini": self.gemini.snapshot()}
         snap["nws"] = (self.nws.snapshot() if self.nws
                        else {"available": False, "error": ""})
         snap["precip_obs"] = (self.observations.snapshot() if self.observations
@@ -2274,7 +2311,7 @@ class Dashboard:
 
     # ── Check now: one fetch, on demand, for the settings page ────────────
     CHECKABLE = ("hub", "wf", "forecast", "nws", "obs", "air", "pollen", "internet",
-                 "claude")
+                 "ai")
 
     def check(self, source):
         """Fetch one source right now and say what happened: whether it
@@ -2314,6 +2351,23 @@ class Dashboard:
                                       if device is not None else "")
                     if device is None:
                         out["error"] = "Token accepted, but no Tempest device on the account"
+            elif source == "ai":
+                parts, failed = [], False
+                for name, f in (("Claude", self.claude), ("ChatGPT", self.chatgpt),
+                                ("Gemini", self.gemini)):
+                    try:
+                        fresh = f.fetch_once()
+                    except Exception as e:
+                        failed = True
+                        parts.append("%s: %s" % (name, f.describe(e)))
+                        continue
+                    with f.lock:
+                        f.store(fresh); f.error = ""
+                    parts.append("%s %s" % (name, fresh["status"].replace("_", " ")))
+                out["ok"] = not failed
+                out["summary"] = " · ".join(parts)
+                if failed:
+                    out["error"] = out["summary"]
             elif source == "nws":
                 parts = []
                 for name, f in (("alerts", self.alerts), ("forecast text", self.nws)):
@@ -2335,7 +2389,7 @@ class Dashboard:
             else:
                 f = {"forecast": self.forecast, "obs": self.observations,
                      "air": self.air, "pollen": self.pollen,
-                     "internet": self.speedtest, "claude": self.claude}[source]
+                     "internet": self.speedtest}[source]
                 if f is None:
                     out["error"] = {"pollen": "No pollen key is saved",
                                     "internet": "No Speedtest token is saved"}.get(
@@ -2359,7 +2413,7 @@ class Dashboard:
     def _describer(self, source):
         f = {"forecast": self.forecast, "obs": self.observations, "air": self.air,
              "pollen": self.pollen, "internet": self.speedtest, "nws": self.nws,
-             "wf": self.backfill, "claude": self.claude}.get(source)
+             "wf": self.backfill}.get(source)
         return getattr(f, "describe", None)
 
     @staticmethod
@@ -2378,12 +2432,6 @@ class Dashboard:
         if source == "pollen":
             return "tree %s · grass %s · weed %s" % (
                 fresh.get("tree"), fresh.get("grass"), fresh.get("weed"))
-        if source == "claude":
-            bad = [c["name"] for c in fresh.get("components") or []
-                   if c["status"] != "operational"]
-            return "%d components; %s" % (
-                len(fresh.get("components") or []),
-                ", ".join(bad) + " not operational" if bad else "all operational")
         if source == "internet":
             return "%d tests in the window; latest %s Mbps down, %s" % (
                 fresh.get("tests") or 0,

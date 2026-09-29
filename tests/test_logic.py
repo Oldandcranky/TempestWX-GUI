@@ -663,7 +663,7 @@ class CheckNow(unittest.TestCase):
         d.args = Args()
         d.state = core.StationState(history=blank_history())
         for name in ("forecast", "observations", "air", "pollen", "speedtest",
-                     "nws", "alerts", "backfill", "claude"):
+                     "nws", "alerts", "backfill", "claude", "chatgpt", "gemini"):
             setattr(d, name, fetchers.get(name))
         return d
 
@@ -694,13 +694,16 @@ class CheckNow(unittest.TestCase):
         self.assertIn("HTTP 503", out["error"])
         self.assertIsNone(f.stored)
 
-    def test_claude_status_says_what_is_not_operational(self):
+    def test_ai_status_reads_all_three_and_names_the_ones_that_fail(self):
         class F(self.Fake):
             LABEL = "Claude status"
-        f = F({"components": [{"id": "a", "name": "claude.ai", "status": "operational"},
-                              {"id": "b", "name": "Claude API", "status": "major_outage"}]})
-        out = self.dash(claude=f).check("claude")
-        self.assertEqual(out["summary"], "2 components; Claude API not operational")
+        good = F({"status": "major_outage"})
+        bad = F(exc=ValueError("none of its components were found"))
+        out = self.dash(claude=good, chatgpt=F({"status": "operational"}), gemini=bad).check("ai")
+        self.assertFalse(out["ok"])
+        self.assertIn("Claude major outage", out["error"])
+        self.assertIn("ChatGPT operational", out["error"])
+        self.assertIn("Gemini:", out["error"])
 
     def test_a_source_that_is_off_says_so(self):
         out = self.dash().check("pollen")
@@ -823,69 +826,79 @@ class AlertLogLines(unittest.TestCase):
                          [("critical", "Tornado Warning (Ext"), ("notice", "Tornado Warning ende")])
 
 
-SUMMARY = {
-    "components": [
-        {"id": "g1", "name": "Group", "status": "operational", "group": True},
-        {"id": "a", "name": "claude.ai", "status": "operational", "group": False},
-        {"id": "b", "name": "Claude API", "status": "partial_outage", "group": False},
-        {"id": "c", "name": "Claude Code", "status": "operational", "group": False},
-    ],
-    "incidents": [{"name": "Elevated errors on the API", "impact": "minor",
-                   "status": "investigating", "components": [{"id": "b"}]}],
-}
+def comp(name, status="operational", id=None):
+    return {"id": id or name, "name": name, "status": status}
 
 
-class ClaudeStatus(unittest.TestCase):
-    def view(self, picked, raw=SUMMARY):
-        snap = dict(server.ClaudeStatusFetcher.parse(raw, now=1.0), available=True)
-        return server.claude_view(snap, picked)
+class StatusPages(unittest.TestCase):
+    """What the AI status card says. The shapes are those the pages really send."""
 
-    def test_groups_are_headings_not_components(self):
-        got = server.ClaudeStatusFetcher.parse(SUMMARY)
-        self.assertEqual([c["id"] for c in got["components"]], ["a", "b", "c"])
-        self.assertEqual(got["incidents"][0]["components"], ["b"])
+    def test_claude_is_the_worst_of_its_components(self):
+        raw = {"components": [comp("claude.ai"), comp("Claude API", "partial_outage"),
+                              {"id": "g", "name": "Group", "status": "operational", "group": True}],
+               "incidents": [{"name": "Elevated errors", "components": [{"id": "Claude API"}]}]}
+        got = server.ClaudeStatusFetcher.parse(raw, now=1.0)
+        self.assertEqual((got["status"], got["incident"]), ("partial_outage", "Elevated errors"))
 
-    def test_the_address_in_brackets_is_left_off_the_name(self):
-        raw = {"components": [
-            {"id": "a", "name": "Claude API (api.anthropic.com)", "status": "operational"},
-            {"id": "b", "name": "Claude Code", "status": "operational"},
-            {"id": "c", "name": "(only brackets)", "status": "operational"}]}
-        got = server.ClaudeStatusFetcher.parse(raw)["components"]
-        self.assertEqual([c["name"] for c in got],
-                         ["Claude API", "Claude Code", "(only brackets)"])
+    def test_all_operational_names_no_incident(self):
+        raw = {"components": [comp("a"), comp("b")],
+               "incidents": [{"name": "Old news", "components": []}]}
+        got = server.ClaudeStatusFetcher.parse(raw)
+        self.assertEqual((got["status"], got["incident"]), ("operational", ""))
 
-    def test_nothing_chosen_reports_the_worst_of_all(self):
-        v = self.view([])
-        self.assertEqual(v["worst"], "partial_outage")
-        self.assertTrue(all(c["shown"] for c in v["components"]))
-        self.assertEqual(len(v["incidents"]), 1)
+    def test_an_incident_elsewhere_is_not_shown_on_this_row(self):
+        raw = {"components": [comp("Conversations", "degraded_performance"), comp("Images")],
+               "incidents": [{"name": "Images slow", "components": [{"id": "Images"}]},
+                             {"name": "Chats slow", "components": [{"id": "Conversations"}]}]}
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["incident"], "Chats slow")
 
-    def test_a_choice_ignores_what_it_leaves_out(self):
-        v = self.view(["a", "c"])
-        self.assertEqual(v["worst"], "operational")
-        self.assertEqual([c["id"] for c in v["components"] if c["shown"]], ["a", "c"])
-        self.assertEqual(v["incidents"], [])          # the incident is on b
+    def test_chatgpt_ignores_the_api_and_codex(self):
+        raw = {"components": [comp("Conversations"), comp("Realtime", "major_outage"),
+                              comp("Codex API", "major_outage"), comp("Ads Manager", "partial_outage")]}
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["status"], "operational")
 
-    def test_a_choice_naming_only_vanished_components_means_all(self):
-        # or every component would be reported fine, which is a lie
-        self.assertEqual(self.view(["gone"])["worst"], "partial_outage")
+    def test_chatgpt_counts_its_own_parts(self):
+        raw = {"components": [comp("Voice mode", "partial_outage"), comp("Realtime")]}
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["status"], "partial_outage")
+
+    def test_renamed_components_are_an_error_not_green(self):
+        with self.assertRaises(ValueError):
+            server.ChatGptStatusFetcher.parse({"components": [comp("Realtime")]})
+        f = server.ChatGptStatusFetcher(threading.Event())
+        self.assertIn("none of its components", f.describe(ValueError("none of its components were found")))
 
     def test_an_unknown_status_is_not_fine(self):
-        raw = {"components": [{"id": "a", "name": "x", "status": "on_fire"}]}
-        self.assertEqual(self.view([], raw)["worst"], "on_fire")
+        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("x", "on_fire")]})["status"], "on_fire")
 
-    def test_unavailable_passes_through(self):
-        snap = {"available": False, "error": "nope"}
-        self.assertEqual(server.claude_view(snap, ["a"]), snap)
+    def gemini(self, *incidents):
+        return server.GeminiStatusFetcher.parse(list(incidents), now=1.0)
 
-    def test_the_choice_is_saved_cleaned_and_public(self):
-        import tempfile
-        c = server.Config(os.path.join(tempfile.mkdtemp(), "c.json"), {})
-        self.assertEqual(c.apply({"claude_components": ["a", "a", "", 5, "b"]}),
-                         (["claude_components"], ""))
-        self.assertEqual(server.Config(c.path, {}).claude_components, ["a", "b"])
-        self.assertEqual(c.public()["claude_components"], ["a", "b"])
-        self.assertIn("list", c.apply({"claude_components": "a"})[1])
+    @staticmethod
+    def google(status, product="npdyhgECDJ6tB66MxXyo", text="**Summary:**\nErrors with Gemini.\n**Description:**\nx"):
+        return {"id": "i", "external_desc": text, "affected_products": [{"title": "t", "id": product}],
+                "most_recent_update": {"status": status, "text": text}}
+
+    def test_gemini_is_fine_when_every_incident_is_over(self):
+        got = self.gemini(self.google("AVAILABLE"))
+        self.assertEqual((got["status"], got["incident"]), ("operational", ""))
+
+    def test_an_open_outage_is_red_and_is_named(self):
+        got = self.gemini(self.google("SERVICE_OUTAGE"))
+        self.assertEqual((got["status"], got["incident"]), ("major_outage", "Errors with Gemini."))
+
+    def test_an_open_disruption_is_amber(self):
+        self.assertEqual(self.gemini(self.google("SERVICE_DISRUPTION"))["status"], "degraded_performance")
+
+    def test_the_worst_open_incident_wins(self):
+        got = self.gemini(self.google("SERVICE_DISRUPTION"), self.google("SERVICE_OUTAGE", text="**Summary:**\nDown."))
+        self.assertEqual((got["status"], got["incident"]), ("major_outage", "Down."))
+
+    def test_another_google_product_is_not_gemini(self):
+        self.assertEqual(self.gemini(self.google("SERVICE_OUTAGE", product="gmail"))["status"], "operational")
+
+    def test_a_feed_that_is_not_a_list_is_an_error(self):
+        with self.assertRaises(ValueError):
+            server.GeminiStatusFetcher.parse({"error": "nope"})
 
 
 class SyslogSettings(unittest.TestCase):

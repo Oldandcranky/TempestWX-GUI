@@ -663,7 +663,7 @@ class CheckNow(unittest.TestCase):
         d.args = Args()
         d.state = core.StationState(history=blank_history())
         for name in ("forecast", "observations", "air", "pollen", "speedtest",
-                     "nws", "alerts", "backfill"):
+                     "nws", "alerts", "backfill", "claude"):
             setattr(d, name, fetchers.get(name))
         return d
 
@@ -693,6 +693,14 @@ class CheckNow(unittest.TestCase):
         self.assertFalse(out["ok"])
         self.assertIn("HTTP 503", out["error"])
         self.assertIsNone(f.stored)
+
+    def test_claude_status_says_what_is_not_operational(self):
+        class F(self.Fake):
+            LABEL = "Claude status"
+        f = F({"components": [{"id": "a", "name": "claude.ai", "status": "operational"},
+                              {"id": "b", "name": "Claude API", "status": "major_outage"}]})
+        out = self.dash(claude=f).check("claude")
+        self.assertEqual(out["summary"], "2 components; Claude API not operational")
 
     def test_a_source_that_is_off_says_so(self):
         out = self.dash().check("pollen")
@@ -813,6 +821,62 @@ class AlertLogLines(unittest.TestCase):
         lines = [l for l in core.LOG.recent() if l["tag"] == "alert"]
         self.assertEqual([(l["level"], l["text"][:20]) for l in lines],
                          [("critical", "Tornado Warning (Ext"), ("notice", "Tornado Warning ende")])
+
+
+SUMMARY = {
+    "components": [
+        {"id": "g1", "name": "Group", "status": "operational", "group": True},
+        {"id": "a", "name": "claude.ai", "status": "operational", "group": False},
+        {"id": "b", "name": "Claude API", "status": "partial_outage", "group": False},
+        {"id": "c", "name": "Claude Code", "status": "operational", "group": False},
+    ],
+    "incidents": [{"name": "Elevated errors on the API", "impact": "minor",
+                   "status": "investigating", "components": [{"id": "b"}]}],
+}
+
+
+class ClaudeStatus(unittest.TestCase):
+    def view(self, picked, raw=SUMMARY):
+        snap = dict(server.ClaudeStatusFetcher.parse(raw, now=1.0), available=True)
+        return server.claude_view(snap, picked)
+
+    def test_groups_are_headings_not_components(self):
+        got = server.ClaudeStatusFetcher.parse(SUMMARY)
+        self.assertEqual([c["id"] for c in got["components"]], ["a", "b", "c"])
+        self.assertEqual(got["incidents"][0]["components"], ["b"])
+
+    def test_nothing_chosen_reports_the_worst_of_all(self):
+        v = self.view([])
+        self.assertEqual(v["worst"], "partial_outage")
+        self.assertTrue(all(c["shown"] for c in v["components"]))
+        self.assertEqual(len(v["incidents"]), 1)
+
+    def test_a_choice_ignores_what_it_leaves_out(self):
+        v = self.view(["a", "c"])
+        self.assertEqual(v["worst"], "operational")
+        self.assertEqual([c["id"] for c in v["components"] if c["shown"]], ["a", "c"])
+        self.assertEqual(v["incidents"], [])          # the incident is on b
+
+    def test_a_choice_naming_only_vanished_components_means_all(self):
+        # or every component would be reported fine, which is a lie
+        self.assertEqual(self.view(["gone"])["worst"], "partial_outage")
+
+    def test_an_unknown_status_is_not_fine(self):
+        raw = {"components": [{"id": "a", "name": "x", "status": "on_fire"}]}
+        self.assertEqual(self.view([], raw)["worst"], "on_fire")
+
+    def test_unavailable_passes_through(self):
+        snap = {"available": False, "error": "nope"}
+        self.assertEqual(server.claude_view(snap, ["a"]), snap)
+
+    def test_the_choice_is_saved_cleaned_and_public(self):
+        import tempfile
+        c = server.Config(os.path.join(tempfile.mkdtemp(), "c.json"), {})
+        self.assertEqual(c.apply({"claude_components": ["a", "a", "", 5, "b"]}),
+                         (["claude_components"], ""))
+        self.assertEqual(server.Config(c.path, {}).claude_components, ["a", "b"])
+        self.assertEqual(c.public()["claude_components"], ["a", "b"])
+        self.assertIn("list", c.apply({"claude_components": "a"})[1])
 
 
 class SyslogSettings(unittest.TestCase):

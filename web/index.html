@@ -164,6 +164,14 @@ body.tv{cursor:none}
   letter-spacing:.085em;text-transform:uppercase;color:var(--label);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+/* Claude's components, one to a line: the name, and how it is doing. */
+.row.clist{flex-direction:column;justify-content:center;gap:.25em}
+.clist .ln{display:flex;justify-content:space-between;gap:.8em;min-width:0}
+.clist .n{font-size:var(--fs-value-sm);font-weight:600;min-width:0;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clist .w{font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;
+          text-transform:uppercase;white-space:nowrap;align-self:center}
+.picks label{display:flex;align-items:center;gap:.6em;padding:.3em 0;cursor:pointer}
 .chip{
   display:inline-block;padding:.15em .6em;border-radius:5px;
   background:var(--inset);border:1px solid var(--inset-edge);
@@ -3172,6 +3180,58 @@ function buildHardware(s){
   return c;
 }
 
+/* Whether Claude is up, from Anthropic's status page. The word and colour are
+   the worst of the components chosen in settings. A status page that cannot
+   be reached is not Claude being down, and the card says which: it keeps its
+   last word and the dot and the last line go amber. */
+const CLAUDE_WORDS = {
+  operational:          ["Operational", "green"],
+  under_maintenance:    ["Maintenance", "accent"],
+  degraded_performance: ["Degraded", "accent"],
+  partial_outage:       ["Partial outage", "red"],
+  major_outage:         ["Major outage", "red"],
+};
+const claudeWord = (status) => CLAUDE_WORDS[status] ||
+  [String(status).replace(/_/g, " "), "accent"];
+
+function buildClaude(s){
+  const a = s.claude || {};
+  const {card:c, body:b} = card("claude","Claude","na","accent",srcHealth(s.claude));
+  // no weather glyph suits this either; an asterisk, drawn
+  const icon = c.querySelector(".card-head .wi");
+  if (icon) icon.outerHTML =
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" ' +
+    'style="color:var(--accent)"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9" ' +
+    'stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+  if (!a.available) {
+    b.appendChild(el("div","mid"));
+    b.appendChild(caption(a.error || "Claude status unavailable"));
+    b.appendChild(el("div","mid"));
+    return c;
+  }
+  const [word, tone] = claudeWord(a.worst);
+  const hero = el("div","hero");
+  hero.innerHTML = '<span class="v" style="color:var(--' + tone + ')">' + esc(word) + '</span>';
+  b.appendChild(hero);
+  const inc = a.incidents || [];
+  b.appendChild(caption(inc.length
+    ? inc[0].name + (inc.length > 1 ? " +" + (inc.length - 1) + " more" : "")
+    : "No incidents reported", tone));
+
+  const list = el("div", "row clist");
+  for (const cm of (a.components || []).filter(x => x.shown)) {
+    const [w, t] = claudeWord(cm.status);
+    const ln = el("div", "ln");
+    ln.append(el("span", "n", esc(cm.name)), el("span", "w " + t, esc(w)));
+    list.appendChild(ln);
+  }
+  b.appendChild(list);
+  b.appendChild(a.error
+    ? caption("Can't reach the status page · showing " + ago(s.now - a.fetched_at) + " ago", "accent")
+    : caption("status.claude.com", "faint"));
+  return c;
+}
+
 /* Internet health, from Speedtest Tracker. Speed is the headline because it
    is what people look for, but the wording underneath is driven by packet
    loss, jitter and latency under load — a line can test fast and still be
@@ -3452,7 +3512,7 @@ const CARD_BUILDERS = {
   rainfall: buildRainfall, astronomy: buildSky, forecast: buildForecast,
   lightning: buildLightning, radar: buildRadar, records: buildRecords,
   air: buildAirQuality, pollen: buildPollen, internet: buildInternet,
-  hardware: buildHardware,
+  hardware: buildHardware, claude: buildClaude,
   blank: buildBlank,
 };
 
@@ -3800,6 +3860,7 @@ const CARD_INFO = {
   pollen:      ["Pollen", "Tree, grass and weed, and what is in season", "pollen", "sprinkle", "green"],
   internet:    ["Internet", "Speed and line health from Speedtest Tracker", "internet", "\u21c5", "cold"],
   hardware:    ["Station", "Battery, firmware, signal and sensor faults", null, "\u25a3", "cyan"],
+  claude:      ["Claude", "Whether Claude is up, from Anthropic's status page", null, "\u2731", "accent"],
 };
 const cardTitle = (name) => (CARD_INFO[name] || [name])[0];
 
@@ -4150,6 +4211,9 @@ function sourceList(){
      note: 'Only needed for the Pollen card. No free keyless source covers North America. Enable ' +
        'the Pollen API in a <a href="https://console.cloud.google.com/" target="_blank" ' +
        'rel="noopener noreferrer">Google Cloud</a> project and paste the key here.'},
+    {id: "claude", name: "Claude status", state: fetched(s.claude, "status"), picker: true,
+     note: "Anthropic's public status page, status.claude.com. No key and no account. Tick the parts " +
+       "of Claude you use and the card reports only those; every part is reported until you choose."},
     {id: "internet", name: "Internet", secret: {
         field: "speedtest_token", isSet: !!(cfg && cfg.speedtest_token_set),
         placeholder: "Paste your Speedtest Tracker API token", savedText: "Saved. Fetching results."},
@@ -4181,11 +4245,48 @@ function sourcesPanel(panel){
     const inside = el("div", "inside");
     inside.appendChild(el("p", "note", src.note));
     if (src.secret) inside.appendChild(secretField(src.secret));
+    if (src.picker) inside.appendChild(claudePicker());
     inside.appendChild(checkNow(src.id));
     d.appendChild(inside);
     sheet.appendChild(d);
   }
   panel.appendChild(sheet);
+}
+
+/* Which of Claude's components the card reports. Saved as each box changes;
+   all ticked and none chosen are the same thing to the server, so all ticked
+   is stored as none. The last box cannot be cleared, as with the layout. */
+function claudePicker(){
+  const wrap = el("div", "picks");
+  const comps = ((last || {}).claude || {}).components || [];
+  if (!comps.length) {
+    wrap.appendChild(el("p", "note", "The parts of Claude are listed here once the first status arrives."));
+    return wrap;
+  }
+  const state = el("div", "state");
+  const boxes = [];
+  for (const cm of comps) {
+    const label = el("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !!cm.shown;
+    box.addEventListener("change", () => {
+      const ticked = boxes.filter(x => x.checked);
+      if (!ticked.length) {
+        box.checked = true;
+        state.className = "state bad"; state.textContent = "At least one stays ticked.";
+        return;
+      }
+      const ids = ticked.length === boxes.length ? [] : ticked.map(x => x.dataset.id);
+      saveConfig({claude_components: ids}, state);
+    });
+    box.dataset.id = cm.id;
+    boxes.push(box);
+    label.append(box, el("span", null, esc(cm.name)));
+    wrap.appendChild(label);
+  }
+  wrap.appendChild(state);
+  return wrap;
 }
 
 /* Check now: ask the server to fetch this source once, right now, and say

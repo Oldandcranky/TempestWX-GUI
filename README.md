@@ -361,6 +361,12 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The winter geometry test no longer fails on a bare Linux host.** Its
+  check that the outlook caption is not cut off on a full screen measures
+  text, and a host that falls back to DejaVu Sans renders capitals about 15%
+  wider than any font the display has, so it failed there and passed on the
+  Mac. That one check is now skipped, with a note in the output, when the page
+  was rendered in DejaVu Sans; everywhere else it runs as before.
 - **A Claude card: is it up?** Polls Anthropic's public status page
   (`status.claude.com`, Statuspage's keyless JSON) every two minutes and
   shows the worst state among the components you use, any open incident's

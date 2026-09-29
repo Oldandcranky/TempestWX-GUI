@@ -361,6 +361,11 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Shorter names on the Claude card.** Statuspage names two components with
+  their address in brackets ("Claude API (api.anthropic.com)"), which ran into
+  the status word and was cut off. The bracket is dropped where the status is
+  read, so the card, the settings tick-boxes and Check now agree. Component
+  ids are untouched, so saved choices still apply.
 - **The winter geometry test no longer fails on a bare Linux host.** Its
   check that the outlook caption is not cut off on a full screen measures
   text, and a host that falls back to DejaVu Sans renders capitals about 15%

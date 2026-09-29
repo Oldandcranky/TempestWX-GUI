@@ -14,6 +14,7 @@ converts units is left alone; it is one line and its own documentation.
 import datetime
 import os
 import sys
+import time
 import unittest
 import threading
 import json
@@ -1098,6 +1099,187 @@ class AiStatusLogLines(unittest.TestCase):
         f = server.ChatGptStatusFetcher(threading.Event())
         got = self.lines(f, {"status": "operational", "via": "names"}, tag="chatgpt status")
         self.assertEqual([lv for lv, _ in got], ["warning"])
+
+
+class ReliabilityRecord(unittest.TestCase):
+    """How often a service has been degraded or down, and the promises the
+    record makes: time not seen is not counted, and a file that will not parse
+    is never treated as empty."""
+
+    T0 = time.mktime((2026, 9, 29, 12, 0, 0, 0, 0, -1))      # noon, local
+    DAY = "2026-09-29"
+
+    def new(self, sub=""):
+        import tempfile
+        d = tempfile.mkdtemp()
+        h = core.History(os.path.join(d, "history.json"))
+        path = os.path.join(d, sub, server.AiHistory.FILE)
+        return server.AiHistory(path, h), h, path
+
+    @staticmethod
+    def see(rec, t, status, parts=(), key="claude"):
+        rec.observe(key, {"fetched_at": t, "status": status, "parts": list(parts)})
+
+    def test_time_counts_towards_what_the_earlier_sighting_said(self):
+        rec, _, _ = self.new()
+        for dt, st in ((0, "operational"), (120, "operational"), (240, "degraded_performance"),
+                       (360, "degraded_performance"), (480, "operational")):
+            self.see(rec, self.T0 + dt, st)
+        day = rec.services["claude"]["days"][self.DAY]
+        self.assertEqual((day["ok"], day["deg"], day["out"]), (240.0, 240.0, 0.0))
+
+    def test_an_outage_is_counted_apart_from_a_degradation(self):
+        rec, _, _ = self.new()
+        for dt, st in ((0, "operational"), (120, "partial_outage"), (240, "major_outage"),
+                       (360, "operational")):
+            self.see(rec, self.T0 + dt, st)
+        day = rec.services["claude"]["days"][self.DAY]
+        self.assertEqual((day["ok"], day["deg"], day["out"]), (120.0, 0.0, 240.0))
+
+    def test_time_is_split_at_local_midnight(self):
+        rec, _, _ = self.new()
+        before = time.mktime((2026, 9, 29, 23, 59, 0, 0, 0, -1))
+        self.see(rec, before, "operational")
+        self.see(rec, before + 120, "operational")
+        days = rec.services["claude"]["days"]
+        self.assertEqual((days["2026-09-29"]["ok"], days["2026-09-30"]["ok"]), (60.0, 60.0))
+
+    def test_a_silence_is_counted_as_nothing_and_flags_the_event_it_hides(self):
+        rec, _, _ = self.new()
+        self.see(rec, self.T0, "degraded_performance")            # first sighting: the start is unknown
+        self.see(rec, self.T0 + 3600, "operational")               # an hour of silence
+        self.assertEqual(rec.services["claude"]["days"], {})
+        ev = rec.services["claude"]["events"][0]
+        self.assertTrue(ev["approx_start"] and ev["approx_end"])
+
+    def test_a_seen_start_and_end_are_not_flagged(self):
+        rec, _, _ = self.new()
+        for dt, st in ((0, "operational"), (120, "degraded_performance"), (240, "operational")):
+            self.see(rec, self.T0 + dt, st)
+        ev = rec.services["claude"]["events"][0]
+        self.assertEqual((ev["start"], ev["end"]), (self.T0 + 120, self.T0 + 240))
+        self.assertFalse(ev["approx_start"] or ev["approx_end"])
+
+    def test_an_event_takes_the_worst_state_and_names_its_parts(self):
+        rec, _, _ = self.new()
+        self.see(rec, self.T0, "operational")
+        self.see(rec, self.T0 + 120, "degraded_performance", ["Voice mode"])
+        self.see(rec, self.T0 + 240, "major_outage", ["Login", "Voice mode"])
+        self.see(rec, self.T0 + 360, "degraded_performance", ["Search"])
+        ev = rec.services["claude"]["events"]
+        self.assertEqual(len(ev), 1)
+        self.assertEqual((ev[0]["worst"], ev[0]["end"]), ("major_outage", None))
+        self.assertEqual(ev[0]["parts"], ["Voice mode", "Login", "Search"])
+
+    def test_an_open_event_survives_a_restart_and_closes_afterwards(self):
+        rec, h, path = self.new()
+        self.see(rec, self.T0, "operational")
+        self.see(rec, self.T0 + 120, "degraded_performance", ["Login"])
+        again = server.AiHistory(path, h)                            # a deploy
+        self.assertIsNone(again.services["claude"]["events"][0]["end"])
+        self.see(again, self.T0 + 3600, "operational")
+        ev = again.services["claude"]["events"][0]
+        self.assertEqual(ev["end"], self.T0 + 3600)
+        self.assertTrue(ev["approx_end"])                            # the deploy hid when
+
+    def test_the_report_sums_the_windows_and_counts_incidents_by_kind(self):
+        rec, _, _ = self.new()
+        for dt, st in ((0, "operational"), (120, "degraded_performance"), (240, "operational"),
+                       (360, "major_outage"), (480, "operational")):
+            self.see(rec, self.T0 + dt, st)
+        got = rec.report(now=self.T0 + 600, watching={"claude"})
+        svc = got["services"]["claude"]
+        self.assertEqual(len(svc["days"]), 90)
+        self.assertEqual(svc["days"][-1]["date"], self.DAY)
+        w = svc["windows"]["7"]
+        self.assertEqual((w["ok"], w["deg"], w["out"], w["observed"]), (240.0, 120.0, 120.0, 480.0))
+        self.assertEqual((w["deg_events"], w["out_events"]), (1, 1))
+        self.assertEqual([i["worst"] for i in svc["incidents"]], ["major_outage", "degraded_performance"])
+        self.assertTrue(got["available"] and svc["watching"])
+        self.assertNotIn("chatgpt", got["services"])                # never seen, not watched
+
+    def test_a_window_only_counts_its_own_days(self):
+        rec, _, _ = self.new()
+        old = self.T0 - 20 * 86400
+        for dt, st in ((0, "operational"), (120, "degraded_performance"), (240, "operational")):
+            self.see(rec, old + dt, st)
+        svc = rec.report(now=self.T0)["services"]["claude"]
+        self.assertEqual(svc["windows"]["7"]["deg_events"], 0)
+        self.assertEqual(svc["windows"]["30"]["deg_events"], 1)
+        self.assertEqual(svc["windows"]["7"]["observed"], 0.0)
+        self.assertEqual(svc["windows"]["30"]["deg"], 120.0)
+
+    def test_nothing_recorded_yet_says_so(self):
+        rec, _, _ = self.new()
+        got = rec.report(now=self.T0)
+        self.assertFalse(got["available"])
+        self.assertIn("Nothing recorded", got["error"])
+
+    def test_a_file_that_will_not_parse_is_set_aside_not_treated_as_empty(self):
+        rec, h, path = self.new()
+        self.see(rec, self.T0, "degraded_performance")
+        with open(path, "w") as f:
+            f.write("{not json")
+        again = server.AiHistory(path, h)
+        self.assertEqual(again.services, {})
+        asides = [n for n in os.listdir(os.path.dirname(path)) if ".damaged-" in n]
+        self.assertEqual(len(asides), 1)
+        with open(os.path.join(os.path.dirname(path), asides[0])) as f:
+            self.assertEqual(f.read(), "{not json")               # the evidence is kept
+        self.assertTrue(any("damaged" in n for n in h.notices))
+        self.see(again, self.T0 + 5, "operational")
+        self.assertEqual(json.load(open(path))["services"]["claude"]["last"]["status"], "operational")
+
+    def test_a_record_of_the_wrong_shape_is_damaged_too(self):
+        rec, h, path = self.new()
+        with open(path, "w") as f:
+            json.dump({"services": {"claude": {"days": 5}}}, f)
+        again = server.AiHistory(path, h)
+        self.assertEqual(again.services, {})
+        self.assertTrue([n for n in os.listdir(os.path.dirname(path)) if ".damaged-" in n])
+
+    def test_a_file_that_cannot_be_moved_is_never_written_over(self):
+        rec, h, path = self.new()
+        with open(path, "w") as f:
+            f.write("{not json")
+        h._set_aside = lambda p: None
+        again = server.AiHistory(path, h)
+        self.assertTrue(again.locked)
+        self.see(again, self.T0, "degraded_performance")
+        with open(path) as f:
+            self.assertEqual(f.read(), "{not json")
+
+    def test_a_save_that_fails_is_kept_where_the_banner_reads_it(self):
+        rec, h, _ = self.new(sub="missing-directory")
+        self.see(rec, self.T0, "degraded_performance")                # a change: saved at once
+        self.assertIn(server.AiHistory.FILE, h._save_errors)
+
+    def test_a_quiet_stretch_is_saved_now_and_then_not_every_poll(self):
+        rec, h, path = self.new()
+        self.see(rec, self.T0, "operational")
+        self.assertTrue(os.path.exists(path))                         # the first sighting: when it began
+        os.remove(path)
+        self.see(rec, self.T0 + 120, "operational")
+        self.assertFalse(os.path.exists(path))                        # nothing changed, and only just saved
+        rec._saved = time.time() - rec.SAVE_EVERY - 1
+        self.see(rec, self.T0 + 240, "operational")
+        self.assertTrue(os.path.exists(path))                         # a quiet stretch, saved in due course
+
+    def test_a_record_that_cannot_be_kept_is_not_the_status_page_failing(self):
+        core.LOG.lines.clear()
+        def boom(fresh): raise RuntimeError("disk")
+        f = server.ClaudeStatusFetcher(threading.Event(), record=boom)
+        f.after_success({"status": "operational"})                    # must not raise
+        f.after_success({"status": "operational"})
+        lines = [l for l in core.LOG.recent() if l["tag"] == "claude status"]
+        self.assertEqual(len(lines), 1)                               # once, not every poll
+        self.assertIn("could not record", lines[0]["text"])
+
+    def test_a_reading_names_the_components_that_are_not_operational(self):
+        raw = {"components": [comp("Login"), comp("Search", "degraded_performance"),
+                              comp("Agent", "partial_outage")]}
+        self.assertEqual(server.ClaudeStatusFetcher.parse(raw)["parts"], ["Agent", "Search"])
+        self.assertEqual(server.GeminiStatusFetcher.parse([])["parts"], [])
 
 
 class SyslogSettings(unittest.TestCase):

@@ -1862,7 +1862,8 @@
   "radar",
   "lightning",
   "records",
-  "hardware"
+  "hardware",
+  "claude"
  ],
  "source_alive": true,
  "source_error": "",

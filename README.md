@@ -365,6 +365,21 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **AI reliability: how often each service has been degraded or down.**
+  Tapping the AI status card opens a page with, for Claude, ChatGPT and
+  Gemini: how it is doing now, the share of time it was fine over 7, 30 and
+  90 days, ninety days as a strip of coloured days, and the latest incidents
+  with how long they lasted and which components were involved. It records
+  what the dashboard saw of each status page, every two minutes, in
+  `data/ai_status_log.json`; it starts counting the day this is deployed. Time
+  it could not see, a deploy or an unreachable page, counts as nothing
+  rather than as up, and an incident whose start or end that hid is marked
+  "~". A share is rounded down, so a day with any time down is never 100%. It
+  is the status pages' account, which is late and leaves out short blips, not a
+  measurement of whether the services worked for you.
+- **The layout tests now include the AI status card.** The captured state's
+  card list did not have it, so the fourteen-card layouts were being measured
+  without it; they are measured with it now.
 - **The log follows the AI status services.** Each says when it changes
   state, like the alerts do: "operational → degraded performance" at notice,
   an outage at warning, and "back to operational after 12m", and nothing at

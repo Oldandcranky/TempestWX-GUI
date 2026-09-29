@@ -603,8 +603,8 @@ body.show-map #map{display:block}
 /* Alerts belong to the cards. On the outlook, the almanac, the Internet page
    or settings only an Extreme one — a tornado warning — stays, because being
    on another page is no reason not to be told that. */
-body:is(.show-outlook,.show-net,.show-almanac,.show-settings,.show-map) #alerts .alert:not(.sev-extreme){display:none}
-body:is(.show-outlook,.show-net,.show-almanac,.show-settings,.show-map) #alerts.show:not(.has-extreme){display:none}
+body:is(.show-outlook,.show-net,.show-almanac,.show-rel,.show-settings,.show-map) #alerts .alert:not(.sev-extreme){display:none}
+body:is(.show-outlook,.show-net,.show-almanac,.show-rel,.show-settings,.show-map) #alerts.show:not(.has-extreme){display:none}
 .alert{
   padding:.5em .9em;border-radius:var(--inset-radius);
   font-size:clamp(12px,1.05vw,17px);font-weight:600;
@@ -724,6 +724,47 @@ body.tv #netpage .tests .row a{display:none}
   /* Six columns will not fit a phone: the middle four carry the reading. */
   #netpage .tests .row{grid-template-columns:auto 1fr 1fr 1fr}
   #netpage .tests .row .drop,#netpage .tests .row a{display:none}
+}
+
+/* The AI reliability page: one card the size of the grid, like the Internet
+   page, and fetched when it is opened. Three services, each a name, how it is
+   doing now, its 7, 30 and 90 day figures, and ninety days as a strip; under
+   them the latest incidents. */
+#relpage{display:none;flex:1;min-height:0}
+body.show-rel #grid{display:none}
+body.show-rel #relpage{display:flex}
+#relpage .card{flex:1;min-width:0}
+#relpage .card-body{justify-content:space-evenly}
+.relsvc{display:flex;flex-direction:column;gap:clamp(2px,.8cqh,8px);flex:0 1 auto;min-height:0}
+.relsvc .ln{display:flex;justify-content:space-between;align-items:baseline;
+            gap:.2em .8em;flex-wrap:wrap}
+.relsvc .n{font-size:var(--fs-value);font-weight:700}
+.relsvc .w{font-size:var(--fs-value-sm);font-weight:700;letter-spacing:.06em;
+           text-transform:uppercase;margin-left:.7em}
+.relsvc .nums{font-size:var(--fs-label);color:var(--label);white-space:nowrap}
+.relsvc .nums span + span{margin-left:1.1em}
+.relsvc .nums b{color:var(--text);font-weight:700;font-variant-numeric:tabular-nums;margin-left:.3em}
+.relstrip{display:grid;grid-template-columns:repeat(90,1fr);gap:1px;
+          height:clamp(10px,3.6cqh,30px)}
+.relstrip i{background:var(--rule);border-radius:1px}
+.relstrip i.ok{background:var(--green)}
+.relstrip i.deg{background:var(--accent)}
+.relstrip i.out{background:var(--red)}
+#relpage .reltbl{flex:0 1 auto;min-height:0;overflow:hidden;display:flex;
+                 flex-direction:column;gap:2px;font-size:var(--fs-label)}
+#relpage .reltbl .inc{display:grid;grid-template-columns:auto auto auto auto 1fr;gap:.8em;
+                      align-items:baseline;padding:.15em .4em;border-radius:var(--inset-radius)}
+#relpage .reltbl .inc.head{color:var(--label);letter-spacing:.06em;text-transform:uppercase}
+#relpage .reltbl .inc span{white-space:nowrap}
+#relpage .reltbl .inc .what{overflow:hidden;text-overflow:ellipsis;color:var(--label);min-width:0}
+#relpage .reltbl .inc .w{font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+@media (max-width:720px){
+  #relpage{flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
+  body.show-rel #relpage{display:block}
+  #relpage .card{container-type:inline-size;min-height:100%;overflow:visible}
+  #relpage .card-body{justify-content:flex-start;gap:clamp(8px,1.6dvh,16px)}
+  #relpage .reltbl .inc{grid-template-columns:auto auto auto auto;gap:.5em}
+  #relpage .reltbl .inc .what{display:none}
 }
 
 #outlook{display:none;flex:1;min-height:0}
@@ -1215,6 +1256,7 @@ body.tv .sheet .linkbtn{display:inline-flex}
   <div id="outlook" aria-hidden="true"></div>
   <div id="netpage" aria-hidden="true"></div>
   <div id="almanac" aria-hidden="true"></div>
+  <div id="relpage" aria-hidden="true"></div>
   <footer>
     <span class="clockhold" id="clockHold" title="Hold for settings">
       <span class="clock" id="clock">--:--:--</span>
@@ -3199,18 +3241,22 @@ const statusWord = (status) => STATUS_WORDS[status] ||
   [String(status).replace(/_/g, " "), "accent"];
 const AI_SERVICES = [["claude", "Claude"], ["chatgpt", "ChatGPT"], ["gemini", "Gemini"]];
 
+/* No weather glyph suits the AI cards; an asterisk, drawn. */
+function aiIcon(c){
+  const icon = c.querySelector(".card-head .wi");
+  if (icon) icon.outerHTML =
+    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" ' +
+    'style="color:var(--accent)"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9" ' +
+    'stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+}
+
 function buildClaude(s){
   const ai = s.ai_status || {};
   const shown = AI_SERVICES.filter(([k]) => ai[k]);       // the ones not switched off
   const health = shown.map(([k]) => srcHealth(ai[k]));
   const {card:c, body:b} = card("claude","AI status","na","accent",
     !shown.length || health.includes("waiting") ? "waiting" : health.includes("stale") ? "stale" : "live");
-  // no weather glyph suits this; an asterisk, drawn
-  const icon = c.querySelector(".card-head .wi");
-  if (icon) icon.outerHTML =
-    '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" ' +
-    'style="color:var(--accent)"><path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9" ' +
-    'stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+  aiIcon(c);
   const list = el("div", "aistat");
   if (!shown.length) list.appendChild(caption("All switched off in settings"));
   for (const [key, name] of shown) {
@@ -5046,7 +5092,7 @@ function toggleNet(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-net", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac");
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac", "show-rel");
       renderNetPage();
       loadNetWeek();
     }
@@ -5398,12 +5444,152 @@ function toggleAlmanac(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-almanac", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-net");
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-net", "show-rel");
       renderAlmanac();
       loadAlmanac();
     }
     document.getElementById("almanac").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("almBtn").setAttribute("aria-pressed", on ? "true" : "false");
+  };
+  pageTurn(swap);
+}
+
+/* ── AI reliability ──────────────────────────────────────────────────────
+   How often each AI service has been degraded or down, as its own status page
+   said so. The server keeps the record and does the sums; this draws them.
+   Opened from the AI status card, like the Almanac from Records, and fetched
+   only then, since ninety days of rows is no use in the two-second snapshot. */
+let rel = null, relAt = 0, relBusy = false;
+const REL_MS = 60 * 1000;
+
+async function loadRel(force){
+  if (relBusy) return rel;
+  if (!force && rel && Date.now() - relAt < REL_MS) return rel;
+  relBusy = true;
+  try {
+    const r = await fetch("api/reliability", {cache: "no-store"});
+    rel = await r.json();
+    relAt = Date.now();
+  } catch (e) {
+    if (!rel) rel = {available: false, error: "Could not reach the dashboard server"};
+  } finally {
+    relBusy = false;
+  }
+  if (document.body.classList.contains("show-rel")) renderRelPage();
+  return rel;
+}
+
+/* A share of the time, rounded down: 99.96% is not 100%. */
+const relPct = (part, whole) => whole > 0
+  ? (Math.floor(part / whole * 1000) / 10).toFixed(1) + "%" : DASH;
+
+function relDay(row){
+  const seen = row.ok + row.deg + row.out;
+  const label = niceDay(row.date);
+  if (seen < 60) return ["", label + " · not watched"];
+  const bits = [];
+  if (row.out) bits.push(gap(row.out) + " down");
+  if (row.deg) bits.push(gap(row.deg) + " degraded");
+  return [row.out ? "out" : row.deg ? "deg" : "ok", label + " · " + (bits.join(" · ") || "no problems")];
+}
+
+function renderRelPage(){
+  const host = document.getElementById("relpage");
+  const r = rel || {};
+  const {card: c, body: b} = card("rel", "AI reliability", "na", "accent", "live");
+  aiIcon(c);
+  headAction(c, "Back to the cards", () => toggleRel(false));
+  if (!r.available) {
+    b.appendChild(el("div", "mid"));
+    b.appendChild(caption(r.error || "Loading…"));
+    b.appendChild(el("div", "mid"));
+    host.replaceChildren(c);
+    return;
+  }
+  const now = (last && last.now) || Date.now() / 1000;
+  const all = [];
+  for (const [key, name] of AI_SERVICES) {
+    const svc = (r.services || {})[key];
+    if (!svc) continue;
+    const box = el("div", "relsvc");
+    const cur = svc.watching && svc.status ? statusWord(svc.status) : ["Not watched", "muted"];
+    const ln = el("div", "ln");
+    const left = el("span");
+    left.append(el("span", "n", esc(name)), el("span", "w " + cur[1], esc(cur[0])));
+    const nums = el("span", "nums");
+    for (const w of ["7", "30", "90"]) {
+      const t = svc.windows[w];
+      const one = el("span", "", esc(w + "d"));
+      one.appendChild(el("b", "", esc(relPct(t.ok, t.observed))));
+      if (r.watched_days < Number(w)) one.title = "Only " + r.watched_days + " day" +
+        (r.watched_days === 1 ? "" : "s") + " watched so far";
+      nums.appendChild(one);
+    }
+    ln.append(left, nums);
+    box.appendChild(ln);
+    const strip = el("div", "relstrip");
+    for (const row of svc.days) {
+      const [cls, tip] = relDay(row);
+      const cell = document.createElement("i");
+      if (cls) cell.className = cls;
+      cell.title = tip;
+      strip.appendChild(cell);
+    }
+    box.appendChild(strip);
+    b.appendChild(box);
+    for (const i of svc.incidents) all.push(Object.assign({name}, i));
+  }
+
+  // The latest incidents across all three, newest first.
+  const tbl = el("div", "reltbl");
+  const head = el("div", "inc head");
+  head.innerHTML = '<span>When</span><span>Service</span><span>State</span><span>Lasted</span><span class="what">What</span>';
+  tbl.appendChild(head);
+  all.sort((x, y) => y.start - x.start);
+  for (const i of all.slice(0, 6)) {
+    const [word, tone] = statusWord(i.worst);
+    const row = el("div", "inc");
+    row.innerHTML =
+      '<span>' + esc((i.approx_start ? "~" : "") + dayClock(i.start)) + '</span>' +
+      '<span>' + esc(i.name) + '</span>' +
+      '<span class="w ' + tone + '">' + esc(word) + '</span>' +
+      '<span>' + esc(i.open ? "ongoing " + gap(now - i.start)
+                            : (i.approx_start || i.approx_end ? "~" : "") + gap(i.end - i.start)) + '</span>' +
+      '<span class="what" title="' + esc((i.parts || []).join(", ")) + '">' +
+        esc((i.parts || []).join(", ")) + '</span>';
+    tbl.appendChild(row);
+  }
+  if (!all.length)
+    tbl.appendChild(el("div", "inc", "<span>No incidents recorded yet</span>"));
+  b.appendChild(tbl);
+  b.appendChild(caption("Watched since " + shortDate(r.since) + " · as each status page reported it · " +
+    "time not seen is not counted", "faint wrap2"));
+  host.replaceChildren(c);
+  fitCards();
+}
+
+let leavingRel = false;
+
+function toggleRel(force, fromHistory){
+  const open = document.body.classList.contains("show-rel");
+  const on = force != null ? force : !open;
+  if (!fromHistory) {
+    const ours = !!(history.state && history.state.rel);
+    if (!on && ours) {
+      if (!leavingRel) { leavingRel = true; history.back(); }
+      return;                               // popstate does the closing
+    }
+    if (on && !ours) history.pushState({rel: true}, "");
+  }
+  if (on) outlookSince = Date.now();
+  const swap = () => {
+    document.body.classList.toggle("show-rel", on);
+    if (on) {
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac", "show-net");
+      renderRelPage();
+      loadRel(true);
+    }
+    document.getElementById("relpage").setAttribute("aria-hidden", on ? "false" : "true");
   };
   pageTurn(swap);
 }
@@ -5498,7 +5684,14 @@ function render(s){
       document.body.classList.contains("show-settings") ||
       document.body.classList.contains("show-net") ||
       document.body.classList.contains("show-almanac") ||
+      document.body.classList.contains("show-rel") ||
       document.body.classList.contains("show-outlook")) {
+    if (document.body.classList.contains("show-rel")) {
+      // The same walk home as the almanac's, and a fresh look once a minute.
+      if (document.body.classList.contains("tv") &&
+          Date.now() - outlookSince > OUTLOOK_IDLE_MS && !TESTALL) toggleRel(false);
+      else if (Date.now() - relAt > REL_MS) loadRel(true);
+    }
     if (document.body.classList.contains("show-almanac")) {
       // The same walk home as the outlook's, and a redraw once a minute: a
       // year of days does not change every two seconds, and is a lot of SVG
@@ -5833,7 +6026,7 @@ function toggleMap(force){
   const swap = () => {
     const on = force != null ? force : !document.body.classList.contains("show-map");
     document.body.classList.toggle("show-map", on);
-    if (on) document.body.classList.remove("show-outlook", "show-settings");
+    if (on) document.body.classList.remove("show-outlook", "show-settings", "show-rel");
     document.getElementById("map").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("mapBtn").setAttribute("aria-pressed", on ? "true" : "false");
     if (on) ensureMap();
@@ -5859,7 +6052,7 @@ function toggleSettings(force, fromHistory){
   }
   const swap = () => {
     document.body.classList.toggle("show-settings", on);
-    if (on) document.body.classList.remove("show-map", "show-outlook", "show-net", "show-almanac");
+    if (on) document.body.classList.remove("show-map", "show-outlook", "show-net", "show-almanac", "show-rel");
     document.getElementById("settings").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("setBtn").setAttribute("aria-pressed", on ? "true" : "false");
     if (on) { recordInfo = null; renderSettings(); }   // records move; ask again
@@ -5893,7 +6086,7 @@ function toggleOutlook(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-outlook", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings", "show-almanac");
+      document.body.classList.remove("show-map", "show-settings", "show-almanac", "show-rel");
       renderOutlook();
     }
     document.getElementById("outlook").setAttribute("aria-hidden", on ? "false" : "true");
@@ -5945,6 +6138,7 @@ window.addEventListener("popstate", () => {
   leavingOutlook = false;
   leavingNet = false;
   leavingAlmanac = false;
+  leavingRel = false;
   leavingSettings = false;
   const set = !!(history.state && history.state.settings);
   if (set !== document.body.classList.contains("show-settings")) {
@@ -5960,6 +6154,9 @@ window.addEventListener("popstate", () => {
   const net = !!(history.state && history.state.netpage);
   if (net !== document.body.classList.contains("show-net"))
     toggleNet(net, true);
+  const rp = !!(history.state && history.state.rel);
+  if (rp !== document.body.classList.contains("show-rel"))
+    toggleRel(rp, true);
 });
 
 /* The whole outlook is the way back, header included: nothing on it is
@@ -5988,6 +6185,16 @@ document.getElementById("grid").addEventListener("click", (e) => {
 });
 document.getElementById("almanac").addEventListener("click", () => {
   toggleAlmanac(false);
+});
+
+/* The AI status card opens the reliability page from a tap anywhere on it, and
+   the whole page is the way back. */
+document.getElementById("grid").addEventListener("click", (e) => {
+  if (!e.target.closest("#card-claude")) return;
+  toggleRel(true);
+});
+document.getElementById("relpage").addEventListener("click", () => {
+  toggleRel(false);
 });
 
 /* A tap is not a grab. Cards act on a tap anywhere now, and a card is also
@@ -6052,6 +6259,8 @@ document.addEventListener("keydown", (e) => {
     toggleAlmanac(false);
   if (e.key === "Escape" && document.body.classList.contains("show-net"))
     toggleNet(false);
+  if (e.key === "Escape" && document.body.classList.contains("show-rel"))
+    toggleRel(false);
   if (e.key === "Escape" && document.body.classList.contains("show-outlook"))
     toggleOutlook(false);
   if (e.key === "s") { if (!cfg) loadConfig().then(() => toggleSettings());
@@ -6080,6 +6289,7 @@ document.addEventListener("keydown", (e) => {
   // history entry survived the reload; put the outlook back to match it.
   if (history.state && history.state.outlook) toggleOutlook(true, true);
   if (history.state && history.state.netpage) toggleNet(true, true);
+  if (history.state && history.state.rel) toggleRel(true, true);
   loadPrefs(null);
   if (history.state && history.state.almanac) toggleAlmanac(true, true);
   if (history.state && history.state.settings) loadConfig().then(() => toggleSettings(true, true));

@@ -149,6 +149,22 @@ The almanac's date arithmetic lives in `History.almanac`, takes `today=`, and
 is unit-tested against made-up years. Keep it there rather than in the page.
 The page supplies only the normals and the reader's round numbers.
 
+## The AI status record
+
+`AiHistory` keeps `data/ai_status_log.json`: for each service, seconds seen
+operational, degraded and down per local day, and the incidents. It records
+what the fetchers saw, so **time not seen must never count as up**: past
+`GAP` between two sightings, a deploy or an unreachable page counts as
+nothing, and an incident that hid is flagged `approx_*`. Keep it that way; a
+record that improves when the NAS restarts is worse than none.
+
+It writes through `History._write_json`, so a failed save lands in
+`_save_errors` and reaches the banner and `/healthz` like the daily record's;
+a file that will not parse is set aside and never treated as empty. Its
+history starts the day it was first deployed and cannot be filled in from
+here. The unit tests are `ReliabilityRecord`; the page has a section of its
+own in `tests/viewports.js`, fed a fixture written there.
+
 ## Tests
 
 `tests/run.sh` — unit tests plus a headless-browser geometry pass. Run it

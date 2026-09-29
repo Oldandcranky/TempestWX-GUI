@@ -365,6 +365,9 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The AI status line in settings says how fresh it is.** "Working · fetched
+  2m 18s ago", like the other sources, using the oldest of the three readings
+  so it only reads fresh if every service is.
 - **ChatGPT's history is read from the status page's own data.** Its backfill
   was refused, correctly: OpenAI's incident list carries no components, so it
   cannot say which incidents were ChatGPT's and counting them all would blame

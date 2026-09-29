@@ -1067,6 +1067,7 @@ console.log = (...args) => {
         if (!/key rejected/.test(lines.pollen || '') || !/stale/.test(lines.pollen || ''))
           bad.push(at + ': a rejected pollen key reads "' + lines.pollen + '"');
         if (!/Working/.test(lines.air || '') || !/live/.test(lines.air || '')) bad.push(at + ': air quality reads "' + lines.air + '"');
+        if (!/Working · fetched .+ ago/.test(lines.ai || '') || !/live/.test(lines.ai || '')) bad.push(at + ': AI status reads "' + lines.ai + '"');
         if (!/Not set up/.test(lines.internet || '')) bad.push(at + ': an unset token reads "' + lines.internet + '"');
         if (/configured/i.test(Object.values(lines).join(' '))) bad.push(at + ': it still says "configured"');
         // A key with shortcut letters in it must not close the page or change the theme.

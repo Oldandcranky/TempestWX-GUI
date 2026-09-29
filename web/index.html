@@ -4210,7 +4210,9 @@ function aiState(ai){
   if (!on.length) return ["waiting", "All switched off"];
   const trouble = on.map(([k, name]) => [name, ai[k]])
                     .filter(([, p]) => !p.available || p.error);
-  if (!trouble.length) return ["live", "Working"];
+  // The oldest of the three: it reads fresh only if every one is.
+  if (!trouble.length)
+    return ["live", "Working \u00b7 fetched " + ago(last.now - Math.min(...on.map(([k]) => ai[k].fetched_at))) + " ago"];
   if (trouble.every(([, p]) => !p.error)) return ["waiting", "Waiting for the first status"];
   return ["stale", trouble.map(([name, p]) => name + ": " + (p.error || "waiting")).join(" · ")];
 }

@@ -365,6 +365,15 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The log follows the AI status services.** Each says when it changes
+  state, like the alerts do: "operational → degraded performance" at notice,
+  an outage at warning, and "back to operational after 12m", and nothing at
+  all while it stays fine; one found down at start is said, one found fine is
+  not. ChatGPT says when it falls back to its fixed list of names, with the
+  reason, and when it returns to the page's own group. Switching a service on
+  or off, or pointing it at another address, is logged too. A failing fetch
+  was already logged once, with its recovery, under "claude status",
+  "chatgpt status" and "gemini status".
 - **Check now says how ChatGPT's components were chosen.** "ChatGPT operational
   (from the page's own group)" when OpenAI's layout was used, or "(from the
   fixed list of names: the page's grouping was not usable)" when it fell back,

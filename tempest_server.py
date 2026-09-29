@@ -485,6 +485,9 @@ class AirQualityFetcher(PollingFetcher):
 # ranks as a minor problem rather than as fine.
 STATUS_RANK = {"operational": 0, "under_maintenance": 1, "degraded_performance": 2,
                "partial_outage": 3, "major_outage": 4}
+# What each state is worth to a syslog server that mails on severity: a service
+# that is slow is news; one that is down, or something unheard of, is a warning.
+STATUS_LEVEL = {"under_maintenance": "notice", "degraded_performance": "notice"}
 
 
 class StatusFeed(PollingFetcher):
@@ -499,6 +502,34 @@ class StatusFeed(PollingFetcher):
     def __init__(self, stop_event, url=None):
         PollingFetcher.__init__(self, stop_event)
         self.url = url or self.ENDPOINT
+        self.note = ""                # why the last refinement failed, for the log
+        self._not_ok_since = None
+
+    def store(self, fresh):
+        """Say so when the service changes state, as the alerts do: not on every
+        poll, and nothing at all while it stays fine. A service found already
+        down at start is news; one found fine is not."""
+        was = self.data or {}
+        old, new = was.get("status", "operational"), fresh["status"]
+        tag = self.LABEL.lower()
+        words = lambda st: st.replace("_", " ")
+        if new != old:
+            if new == "operational":
+                core.log(tag, "back to operational after %s" % (
+                    core.format_uptime(time.time() - (self._not_ok_since or time.time())) or "a moment"), "notice")
+                self._not_ok_since = None
+            else:
+                if old == "operational":
+                    self._not_ok_since = time.time()
+                core.log(tag, "%s → %s" % (words(old), words(new)),
+                         STATUS_LEVEL.get(new, "warning"))
+        # Which of the page's components were counted, when that can change.
+        via = fresh.get("via")
+        if via and via != was.get("via", "group"):
+            core.log(tag, "components chosen from %s%s" % (
+                VIA_WORDS[via], " (%s)" % self.note if self.note and via == "names" else ""),
+                "notice" if via == "group" else "warning")
+        PollingFetcher.store(self, fresh)
 
     @staticmethod
     def get(url):
@@ -586,8 +617,10 @@ class ChatGptStatusFetcher(StatuspageFetcher):
         raw = self.get(self.url)
         try:
             ids = self.group_ids(self.get(self.LAYOUT))
-        except Exception:
+            self.note = ""
+        except Exception as e:
             ids = None        # only a refinement: the names still answer
+            self.note = e.__class__.__name__
         return self.parse(raw, ids=ids)
 
 
@@ -2069,7 +2102,7 @@ class Dashboard:
         self.start_speedtest()
 
         self.ai = {}
-        self.apply_ai_status()
+        self.apply_ai_status(quiet=True)
 
         self.apply_syslog()
 
@@ -2120,19 +2153,33 @@ class Dashboard:
         self.speedtest.start()
         return True
 
-    def apply_ai_status(self):
+    def apply_ai_status(self, quiet=False):
         """Start, stop or repoint the AI status fetchers to match the settings.
         Called at boot and when they are saved, so it needs no restart. A
-        thread cannot be pointed elsewhere, so a changed address is a new one."""
+        thread cannot be pointed elsewhere, so a changed address is a new one.
+        `quiet` is the boot: nothing is being switched, so nothing is said,
+        except that a service reading from somewhere else always is."""
         for key, cls in AI_SERVICES.items():
             want = self.config.ai_status[key]
             url = want["url"] or cls.ENDPOINT
             f = self.ai.get(key)
+            was_running = f is not None
             if f is not None and (not want["enabled"] or f.url != url):
                 f.stop_event.set()
                 del self.ai[key]
                 f = None
+                if not want["enabled"]:
+                    core.log("ai status", "%s switched off" % cls.NAME, "notice")
             if f is None and want["enabled"]:
+                said = []
+                if not was_running and not quiet:
+                    said.append("switched on")
+                if url != cls.ENDPOINT:
+                    said.append("reading from %s" % url)
+                elif was_running:
+                    said.append("reading from the built-in address")
+                if said:
+                    core.log("ai status", "%s %s" % (cls.NAME, ", ".join(said)), "notice")
                 self.ai[key] = cls(threading.Event(), url)
                 self.ai[key].start()
 

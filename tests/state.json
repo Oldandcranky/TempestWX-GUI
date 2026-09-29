@@ -25,61 +25,28 @@
   "status": "off"
  },
  "demo": true,
- "claude": {
-  "available": true,
-  "components": [
-   {
-    "id": "a",
-    "name": "claude.ai",
-    "shown": true,
-    "status": "operational"
-   },
-   {
-    "id": "b",
-    "name": "Claude API (api.anthropic.com)",
-    "shown": true,
-    "status": "partial_outage"
-   },
-   {
-    "id": "c",
-    "name": "Claude Console (platform.claude.com)",
-    "shown": true,
-    "status": "degraded_performance"
-   },
-   {
-    "id": "d",
-    "name": "Claude Code",
-    "shown": true,
-    "status": "operational"
-   },
-   {
-    "id": "e",
-    "name": "Claude for Government",
-    "shown": true,
-    "status": "under_maintenance"
-   }
-  ],
-  "error": "",
-  "fetched_at": 1789568499.1540258,
-  "incidents": [
-   {
-    "components": [
-     "b"
-    ],
-    "impact": "minor",
-    "name": "Elevated error rates on Claude Opus and Sonnet models",
-    "status": "investigating"
-   },
-   {
-    "components": [
-     "c"
-    ],
-    "impact": "minor",
-    "name": "Second",
-    "status": "monitoring"
-   }
-  ],
-  "worst": "partial_outage"
+ "ai_status": {
+  "chatgpt": {
+   "available": true,
+   "error": "",
+   "fetched_at": 1789568499.1540258,
+   "incident": "Voice mode and Conversations are responding slowly for some users",
+   "status": "degraded_performance"
+  },
+  "claude": {
+   "available": true,
+   "error": "",
+   "fetched_at": 1789568499.1540258,
+   "incident": "Elevated error rates on Claude Opus and Sonnet models for API customers",
+   "status": "partial_outage"
+  },
+  "gemini": {
+   "available": true,
+   "error": "",
+   "fetched_at": 1789568499.1540258,
+   "incident": "",
+   "status": "operational"
+  }
  },
  "derived": {
   "beaufort": 1,

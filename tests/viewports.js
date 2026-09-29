@@ -556,8 +556,123 @@ console.log = (...args) => {
     for (const why of bad) console.log('         ' + why);
   });
 
+  // ── the AI reliability page: ninety days, fetched when it is opened ───
+  section("the AI reliability page: ninety days, fetched when it is opened", async () => {
+    const bad = [];
+    const rel = (() => {
+      const now = Date.now() / 1000;
+      const iso = (t) => { const d = new Date(t * 1000);
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+      const rows = (bad_) => Array.from({length: 90}, (_, i) => {
+        const [deg, out] = i < 30 ? [0, 0] : bad_(i);                 // the first thirty days were not watched
+        return {date: iso(now - (89 - i) * 86400), ok: i < 30 ? 0 : 86400 - deg - out, deg, out};
+      });
+      const windows = (r, e) => Object.fromEntries([7, 30, 90].map(w => {
+        const t = {ok: 0, deg: 0, out: 0};
+        for (const x of r.slice(-w)) for (const k of ['ok', 'deg', 'out']) t[k] += x[k];
+        return [String(w), Object.assign(t, {observed: t.ok + t.deg + t.out, days: w, deg_events: e, out_events: 1})];
+      }));
+      const ev = (h, m, worst, parts, open) => ({start: now - h * 3600, end: open ? null : now - h * 3600 + m * 60,
+        worst, parts, approx_start: h > 100, approx_end: false, open: !!open});
+      const svc = (name, bad_, status, incidents) => { const r = rows(bad_);
+        return {name, watching: true, status, days: r, windows: windows(r, 3), incidents}; };
+      return {available: true, error: '', since: now - 60 * 86400, watched_days: 61, services: {
+        claude: svc('Claude', i => i % 17 === 0 ? [3600, 900] : [0, 0], 'operational',
+          [ev(30, 25, 'major_outage', ['claude.ai', 'Claude API', 'Claude Code'])]),
+        chatgpt: svc('ChatGPT', i => i % 5 === 0 ? [7200, i % 15 === 0 ? 1800 : 0] : [0, 0], 'degraded_performance',
+          [ev(0.4, 0, 'degraded_performance', ['Voice mode'], true),
+           ev(50, 40, 'partial_outage', ['Conversations', 'Login', 'Voice mode', 'GPTs', 'Search', 'Agent']),
+           ev(200, 130, 'degraded_performance', ['Image Generation']),
+           ev(400, 60, 'degraded_performance', [])]),
+        gemini: svc('Gemini', i => i === 70 ? [5400, 0] : [0, 0], 'operational',
+          [ev(500, 90, 'degraded_performance', [])])}};
+    })();
+    for (const [w, h] of [[1920, 1080], [1400, 860], [1920, 720], [1024, 768], [414, 896]]) {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      const errs = [];
+      let asked = 0;
+      page.on('pageerror', e => errs.push(e.message));
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()) }));
+      await page.route('**/api/reliability*', route => { asked++;
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(rel) }); });
+      await page.goto(BASE, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const at = w + 'x' + h;
+      if (asked) bad.push(at + ': the record was fetched before the page was opened');
+      await page.$eval('#card-claude', el => el.click());          // a tap on the card is the way in
+      await page.waitForTimeout(2200);
+      if (!asked) bad.push(at + ': opening the page fetched nothing');
+      const r = await page.evaluate(() => {
+        const host = document.getElementById('relpage');
+        const body = host.querySelector('.card-body');
+        const strips = [...host.querySelectorAll('.relstrip')];
+        const head = host.querySelector('.inc.head .what');
+        return {open: document.body.classList.contains('show-rel'),
+                top: host.getBoundingClientRect().top,
+                services: host.querySelectorAll('.relsvc').length,
+                cells: strips.map(x => x.children.length),
+                coloured: strips.map(x => x.querySelectorAll('i.ok, i.deg, i.out').length),
+                rows: host.querySelectorAll('.reltbl .inc:not(.head)').length,
+                nums: [...host.querySelectorAll('.nums')].map(x => x.textContent),
+                headWhatShown: !!(head && head.offsetParent),
+                strip: strips[0].getBoundingClientRect().height,
+                text: host.textContent};
+      });
+      if (!r.open) bad.push(at + ': the page did not open');
+      if (r.top > 80) bad.push(at + ': the page starts ' + Math.round(r.top) + 'px down the screen');
+      if (r.services !== 3) bad.push(at + ': ' + r.services + ' services, expected 3');
+      if (r.cells.some(n => n !== 90)) bad.push(at + ': a strip has ' + r.cells + ' days, expected 90 each');
+      if (r.coloured.some(n => n !== 60)) bad.push(at + ': ' + r.coloured + ' watched days coloured, expected 60 each (30 were not watched)');
+      if (r.rows < 5) bad.push(at + ': the incident list has ' + r.rows + ' rows');
+      if (r.strip < 8) bad.push(at + ': the strip is only ' + r.strip.toFixed(0) + 'px tall');
+      if (!r.text.includes('ongoing')) bad.push(at + ': the open incident is not marked ongoing');
+      if (!r.text.includes('Watched since')) bad.push(at + ': no note of when watching began');
+      // A share is rounded down: a day with any time down is never "100%".
+      if (/100\.0%/.test(r.nums[0]) || /100\.0%/.test(r.nums[1]))
+        bad.push(at + ': a service with time down claims 100.0% (' + r.nums.slice(0, 2) + ')');
+      if (w <= 720 && r.headWhatShown) bad.push(at + ': the list header still shows a column the rows dropped');
+      for (const [id, why] of await page.evaluate(measure, '#relpage')) bad.push(at + ': ' + id + ' ' + why);
+      // The whole page is the way back, and the Back button is too.
+      await page.$eval('#relpage .card-head', el => el.click());
+      await page.waitForTimeout(900);
+      if (await page.evaluate(() => document.body.classList.contains('show-rel')))
+        bad.push(at + ': tapping the page did not close it');
+      await page.$eval('#card-claude', el => el.click());
+      await page.waitForTimeout(1200);
+      await page.goBack();
+      await page.waitForTimeout(900);
+      if (await page.evaluate(() => document.body.classList.contains('show-rel')))
+        bad.push(at + ': Back did not close the page');
+      for (const m of errs) bad.push(at + ': pageerror: ' + m);
+      await page.close();
+    }
+    // Nothing recorded yet is a sentence, not a blank card or an error.
+    {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      const errs = [];
+      page.on('pageerror', e => errs.push(e.message));
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()) }));
+      await page.route('**/api/reliability*', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify({available: false, error: 'Nothing recorded yet', since: null, watched_days: 0, services: {}}) }));
+      await page.goto(BASE, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      await page.$eval('#card-claude', el => el.click());
+      await page.waitForTimeout(1500);
+      const text = await page.evaluate(() => document.getElementById('relpage').textContent);
+      if (!/Nothing recorded yet/i.test(text)) bad.push('empty record: the page says "' + text.slice(0, 80) + '"');
+      for (const m of errs) bad.push('empty record: pageerror: ' + m);
+      await page.close();
+    }
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL reliability page' : '  ok   reliability page');
+    for (const why of bad) console.log('         ' + why);
+  });
+
   // ── the Records band, with today at each end of it and in the middle ──
-  // On a wall of six large cards as well as the crowded thirteen: the large
+  // On a wall of six large cards as well as the crowded fourteen: the large
   // card is where the labels came adrift, and no other test draws one.
   section("the Records band, with today at each end of it and in the middle", async () => {
     const bad = [];
@@ -588,7 +703,7 @@ console.log = (...args) => {
           }));
           await page.goto(BASE, { waitUntil: 'networkidle' });
           await page.waitForTimeout(SETTLE_MS);
-          const at = w + 'x' + h + (slots ? ' six cards' : ' thirteen') + ', today at ' + where;
+          const at = w + 'x' + h + (slots ? ' six cards' : ' fourteen') + ', today at ' + where;
           for (const [id, why] of await page.evaluate(measure, '#grid'))
             if (id === 'records') bad.push(at + ': ' + why);
           if (!await page.evaluate(() => !!document.querySelector('#card-records .nowlab')))
@@ -801,7 +916,7 @@ console.log = (...args) => {
           cols: getComputedStyle(document.getElementById('tilesOn')).gridTemplateColumns.split(' ').length }));
         let t0 = await tiles();
         if (t0.on.join() !== 'temperature,wind,pollen') bad.push(at + ': lit panels are ' + t0.on);
-        if (t0.on.length + t0.off.length !== 13) bad.push(at + ': ' + (t0.on.length + t0.off.length) + ' panels, expected 13');
+        if (t0.on.length + t0.off.length !== 14) bad.push(at + ': ' + (t0.on.length + t0.off.length) + ' panels, expected 14');
         if (!t0.names.includes('Station') || !t0.names.includes('Air quality') || t0.names.includes('hardware'))
           bad.push(at + ': panels are named ' + t0.names.slice(-3).join(', '));
         if (t0.cols !== 2) bad.push(at + ': three lit panels drawn ' + t0.cols + ' across, the dashboard shows 2');

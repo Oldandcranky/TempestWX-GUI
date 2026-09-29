@@ -488,6 +488,7 @@ STATUS_RANK = {"operational": 0, "under_maintenance": 1, "degraded_performance":
 # What each state is worth to a syslog server that mails on severity: a service
 # that is slow is news; one that is down, or something unheard of, is a warning.
 STATUS_LEVEL = {"under_maintenance": "notice", "degraded_performance": "notice"}
+PARTS_KEPT = 6        # how many failing components a reading or an incident names
 
 
 class StatusFeed(PollingFetcher):
@@ -499,11 +500,26 @@ class StatusFeed(PollingFetcher):
     ENDPOINT = ""
     NAME = ""
 
-    def __init__(self, stop_event, url=None):
+    def __init__(self, stop_event, url=None, record=None):
         PollingFetcher.__init__(self, stop_event)
         self.url = url or self.ENDPOINT
+        self.record = record          # told of every reading, for the reliability page
         self.note = ""                # why the last refinement failed, for the log
         self._not_ok_since = None
+        self._record_failed = False
+
+    def after_success(self, fresh):
+        """Outside the lock, and outside the fetch's own error handling: a
+        record that could not be kept is not the status page being down."""
+        if not self.record:
+            return
+        try:
+            self.record(fresh)
+        except Exception as e:
+            if not self._record_failed:
+                self._record_failed = True
+                core.log(self.LABEL.lower(), "could not record the reading — %s" %
+                         e.__class__.__name__, "warning")
 
     def store(self, fresh):
         """Say so when the service changes state, as the alerts do: not on every
@@ -576,7 +592,10 @@ class StatuspageFetcher(StatusFeed):
             raise ValueError("none of its components were found")
         worst = max((c.get("status") or "operational" for c in comps),
                     key=lambda st: STATUS_RANK.get(st, 2))
-        return {"fetched_at": time.time() if now is None else now, "status": worst, "via": via}
+        parts = sorted({c.get("name") or "" for c in comps
+                        if (c.get("status") or "operational") != "operational"})
+        return {"fetched_at": time.time() if now is None else now, "status": worst,
+                "via": via, "parts": parts[:PARTS_KEPT]}
 
 
 class ClaudeStatusFetcher(StatuspageFetcher):
@@ -654,7 +673,8 @@ class GeminiStatusFetcher(StatusFeed):
                 else "degraded_performance"
             if STATUS_RANK[level] > STATUS_RANK[worst]:
                 worst = level
-        return {"fetched_at": time.time() if now is None else now, "status": worst}
+        return {"fetched_at": time.time() if now is None else now, "status": worst,
+                "parts": []}
 
 
 # How a service's components were chosen, for Check now to say.
@@ -663,6 +683,187 @@ VIA_WORDS = {"group": "the page's own group",
 
 AI_SERVICES = {"claude": ClaudeStatusFetcher, "chatgpt": ChatGptStatusFetcher,
                "gemini": GeminiStatusFetcher}
+
+
+class AiHistory:
+    """How often each AI service has been degraded or down, as its own status
+    page reported it.
+
+    That is not the same as whether it worked for you: a page is updated late,
+    and a blip too short to post never appears on it. What is kept is what this
+    dashboard saw, every couple of minutes, and nothing is assumed about the
+    time it did not see. Between two sightings closer than GAP the time counts
+    towards what the first one said; a longer silence, a deploy or the page
+    being unreachable, counts towards nothing, so it cannot flatter the score.
+
+    Two things are kept per service. The days: seconds seen operational,
+    degraded and down, per local date. And the events: when it left
+    operational, how bad it got, which components, and when it came back, with
+    the ends flagged approximate when a silence hid them. An event still open
+    at a restart is carried over.
+
+    It is written the way the daily record is, through the History's own
+    writer, so a save that fails is kept where the banner and /healthz read it,
+    and a file that will not parse is set aside and never treated as empty.
+    """
+
+    FILE = "ai_status_log.json"
+    GAP = 6 * 60              # seconds; past this between sightings, the time is not counted
+    SAVE_EVERY = 5 * 60       # a change is saved at once, a quiet stretch this often
+    DAYS_KEPT = 400
+    EVENTS_KEPT = 300
+    WINDOWS = (7, 30, 90)
+
+    def __init__(self, path, history):
+        self.path = path
+        self.history = history
+        self.lock = threading.Lock()
+        self.since = None
+        self.services = {}
+        self.locked = False       # never write over a file we could not read or move
+        self._saved = 0.0
+        self.load()
+
+    # ── persistence ───────────────────────────────────────────────────────
+    @staticmethod
+    def _clean_service(d):
+        days = {}
+        for day, row in (d.get("days") or {}).items():
+            days[str(day)] = {k: float(row.get(k, 0)) for k in ("ok", "deg", "out")}
+        events = [{"start": float(e["start"]),
+                   "end": None if e.get("end") is None else float(e["end"]),
+                   "worst": str(e["worst"]),
+                   "parts": [str(p) for p in e.get("parts") or []][:PARTS_KEPT],
+                   "approx_start": bool(e.get("approx_start")),
+                   "approx_end": bool(e.get("approx_end"))}
+                  for e in d.get("events") or []]
+        last = d.get("last")
+        if last is not None:
+            last = {"at": float(last["at"]), "status": str(last["status"])}
+        return {"days": days, "events": events, "last": last}
+
+    def load(self):
+        raw, problem = self.history._read_json(self.path)
+        if problem == "missing":
+            return
+        if problem is None:
+            try:
+                since = raw.get("since")
+                services = {k: self._clean_service(v)
+                            for k, v in (raw.get("services") or {}).items() if k in AI_SERVICES}
+                self.since = None if since is None else float(since)
+                self.services = services
+                return
+            except (KeyError, TypeError, ValueError, AttributeError):
+                problem = "damaged (not a record)"
+        aside = self.history._set_aside(self.path)
+        self.locked = aside is None
+        self.history._note("%s is %s; %s" % (
+            self.FILE, problem,
+            "kept aside as %s and starting again" % os.path.basename(aside) if aside
+            else "left where it is, and nothing will be written over it"))
+
+    def _save(self, force):
+        now = time.time()
+        if self.locked or (not force and now - self._saved < self.SAVE_EVERY):
+            return
+        self._saved = now
+        for s in self.services.values():
+            for day in sorted(s["days"])[:-self.DAYS_KEPT]:
+                del s["days"][day]
+            del s["events"][:-self.EVENTS_KEPT]
+        self.history._write_json(self.path, {"version": 1, "saved_at": now,
+                                             "since": self.since, "services": self.services})
+
+    # ── recording ─────────────────────────────────────────────────────────
+    @staticmethod
+    def _bucket(status):
+        if status == "operational":
+            return "ok"
+        return "out" if STATUS_RANK.get(status, 2) >= 3 else "deg"
+
+    @staticmethod
+    def _credit(s, t0, t1, bucket):
+        """Add the time from t0 to t1 to its local days, split at midnight."""
+        while t0 < t1:
+            d = datetime.fromtimestamp(t0)
+            nxt = time.mktime((d.date() + timedelta(days=1)).timetuple())
+            end = min(t1, nxt)
+            row = s["days"].setdefault(d.strftime("%Y-%m-%d"), {"ok": 0.0, "deg": 0.0, "out": 0.0})
+            row[bucket] += end - t0
+            t0 = end
+
+    def observe(self, key, fresh):
+        """One reading of one service: {"fetched_at", "status", "parts"}."""
+        t, status = fresh["fetched_at"], fresh["status"]
+        parts = list(fresh.get("parts") or [])
+        with self.lock:
+            s = self.services.setdefault(key, {"days": {}, "events": [], "last": None})
+            last = s["last"]
+            # A first sighting, a long silence, or a clock that went backwards.
+            silent = last is None or not 0 <= t - last["at"] <= self.GAP
+            if not silent:
+                self._credit(s, last["at"], t, self._bucket(last["status"]))
+            if self.since is None:
+                self.since = t
+            open_ = s["events"][-1] if s["events"] and s["events"][-1]["end"] is None else None
+            changed = False
+            if status != "operational":
+                if open_ is None:
+                    s["events"].append({"start": t, "end": None, "worst": status,
+                                        "parts": parts[:PARTS_KEPT],
+                                        "approx_start": silent, "approx_end": False})
+                    changed = True
+                else:
+                    if STATUS_RANK.get(status, 2) > STATUS_RANK.get(open_["worst"], 2):
+                        open_["worst"] = status
+                        changed = True
+                    for p in parts:
+                        if p not in open_["parts"] and len(open_["parts"]) < PARTS_KEPT:
+                            open_["parts"].append(p)
+                            changed = True
+            elif open_ is not None:
+                open_["end"], open_["approx_end"] = t, silent
+                changed = True
+            s["last"] = {"at": t, "status": status}
+            self._save(changed)
+
+    # ── reporting ─────────────────────────────────────────────────────────
+    def report(self, now=None, watching=()):
+        """Per service: each of the last 90 days, the windows summed, and the
+        recent incidents. The date arithmetic is here, where it is tested."""
+        now = time.time() if now is None else now
+        today = date.fromtimestamp(now)
+        keys = [(today - timedelta(days=i)).strftime("%Y-%m-%d")
+                for i in range(max(self.WINDOWS) - 1, -1, -1)]
+        out = {"available": False, "error": "Nothing recorded yet", "since": None,
+               "watched_days": 0, "services": {}}
+        with self.lock:
+            if self.since is not None:
+                out.update(available=True, error="", since=self.since,
+                           watched_days=max(1, int((now - self.since) // 86400) + 1))
+            for key, cls in AI_SERVICES.items():
+                s = self.services.get(key)
+                if s is None and key not in watching:
+                    continue
+                s = s or {"days": {}, "events": [], "last": None}
+                rows = [dict(date=k, **s["days"].get(k, {"ok": 0.0, "deg": 0.0, "out": 0.0}))
+                        for k in keys]
+                windows = {}
+                for w in self.WINDOWS:
+                    tot = {b: sum(r[b] for r in rows[-w:]) for b in ("ok", "deg", "out")}
+                    t0 = time.mktime(datetime.strptime(keys[-w], "%Y-%m-%d").timetuple())
+                    began = [e for e in s["events"] if e["start"] >= t0]
+                    tot.update(observed=tot["ok"] + tot["deg"] + tot["out"], days=w,
+                               deg_events=sum(1 for e in began if self._bucket(e["worst"]) == "deg"),
+                               out_events=sum(1 for e in began if self._bucket(e["worst"]) == "out"))
+                    windows[str(w)] = tot
+                out["services"][key] = {
+                    "name": cls.NAME, "watching": key in watching,
+                    "status": (s["last"] or {}).get("status"),
+                    "days": rows, "windows": windows,
+                    "incidents": [dict(e, open=e["end"] is None) for e in s["events"][-25:][::-1]]}
+        return out
 
 
 class PollenFetcher(PollingFetcher):
@@ -2101,6 +2302,7 @@ class Dashboard:
         self.speedtest = None
         self.start_speedtest()
 
+        self.ai_history = AiHistory(os.path.join(args.data_dir, AiHistory.FILE), self.history)
         self.ai = {}
         self.apply_ai_status(quiet=True)
 
@@ -2180,7 +2382,8 @@ class Dashboard:
                     said.append("reading from the built-in address")
                 if said:
                     core.log("ai status", "%s %s" % (cls.NAME, ", ".join(said)), "notice")
-                self.ai[key] = cls(threading.Event(), url)
+                self.ai[key] = cls(threading.Event(), url,
+                                   lambda fresh, key=key: self.ai_history.observe(key, fresh))
                 self.ai[key].start()
 
     def apply_syslog(self):
@@ -2382,6 +2585,10 @@ class Dashboard:
                 snap["forecast"].get("days") or [])
         return snap
 
+    def reliability(self):
+        """How often each AI service has been degraded or down, for its page."""
+        return self.ai_history.report(watching=set(self.ai))
+
     def almanac(self, **thresholds):
         """Where today stands in the station's record, for the Almanac page.
         Under the state's lock, since the listener writes to the same tables
@@ -2495,6 +2702,7 @@ class Dashboard:
                         continue
                     with f.lock:
                         f.store(fresh); f.error = ""
+                    f.after_success(fresh)
                     via = VIA_WORDS.get(fresh.get("via"))
                     parts.append("%s %s%s" % (f.NAME, fresh["status"].replace("_", " "),
                                              " (from %s)" % via if via else ""))
@@ -2839,6 +3047,11 @@ class Handler(BaseHTTPRequestHandler):
                         body = {"available": False,
                                 "error": dash.speedtest.describe(e)}
                 self._send(200, json.dumps(body), "application/json; charset=utf-8")
+            elif path == "/api/reliability":
+                # Fetched when the reliability page is opened, like the almanac.
+                self._send(200, json.dumps(self.server.dashboard.reliability(),
+                                           allow_nan=False),
+                           "application/json; charset=utf-8")
             elif path == "/api/almanac":
                 # Fetched when the Almanac page is opened: a year of daily
                 # rows is no more use in the two-second snapshot than a week

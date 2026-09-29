@@ -365,6 +365,15 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **ChatGPT means exactly what OpenAI's page calls ChatGPT.** Its summary is
+  a flat list in which two components are both named "Login" and new ones
+  appear over time, so picking ChatGPT's parts by name was wrong twice: it
+  missed ChatGPT Work, Codex in ChatGPT Desktop, Compliance API and Sites, and
+  it counted the API's Login. The page's own layout, which it serves
+  separately, names the ChatGPT group by component id, and that is what is
+  read now. If the layout cannot be read, the fifteen names are the fallback
+  and both Logins count; if neither finds anything the line is an error, not
+  green.
 - **AI status: switch each service on or off, and change where it is read
   from.** Settings → Data sources → AI status has a tick-box and an address
   for Claude, ChatGPT and Gemini. Unticking one stops fetching it and drops

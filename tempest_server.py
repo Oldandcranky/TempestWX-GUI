@@ -500,12 +500,16 @@ class StatusFeed(PollingFetcher):
         PollingFetcher.__init__(self, stop_event)
         self.url = url or self.ENDPOINT
 
-    def fetch_once(self):
+    @staticmethod
+    def get(url):
         req = urllib.request.Request(
-            self.url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
-                                    "Accept": "application/json"})
+            url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
+                          "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=20) as r:
-            return self.parse(json.loads(r.read().decode("utf-8")))
+            return json.loads(r.read().decode("utf-8"))
+
+    def fetch_once(self):
+        return self.parse(self.get(self.url))
 
     def describe(self, exc):
         if isinstance(exc, ValueError):
@@ -526,10 +530,14 @@ class StatuspageFetcher(StatusFeed):
     PARTS = None          # the names of the components that count; None is all
 
     @classmethod
-    def parse(cls, raw, now=None):
+    def parse(cls, raw, now=None, ids=None):
         # Component groups are headings, not things that can be down.
-        comps = [c for c in raw.get("components") or []
-                 if not c.get("group") and (cls.PARTS is None or c.get("name") in cls.PARTS)]
+        real = [c for c in raw.get("components") or [] if not c.get("group")]
+        # By id when the page's own grouping is to hand: names can repeat.
+        # Otherwise, or if no id matched, by name.
+        comps = [c for c in real if c.get("id") in ids] if ids else []
+        if not comps:
+            comps = [c for c in real if cls.PARTS is None or c.get("name") in cls.PARTS]
         if not comps:
             # Not "operational": a renamed component must not read as fine.
             raise ValueError("none of its components were found")
@@ -545,17 +553,40 @@ class ClaudeStatusFetcher(StatuspageFetcher):
 
 
 class ChatGptStatusFetcher(StatuspageFetcher):
-    """OpenAI's page mixes ChatGPT with its API and with Codex, and lists them
-    flat, so ChatGPT's parts are picked out by name. If it renames them this
-    fails loudly, as "none of its components were found", rather than going
-    green."""
+    """OpenAI's summary lists ChatGPT flat, beside its API and Codex, and two
+    of them are both called "Login". Which belong to ChatGPT is what the
+    status page's own layout says, which it serves separately, so that is read
+    for the ids. If it cannot be, the names below are the fallback, and both
+    Logins then count. If neither finds anything this fails loudly, as "none of
+    its components were found", rather than going green."""
 
     ENDPOINT = "https://status.openai.com/api/v2/summary.json"
+    LAYOUT = "https://status.openai.com/proxy/status.openai.com"
+    GROUP = "ChatGPT"
     LABEL = "ChatGPT status"
     NAME = "ChatGPT"
-    PARTS = frozenset({"Conversations", "Voice mode", "GPTs", "Image Generation",
-                       "File uploads", "Connectors/Apps", "Search", "Agent",
-                       "Deep Research", "ChatGPT Atlas", "Login"})
+    PARTS = frozenset({"Conversations", "Login", "ChatGPT Work", "Codex in ChatGPT Desktop",
+                       "Compliance API", "Search", "File uploads", "Voice mode", "GPTs",
+                       "Image Generation", "Deep Research", "Agent", "ChatGPT Atlas",
+                       "Sites", "Connectors/Apps"})
+
+    @classmethod
+    def group_ids(cls, layout):
+        """The component ids the page lists under ChatGPT, or None."""
+        items = ((layout.get("summary") or {}).get("structure") or {}).get("items") or []
+        for item in items:
+            group = item.get("group") or {}
+            if group.get("name") == cls.GROUP:
+                return {c.get("component_id") for c in group.get("components") or []} or None
+        return None
+
+    def fetch_once(self):
+        raw = self.get(self.url)
+        try:
+            ids = self.group_ids(self.get(self.LAYOUT))
+        except Exception:
+            ids = None        # only a refinement: the names still answer
+        return self.parse(raw, ids=ids)
 
 
 class GeminiStatusFetcher(StatusFeed):

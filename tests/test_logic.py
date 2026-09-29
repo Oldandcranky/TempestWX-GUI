@@ -865,6 +865,39 @@ class StatusPages(unittest.TestCase):
         f = server.ChatGptStatusFetcher(threading.Event())
         self.assertIn("none of its components", f.describe(ValueError("none of its components were found")))
 
+    LAYOUT = {"summary": {"structure": {"items": [
+        {"group": {"name": "APIs", "components": [{"component_id": "api-login", "name": "Login"}]}},
+        {"group": {"name": "ChatGPT", "components": [{"component_id": "chat-login", "name": "Login"},
+                                                     {"component_id": "chat-conv", "name": "Conversations"}]}}]}}}
+
+    def test_the_chatgpt_group_is_read_from_the_pages_own_layout(self):
+        self.assertEqual(server.ChatGptStatusFetcher.group_ids(self.LAYOUT), {"chat-login", "chat-conv"})
+        self.assertIsNone(server.ChatGptStatusFetcher.group_ids({"summary": {}}))
+        self.assertIsNone(server.ChatGptStatusFetcher.group_ids({}))
+
+    def test_two_components_called_login_are_told_apart_by_id(self):
+        raw = {"components": [comp("Login", "major_outage", id="api-login"),
+                              comp("Login", id="chat-login"), comp("Conversations", id="chat-conv")]}
+        ids = server.ChatGptStatusFetcher.group_ids(self.LAYOUT)
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw, ids=ids)["status"], "operational")
+        # without the layout both count, which is the fallback's known cost
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["status"], "major_outage")
+
+    def test_ids_that_match_nothing_fall_back_to_the_names(self):
+        raw = {"components": [comp("Conversations", "partial_outage", id="x"), comp("Realtime", id="y")]}
+        self.assertEqual(server.ChatGptStatusFetcher.parse(raw, ids={"not-there"})["status"], "partial_outage")
+
+    def test_a_layout_that_cannot_be_read_only_costs_the_refinement(self):
+        summary = {"components": [comp("Conversations", "degraded_performance", id="chat-conv")]}
+        f = server.ChatGptStatusFetcher(threading.Event())
+        def get(url, fail):
+            if url == f.LAYOUT and fail:
+                raise OSError("layout is down")
+            return self.LAYOUT if url == f.LAYOUT else summary
+        for fail in (True, False):
+            f.get = lambda url, fail=fail: get(url, fail)
+            self.assertEqual(f.fetch_once()["status"], "degraded_performance")
+
     def test_an_unknown_status_is_not_fine(self):
         self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("x", "on_fire")]})["status"], "on_fire")
 

@@ -53,7 +53,7 @@ else
   TEMPEST_DATA_DIR="$tmp" \
   TEMPEST_HTTP_PORT="$PORT" \
   TEMPEST_UDP_PORT=0 \
-  TEMPEST_SLOTS="temperature,pollen,air,internet,astronomy,forecast,wind,pressure,rainfall,radar,lightning,records,hardware" \
+  TEMPEST_SLOTS="temperature,pollen,air,internet,astronomy,forecast,wind,pressure,rainfall,radar,lightning,records,hardware,claude" \
   TEMPEST_RAIN_MONTHLY="1.9,2.0,2.4,3.6,4.2,4.0,3.7,3.9,3.0,3.2,2.9,2.3" \
   TEMPEST_TEMP_NORMAL_HIGH="31,35,46,59,70,80,84,82,75,62,48,36" \
   TEMPEST_TEMP_NORMAL_LOW="16,19,28,38,49,59,64,62,54,42,32,22" \

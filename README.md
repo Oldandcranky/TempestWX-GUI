@@ -361,6 +361,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **A Claude card: is it up?** Polls Anthropic's public status page
+  (`status.claude.com`, Statuspage's keyless JSON) every two minutes and
+  shows the worst state among the components you use, any open incident's
+  title, and each component on a line. It polls rather than taking a
+  webhook, since a webhook would need the status page to reach a LAN
+  address. Settings → Data sources → Claude status has a tick-box per
+  component; with none chosen, all are reported. A status page that cannot be
+  reached is shown as such — the last word is kept and the dot goes amber —
+  and is not mistaken for an outage. The card is not lit by default: turn it
+  on in Layout.
 - **A log worth reading, and a syslog to send it to.** The container's log
   was twelve lines a day, all from start-up: a data source failing for six
   hours left no trace, nothing the page did was ever heard of, and settings

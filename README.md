@@ -365,15 +365,26 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **ChatGPT's history is read from the status page's own data.** Its backfill
+  was refused, correctly: OpenAI's incident list carries no components, so it
+  cannot say which incidents were ChatGPT's and counting them all would blame
+  ChatGPT for the API and Codex. The page draws its bars from a list of
+  per-component impacts embedded in its own data, and that is read instead,
+  for the components its layout lists under ChatGPT, joined per incident. It
+  is complete only from the oldest impact in that list, and if the page cannot
+  be read with confidence nothing is filled in.
 - **The reliability page starts with history, and shows no share until an hour
   has been seen.** The days before the dashboard began watching are filled in,
-  once per service, from that service's own list of past incidents (Claude's
-  and OpenAI's Statuspage lists, and Google's feed for Gemini), as far back
-  as each list reaches. Only days before the first live one are written, so
+  once per service, from that service's own record of past incidents: Claude's
+  Statuspage incident list, Google's feed for Gemini, and for ChatGPT the
+  status page's own per-component impacts, as far back as each reaches. Only days before the first live one are written, so
   it never touches what was watched, and doing it again changes nothing.
-  Overlapping incidents count once, at the worse state. ChatGPT's incidents
-  are only those on its own components; if a list cannot say which components
-  an incident touched, nothing is filled in rather than guessed. And a week
+  Overlapping incidents count once, at the worse state. OpenAI's incident
+  list says nothing of components, so it cannot say which incidents were
+  ChatGPT's; the page's own data can, because its bars are drawn from a list
+  of impacts, one per component. Those on the components OpenAI's layout lists
+  under ChatGPT are used. If that data cannot be read with confidence,
+  nothing is filled in rather than guessed. And a week
   that has had five minutes seen shows a dash, not "0.0%": a share appears
   once an hour is behind it.
 - **AI reliability: how often each service has been degraded or down.**

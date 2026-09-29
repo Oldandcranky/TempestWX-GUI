@@ -1329,20 +1329,89 @@ class ServiceHistory(unittest.TestCase):
         raw = {"incidents": [dict(self.incident(self.at(3, 1), self.at(3, 2), name="a"), components=[])]}
         self.assertEqual(len(server.ClaudeStatusFetcher.parse_history(raw)[0]), 1)
 
-    def test_chatgpt_takes_only_the_incidents_on_its_own_components(self):
-        raw = {"incidents": [
-            self.incident(self.at(4, 1), self.at(4, 2), comps=(("chat-conv", "Conversations"),), worst="degraded_performance", name="mine"),
-            self.incident(self.at(3, 1), self.at(3, 2), comps=(("api-rt", "Realtime"),), worst="major_outage", name="api"),
-            self.incident(self.at(2, 1), self.at(2, 2), comps=(("api-login", "Login"), ("chat-login", "Login")), worst="partial_outage", name="both")]}
-        events, _ = server.ChatGptStatusFetcher.parse_history(raw, ids={"chat-conv", "chat-login"})
-        self.assertEqual([e["worst"] for e in events], ["degraded_performance", "partial_outage"])
-        by_name, _ = server.ChatGptStatusFetcher.parse_history(raw)            # no ids: the fixed names
-        self.assertEqual(len(by_name), 2)                                      # Realtime is not in them
+    # ── ChatGPT's history comes from the page's own component impacts ──
+    PARTS = {"chat-conv": "Conversations", "chat-login": "Login"}
 
-    def test_an_incident_list_that_says_nothing_of_components_is_refused_not_read_as_clean(self):
-        raw = {"incidents": [dict(self.incident(self.at(3, 1), self.at(3, 2)), components=[])]}
+    def imp(self, cid, h0, h1, status="degraded_performance", inc="inc1"):
+        stamp = lambda t: self.iso(t).replace(".123Z", ".000Z")
+        return {"component_id": cid, "end_at": "$undefined" if h1 is None else stamp(self.at(*h1)),
+                "id": "i-%s-%s" % (cid, h0[1]), "start_at": stamp(self.at(*h0)), "status": status,
+                "status_page_incident_id": inc}
+
+    def page(self, impacts, split=None, uptimes=True, window=90):
+        """A status page shaped like OpenAI's: the data in JSON strings inside
+        script tags, an incident's own impacts early on, and the page-level
+        list beside the uptime figures."""
+        head = ('{"history_window_days":%s,"incident":{"component_impacts":[%s]},' % (
+            window, json.dumps(self.imp("chat-conv", (0, 5), None, inc="ongoing"))) if window else '{"incident":{},')
+        flight = head + '"component_impacts":' + json.dumps(impacts) + (
+            ',"component_uptimes":[{"component_id":"chat-conv","uptime":"100.00"}]}' if uptimes else "}")
+        cut = split if split is not None else len(flight)
+        chunks = [flight[:cut]] + ([flight[cut:]] if cut < len(flight) else [])
+        return "<html>" + "".join("<script>self.__next_f.push([1,%s])</script>" % json.dumps(c) for c in chunks) + "</html>"
+
+    def events(self, impacts, **kw):
+        return server.ChatGptStatusFetcher.parse_page_history(self.page(impacts, **kw), self.PARTS, now=self.T0)
+
+    def test_chatgpt_history_is_the_impacts_on_its_own_components_joined_per_incident(self):
+        impacts = [self.imp("chat-conv", (9, 10), (9, 10.5)),
+                   self.imp("chat-login", (9, 10.3), (9, 10.8), "partial_outage"),     # overlaps: one event
+                   self.imp("api-rt", (9, 10), (9, 12), "full_outage", "inc2"),        # the API's, not ChatGPT's
+                   self.imp("chat-conv", (9, 14), (9, 14.2))]                           # same incident, later: its own
+        events, _ = self.events(impacts)
+        self.assertEqual([(round(e["start"]), round(e["end"]), e["worst"], e["parts"]) for e in events],
+                         [(round(self.at(9, 10)), round(self.at(9, 10.8)), "partial_outage", ["Conversations", "Login"]),
+                          (round(self.at(9, 14)), round(self.at(9, 14.2)), "degraded_performance", ["Conversations"])])
+
+    def test_a_value_split_across_two_script_tags_is_read_whole(self):
+        impacts = [self.imp("chat-conv", (9, 10), (9, 11)), self.imp("chat-login", (8, 1), (8, 2), "partial_outage", "inc3")]
+        whole, _ = self.events(impacts)
+        for cut in (60, 200, 333):
+            split, _ = self.events(impacts, split=cut)
+            self.assertEqual(split, whole)
+        self.assertEqual(len(whole), 2)
+
+    def test_an_impact_still_going_lasts_until_now_and_a_full_outage_is_the_worst_state(self):
+        events, _ = self.events([self.imp("chat-conv", (0, 3), None, "full_outage")])
+        self.assertEqual((events[0]["worst"], events[0]["end"]), ("major_outage", self.T0))
+
+    def test_the_record_is_complete_from_its_oldest_impact_and_no_further_back_than_the_window(self):
+        recent = [self.imp("chat-conv", (9, 10), (9, 11))]
+        _, covered = self.events(recent)                                  # nothing older: complete from there
+        self.assertEqual(round(covered), round(self.at(9, 10)))
+        old = [self.imp("chat-conv", (100, 10), (100, 11)), self.imp("chat-conv", (9, 10), (9, 11), inc="inc2")]
+        self.assertEqual(self.events(old)[1], self.T0 - 90 * 86400)       # ninety days, the default window
+        self.assertEqual(self.events(old, window=30)[1], self.T0 - 30 * 86400)
+        self.assertEqual(self.events(old, window=0)[1], self.T0 - 90 * 86400)   # a page that names no window
+        # An impact on some other component counts towards how far back it reaches: it is the same list.
+        other = recent + [self.imp("api-rt", (40, 1), (40, 2), inc="inc9")]
+        self.assertEqual(round(self.events(other)[1]), round(self.at(40, 1)))
+
+    def test_a_page_that_does_not_hold_the_history_is_refused_not_read_as_clean(self):
+        good = [self.imp("chat-conv", (9, 10), (9, 11))]
+        for html in ("<html>no data here</html>", self.page(good, uptimes=False), self.page([]),
+                     self.page(good).replace('component_uptimes', 'component_uptimez')):
+            with self.assertRaises(ValueError):
+                server.ChatGptStatusFetcher.parse_page_history(html, self.PARTS, now=self.T0)
+
+    def test_the_impacts_of_one_incident_do_not_stand_in_for_the_whole_record(self):
+        # The page-level list is the one beside the uptime figures. An incident's
+        # own list, earlier in the data, is ignored.
+        events, _ = self.events([self.imp("chat-conv", (9, 10), (9, 11))])
+        self.assertEqual(len(events), 1)
+        self.assertNotEqual(round(events[0]["start"]), round(self.at(0, 5)))
+
+    def test_chatgpt_history_needs_the_pages_own_layout_to_say_which_components_are_its_own(self):
+        f = server.ChatGptStatusFetcher(threading.Event())
+        f.get = lambda url: {"summary": {"structure": {"items": []}}}
+        f.get_text = lambda url: self.page([self.imp("chat-conv", (9, 10), (9, 11))])
         with self.assertRaises(ValueError):
-            server.ChatGptStatusFetcher.parse_history(raw)
+            f.history()
+        layout = {"summary": {"structure": {"items": [{"group": {"name": "ChatGPT", "components": [
+            {"component_id": "chat-conv", "name": "Conversations"}]}}]}}}
+        f.get = lambda url: layout
+        events, _ = f.history()
+        self.assertEqual([e["parts"] for e in events], [["Conversations"]])
 
     def test_an_empty_or_undated_history_is_refused(self):
         for raw in ({}, {"incidents": []}, {"incidents": [{"name": "x"}]}):

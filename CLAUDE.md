@@ -163,17 +163,26 @@ It writes through `History._write_json`, so a failed save lands in
 a file that will not parse is set aside and never treated as empty.
 
 The days before the live record began are filled once per service from the
-provider's own incident list (`parse_history`, `AiHistory.backfill`, driven by
-`Dashboard._backfill_ai`). Three rules keep that honest. Only days before the
-first live day are written, and they are **set, not added to**, so it can be
-redone. Days before the list's own earliest incident are left alone: a day with
-no incident on a list that does not reach it proves nothing. And a list that
-cannot say whose incidents they were is **refused, never read as clean**;
-that is the difference between an empty history and a false one. The formats
-were only seen for Google's feed; Claude's and OpenAI's are Statuspage's
-documented shape, so a failure shows as `<service> history unavailable` in the
-log. The unit tests are `ReliabilityRecord` and `ServiceHistory`; the page has
-a section of its own in `tests/viewports.js`, fed a fixture written there.
+provider's own record of past incidents (`parse_history`, `AiHistory.backfill`,
+driven by `Dashboard._backfill_ai`). Three rules keep that honest. Only days
+before the first live day are written, and they are **set, not added to**, so
+it can be redone. A record is complete only from its oldest incident, so days
+before that are left alone: a day with no incident on a list that does not
+reach it proves nothing. And a source that cannot say whose incidents they were
+is **refused, never read as clean**; that is the difference between an empty
+history and a false one.
+
+The sources differ. Claude's is Statuspage's incident list. Gemini's is Google's
+feed, which lists every Workspace product. **ChatGPT's is not OpenAI's incident
+list**, which carries no components and so cannot say what was ChatGPT's: it is
+the per-component impacts embedded in the status page's HTML
+(`ChatGptStatusFetcher.parse_page_history`), the list the page draws its bars
+from, scoped by the component ids the page's layout lists under ChatGPT. That is
+scraping Next.js's data stream, which OpenAI can change at will. It runs once
+and fails soft (`<service> history unavailable` in the log, the live record
+untouched), so keep it that way and never let it feed anything live. The unit
+tests are `ReliabilityRecord` and `ServiceHistory`; the page has a section of
+its own in `tests/viewports.js`, fed a fixture written there.
 
 ## Tests
 

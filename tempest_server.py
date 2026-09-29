@@ -560,12 +560,19 @@ class StatusFeed(PollingFetcher):
         PollingFetcher.store(self, fresh)
 
     @staticmethod
-    def get(url):
+    def _read(url, accept):
         req = urllib.request.Request(
-            url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION,
-                          "Accept": "application/json"})
+            url, headers={"User-Agent": "tempest-dashboard/" + core.VERSION, "Accept": accept})
         with urllib.request.urlopen(req, timeout=20) as r:
-            return json.loads(r.read().decode("utf-8"))
+            return r.read().decode("utf-8")
+
+    @staticmethod
+    def get(url):
+        return json.loads(StatusFeed._read(url, "application/json"))
+
+    @staticmethod
+    def get_text(url):
+        return StatusFeed._read(url, "text/html")
 
     def fetch_once(self):
         return self.parse(self.get(self.url))
@@ -587,9 +594,6 @@ class StatuspageFetcher(StatusFeed):
     """
 
     PARTS = None          # the names of the components that count; None is all
-    HISTORY = ""          # where the past incidents are listed
-    IMPACT = {"minor": "degraded_performance", "major": "partial_outage",
-              "critical": "major_outage"}
 
     @classmethod
     def parse(cls, raw, now=None, ids=None):
@@ -613,57 +617,46 @@ class StatuspageFetcher(StatusFeed):
                 "via": via, "parts": parts[:PARTS_KEPT]}
 
 
-    @classmethod
-    def parse_history(cls, raw, ids=None):
-        """The past incidents from Statuspage's list: (events, the earliest
-        moment the list is complete from). An event is when one began and
-        ended, how bad it got, and which of this service's components it
-        touched. The list is every service's, so an incident not on this
-        service's components is not this service's."""
-        incidents = raw.get("incidents") or []
-        starts = [_iso_epoch(i.get("started_at") or i.get("created_at")) for i in incidents]
-        starts = [t for t in starts if t is not None]
-        if not starts:
-            raise ValueError("its history has no incidents to go on")
-        if cls.PARTS is not None and not any(i.get("components") for i in incidents):
-            # Nothing says whose an incident was: counting them all, or none,
-            # would be a guess, and none would read as a clean record.
-            raise ValueError("its incidents do not say which components they touched")
-
-        def mine(c):
-            if ids:
-                return c.get("id") in ids or c.get("code") in ids
-            return cls.PARTS is None or c.get("name") in cls.PARTS
-
-        events = []
-        for i in incidents:
-            comps = [c for c in i.get("components") or [] if mine(c)]
-            if cls.PARTS is not None and not comps:
-                continue
-            start = _iso_epoch(i.get("started_at") or i.get("created_at"))
-            end = _iso_epoch(i.get("resolved_at"))         # one still open is the live record's
-            if start is None or end is None or end <= start:
-                continue
-            seen = [ac.get("new_status") for u in i.get("incident_updates") or []
-                    for ac in u.get("affected_components") or []
-                    if mine(ac) and ac.get("new_status") not in (None, "operational")]
-            worst = (max(seen, key=lambda st: STATUS_RANK.get(st, 2)) if seen
-                     else cls.IMPACT.get(i.get("impact")))
-            if worst is None:                              # an impact of "none" is a notice
-                continue
-            events.append({"start": start, "end": end, "worst": worst,
-                           "parts": sorted({c.get("name") or "" for c in comps})[:PARTS_KEPT]})
-        return events, min(starts)
-
-    def history(self):
-        return self.parse_history(self.get(self.HISTORY))
-
 
 class ClaudeStatusFetcher(StatuspageFetcher):
     ENDPOINT = "https://status.claude.com/api/v2/summary.json"
     HISTORY = "https://status.claude.com/api/v2/incidents.json"
     LABEL = "Claude status"
     NAME = "Claude"
+    IMPACT = {"minor": "degraded_performance", "major": "partial_outage",
+              "critical": "major_outage"}
+
+    @classmethod
+    def parse_history(cls, raw):
+        """The past incidents from Statuspage's list: (events, the earliest
+        moment the list is complete from). An event is when one began and
+        ended, how bad it got, and which components it touched. Claude counts
+        every component, so every incident on its page is its own."""
+        incidents = raw.get("incidents") or []
+        starts = [_iso_epoch(i.get("started_at") or i.get("created_at")) for i in incidents]
+        starts = [t for t in starts if t is not None]
+        if not starts:
+            raise ValueError("its history has no incidents to go on")
+        events = []
+        for i in incidents:
+            start = _iso_epoch(i.get("started_at") or i.get("created_at"))
+            end = _iso_epoch(i.get("resolved_at"))         # one still open is the live record's
+            if start is None or end is None or end <= start:
+                continue
+            seen = [ac.get("new_status") for u in i.get("incident_updates") or []
+                    for ac in u.get("affected_components") or []
+                    if ac.get("new_status") not in (None, "operational")]
+            worst = (max(seen, key=lambda st: STATUS_RANK.get(st, 2)) if seen
+                     else cls.IMPACT.get(i.get("impact")))
+            if worst is None:                              # an impact of "none" is a notice
+                continue
+            events.append({"start": start, "end": end, "worst": worst,
+                           "parts": sorted({c.get("name") or ""
+                                            for c in i.get("components") or []})[:PARTS_KEPT]})
+        return events, min(starts)
+
+    def history(self):
+        return self.parse_history(self.get(self.HISTORY))
 
 
 class ChatGptStatusFetcher(StatuspageFetcher):
@@ -675,7 +668,7 @@ class ChatGptStatusFetcher(StatuspageFetcher):
     its components were found", rather than going green."""
 
     ENDPOINT = "https://status.openai.com/api/v2/summary.json"
-    HISTORY = "https://status.openai.com/api/v2/incidents.json"
+    PAGE = "https://status.openai.com/"
     LAYOUT = "https://status.openai.com/proxy/status.openai.com"
     GROUP = "ChatGPT"
     LABEL = "ChatGPT status"
@@ -686,14 +679,20 @@ class ChatGptStatusFetcher(StatuspageFetcher):
                        "Sites", "Connectors/Apps"})
 
     @classmethod
-    def group_ids(cls, layout):
-        """The component ids the page lists under ChatGPT, or None."""
+    def group_parts(cls, layout):
+        """{component id: name} for what the page lists under ChatGPT, or None."""
         items = ((layout.get("summary") or {}).get("structure") or {}).get("items") or []
         for item in items:
             group = item.get("group") or {}
             if group.get("name") == cls.GROUP:
-                return {c.get("component_id") for c in group.get("components") or []} or None
+                return {c.get("component_id"): c.get("name") or ""
+                        for c in group.get("components") or []} or None
         return None
+
+    @classmethod
+    def group_ids(cls, layout):
+        """The component ids the page lists under ChatGPT, or None."""
+        return set(cls.group_parts(layout) or ()) or None
 
     def fetch_once(self):
         raw = self.get(self.url)
@@ -705,13 +704,79 @@ class ChatGptStatusFetcher(StatuspageFetcher):
             self.note = e.__class__.__name__
         return self.parse(raw, ids=ids)
 
-    def history(self):
-        raw = self.get(self.HISTORY)
+    # OpenAI's incident list says nothing of components, so it cannot say which
+    # incidents were ChatGPT's. The page's own bars can: they are drawn from a
+    # list of impacts, one per component, embedded in the page's data.
+    STATUSES = {"full_outage": "major_outage"}
+
+    @staticmethod
+    def _flight(html):
+        """The page's own data. Next.js streams it as JSON strings in script
+        tags, split across many, and one value can straddle two."""
+        return "".join(json.loads(m.group(1)) for m in re.finditer(
+            r'self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)', html))
+
+    @classmethod
+    def parse_page_history(cls, html, parts, now=None):
+        """ChatGPT's past incidents from the status page itself: (events, the
+        earliest moment they are complete from). Each impact on the page names
+        a component, when it began and ended, and how bad; the ones on the
+        components in `parts` (id: name), joined per incident where they touch
+        or overlap, are the events. The page draws its bars from that list, so
+        it is complete from its oldest impact, on any component, and not
+        further back than the window the page says it shows."""
+        now = time.time() if now is None else now
+        flight = cls._flight(html)
+        tail = flight.find('"component_uptimes"')
+        head = flight.rfind('"component_impacts":', 0, tail) if tail >= 0 else -1
+        if head < 0:
+            raise ValueError("the page holds no component history")
+        head += len('"component_impacts":')
         try:
-            ids = self.group_ids(self.get(self.LAYOUT))
-        except Exception:
-            ids = None
-        return self.parse_history(raw, ids)
+            impacts, end = json.JSONDecoder().raw_decode(flight, head)
+        except ValueError:
+            raise ValueError("the page's component history could not be read")
+        # The page-level list is the one that sits beside the uptime figures;
+        # an incident's own list is not the whole record.
+        if not isinstance(impacts, list) or not flight[end:].startswith(',"component_uptimes"'):
+            raise ValueError("the page's component history is not where it was")
+        if not impacts:
+            raise ValueError("the page's component history is empty")
+        oldest = [t for t in (_iso_epoch(i.get("start_at")) for i in impacts) if t is not None]
+        if not oldest:
+            raise ValueError("the page's component history has no dates")
+        m = re.search(r'"history_window_days":(\d+)', flight)
+        by_incident = {}
+        for imp in impacts:
+            cid, t0 = imp.get("component_id"), _iso_epoch(imp.get("start_at"))
+            if cid not in parts or t0 is None:
+                continue
+            t1 = _iso_epoch(imp.get("end_at"))              # "$undefined" while it goes on
+            by_incident.setdefault(imp.get("status_page_incident_id") or imp.get("id"), []).append(
+                (t0, now if t1 is None else t1,
+                 cls.STATUSES.get(imp.get("status"), imp.get("status")), parts[cid]))
+        worse = lambda a, b: max((a, b), key=lambda st: STATUS_RANK.get(st, 2))
+        events = []
+        for spans in by_incident.values():
+            spans.sort(key=lambda x: x[0])
+            run = None
+            for t0, t1, st, name in spans:
+                if run and t0 <= run["end"]:
+                    run["end"], run["worst"] = max(run["end"], t1), worse(run["worst"], st)
+                    run["parts"].add(name)
+                else:
+                    run = {"start": t0, "end": t1, "worst": st, "parts": {name}}
+                    events.append(run)
+        events = [dict(e, parts=sorted(e["parts"])[:PARTS_KEPT]) for e in events
+                  if e["end"] > e["start"] and e["worst"] != "operational"]
+        events.sort(key=lambda e: e["start"])
+        return events, max(min(oldest), now - (int(m.group(1)) if m else 90) * 86400)
+
+    def history(self):
+        parts = self.group_parts(self.get(self.LAYOUT))
+        if not parts:
+            raise ValueError("the page's own layout does not say which components are ChatGPT's")
+        return self.parse_page_history(self.get_text(self.PAGE), parts)
 
 
 class GeminiStatusFetcher(StatusFeed):

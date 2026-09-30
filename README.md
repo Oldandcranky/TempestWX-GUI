@@ -365,6 +365,17 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **`deploy.sh` warns before shipping the wrong thing, and never fails
+  silently.** It says when the checkout is not `main` or is behind
+  `origin/main`, since a forgotten `git pull` would put an older page over a
+  newer one; "uncommitted" now counts only shipped files, so an edited README
+  no longer trips it. The Python is syntax-checked before anything is sent, so
+  a typo fails on the laptop rather than crash-looping with the wall dark. ssh
+  never prompts (a prompt landed mid-line and came back for every connection)
+  and gives up on an unreachable NAS after ten seconds. Losing the NAS while
+  checking what landed, or running outside a git checkout, used to end the run
+  with no word of why; both say so now. It keeps twenty logs, as it always
+  claimed to, not twenty-one.
 - **The reliability page's incident table reads cleanly.** Its columns line up:
   it was a grid per row, each sizing its own columns, and is one grid now. The
   headings say what the columns are (Started, Service, State, Duration,

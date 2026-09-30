@@ -29,6 +29,14 @@ TRIES="${TRIES:-30}"                        # × 2s before giving up on the page
 
 cd "$(dirname "$0")"
 
+# Every ssh below goes through this, the ones inside run's strings included.
+# BatchMode: a password or host-key prompt would land mid-line on the terminal
+# while the step's output goes to the log, and come back for each of the
+# thirty-odd connections a run makes; failing with the reason is better.
+# ConnectTimeout: a NAS that drops packets would otherwise hold each of the
+# diagnostic sweep's connections for the whole of the OS's TCP timeout.
+ssh(){ command ssh -o BatchMode=yes -o ConnectTimeout=10 "$@"; }
+
 # ───────────────────────────────────────────────────────────────── output ───
 
 if [ -t 1 ]; then
@@ -41,8 +49,9 @@ fi
 mkdir -p deploy-logs
 LOG="deploy-logs/deploy-$(date +%Y%m%d-%H%M%S).log"
 # Keep the last twenty. Enough to compare a bad deploy against the last good
-# one, few enough that the directory never needs thinking about.
-ls -1t deploy-logs/*.log 2>/dev/null | tail -n +21 | xargs -r rm -f 2>/dev/null || true
+# one, few enough that the directory never needs thinking about. This run's
+# log is not written yet, so that is nineteen old ones.
+ls -1t deploy-logs/*.log 2>/dev/null | tail -n +20 | xargs -r rm -f 2>/dev/null || true
 
 ts(){ date "+%H:%M:%S"; }
 note(){ printf '%s\n' "$*" >>"$LOG"; }
@@ -54,7 +63,8 @@ bad(){   printf "${R}✗${Z} ${D}exit %s${Z}\n" "$1"; }
 
 # Every command goes through here: logged with its exit code and duration, and
 # on failure the log lines it just wrote are echoed to the terminal, so the
-# reason is on screen without anyone having to go and open the file.
+# reason is on screen without anyone having to go and open the file. A third
+# argument of "local" skips the NAS sweep for a step that never touched it.
 run(){
   local label="$1" cmd="$2" from t0 rc dt
   begin "$label"
@@ -68,7 +78,7 @@ run(){
     bad "$rc"
     printf "\n${R}%s failed.${Z} What it said:\n\n" "$label"
     sed -n "${from},\$p" "$LOG" | sed 's/^/    /'
-    diagnose
+    [ "${3:-}" = "local" ] || diagnose
     printf "\n  ${B}log${Z} %s  ${D}(paste this whole file)${Z}\n\n" "$LOG"
     exit "$rc"
   fi
@@ -112,14 +122,28 @@ diagnose(){
 sha256(){ command -v shasum >/dev/null && shasum -a 256 "$1" || sha256sum "$1"; }
 want=$(sha256 web/index.html | cut -c1-12)
 
-head=$(git rev-parse --short HEAD 2>/dev/null || echo "not a git checkout")
-dirty=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-state=$([ "$dirty" = "0" ] && echo "clean" || echo "${dirty} file(s) uncommitted")
+# What is about to go on the wall, as git sees it. Only shipped files count as
+# uncommitted: an edited README changes nothing on the NAS, and a warning that
+# fires for it is a warning that gets ignored. The fetch is what notices a
+# forgotten `git pull`, which would put an older page over a newer one.
+head="not a git checkout"; state="unknown"; dirty=0; branch=""; behind=""
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  head=$(git rev-parse --short HEAD)
+  dirty=$(git status --porcelain -- $SHIP | wc -l | tr -d ' ')
+  state=$([ "$dirty" = "0" ] && echo "clean" || echo "${dirty} file(s) uncommitted")
+  branch=$(git rev-parse --abbrev-ref HEAD)
+  if git fetch -q origin main 2>/dev/null; then
+    behind=$(git rev-list --count HEAD..origin/main)
+  else
+    behind="?"
+  fi
+fi
 
 {
   echo "Tempest deploy — $(date)"
   echo "target   $NAS:$APP  port $PORT"
   echo "commit   $head ($state)"
+  [ -z "$branch" ] || echo "branch   $branch, $behind commit(s) behind origin/main"
   echo "page     $want"
   echo
   echo "shipping $SHIP"
@@ -127,6 +151,7 @@ state=$([ "$dirty" = "0" ] && echo "clean" || echo "${dirty} file(s) uncommitted
   echo "--- local environment"
   uname -a
   bash --version | head -1
+  python3 --version 2>&1
   tar --version 2>&1 | head -1
   ssh -V 2>&1
   echo
@@ -141,7 +166,20 @@ printf "  ${D}commit${Z}  %s ${D}(%s)${Z}\n" "$head" "$state"
 printf "  ${D}page${Z}    %s\n" "$want"
 printf "  ${D}log${Z}     %s\n\n" "$LOG"
 
-[ "$dirty" = "0" ] || printf "  ${Y}!${Z} shipping uncommitted changes\n\n"
+warned=""
+warn(){ printf "  ${Y}!${Z} %s\n" "$1"; note "warning: $1"; warned=1; }
+[ "$dirty" = "0" ] || warn "shipping uncommitted changes"
+[ -z "$branch" ] || [ "$branch" = "main" ] || warn "on $branch, not main"
+case "$behind" in
+  ""|0) ;;
+  "?")  warn "could not fetch origin/main, so newer commits were not checked for" ;;
+  *)    warn "origin/main has $behind commit(s) this checkout lacks — git pull?" ;;
+esac
+[ -z "$warned" ] || echo
+
+# A syntax error would otherwise be built, crash-loop, and be noticed a minute
+# later with the wall display already dark.
+run "check python" "python3 -m py_compile tempest_core.py tempest_server.py" local
 
 # DSM restricts SFTP, so stream a tar over ssh. The two macOS guards: without
 # COPYFILE_DISABLE its tar sprinkles ._ resource-fork files through the build
@@ -163,7 +201,8 @@ run "fix permissions" \
 # the build has even started.
 begin "verify what landed"
 landed=$(ssh "$NAS" "command -v sha256sum >/dev/null \
-  && sha256sum '$APP/web/index.html' | cut -c1-12 || echo no-sha256sum" 2>>"$LOG")
+  && sha256sum '$APP/web/index.html' | cut -c1-12 || echo no-sha256sum" 2>>"$LOG") \
+  || { printf "${R}✗${Z}\n"; die "lost the NAS while checking what landed"; }
 note ""; note "=== $(ts)  verify what landed"
 note "local  $want"
 note "remote $landed"
@@ -197,7 +236,7 @@ if [ "$got" = "$want" ]; then
   ok "$(( SECONDS - t0 ))"
 else
   printf "${R}✗${Z}\n"
-  die "after $(( TRIES * 2 ))s the NAS still serves ui '${got:-nothing}', wanted '$want'"
+  die "after $(( SECONDS - t0 ))s the NAS still serves ui '${got:-nothing}', wanted '$want'"
 fi
 
 printf "\n  ${G}✓ live${Z} — %s\n" "$want"

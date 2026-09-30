@@ -368,8 +368,10 @@ checked against the Host.
 - **The AI status card has a heartbeat.** A pulse line along the bottom of the
   card shows when the status pages were last read: each reading puts a beat
   at the right edge, and it drifts left over the two minutes until the next
-  one, with the age beside it. It takes the colour of the worst status on the
-  card. If every status page is out of reach it flatlines in amber and says
+  one, with the age beside it. While readings arrive, the beat glows in a
+  slow lub-dub about once a second, so it reads as alive from across the
+  room; the drift and the glow are moved by the graphics chip, so both stay
+  smooth on the TV. It takes the colour of the worst status on the card. If every status page is out of reach it flatlines in amber and says
   "No pulse" once, where the card used to repeat "Can't reach the status page"
   under all three lines; a single page out of reach keeps its own note. The
   server now sends how often it reads them, so the page does not keep its own

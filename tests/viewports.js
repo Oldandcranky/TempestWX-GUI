@@ -133,8 +133,18 @@ const measure = (root) => {
     for (const svg of card.querySelectorAll('svg')) {
       const r = svg.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
-      const spill = Math.max(frame.top - r.top, r.bottom - frame.bottom,
-                             frame.left - r.left, r.right - frame.right);
+      // What a clipping box around it cuts off is not drawn. The AI card's
+      // heartbeat trace is twice the width of the window it slides through.
+      let {left, top, right, bottom} = r;
+      for (let a = svg.parentElement; a && a !== card; a = a.parentElement) {
+        if (getComputedStyle(a).overflow === 'visible') continue;
+        const c = a.getBoundingClientRect();
+        left = Math.max(left, c.left); top = Math.max(top, c.top);
+        right = Math.min(right, c.right); bottom = Math.min(bottom, c.bottom);
+      }
+      if (right <= left || bottom <= top) continue;
+      const spill = Math.max(frame.top - top, bottom - frame.bottom,
+                             frame.left - left, right - frame.right);
       if (spill > 1)
         bad.push([id, 'a drawing escapes the card by ' + spill.toFixed(0) + 'px']);
     }
@@ -882,14 +892,22 @@ console.log = (...args) => {
           const lbl = beat.querySelector('.ago').textContent;
           if (flat) {
             if (!beat.classList.contains('down')) out.push('all out of reach, but not flat');
-            if (beat.querySelector('.trace')) out.push('all out of reach, but still beating');
+            if (beat.querySelector('.trace, .glow')) out.push('all out of reach, but still beating');
             if (!/^No pulse/.test(lbl)) out.push('flat, and says "' + lbl + '"');
           } else {
-            const tx = new DOMMatrix(getComputedStyle(beat.querySelector('.trace')).transform).e;
-            const want = -188 * age / 120;
+            const trace = beat.querySelector('.trace');
+            const tx = new DOMMatrix(getComputedStyle(trace).transform).e / trace.offsetWidth;
+            const want = -0.47 * age / 120;
             // Up to two seconds between a poll and the measurement.
-            if (tx > want + 1 || tx < want - 5) out.push('beat at ' + tx.toFixed(1) + ', expected ' + want.toFixed(1));
+            if (tx > want + 0.003 || tx < want - 0.012)
+              out.push('beat at ' + tx.toFixed(3) + ' of the trace, expected ' + want.toFixed(3));
             if (!/^\d+[sm]/.test(lbl)) out.push('the age reads "' + lbl + '"');
+            // The pulse that says it is alive, timed off the clock so a
+            // rebuild does not restart it.
+            const glow = getComputedStyle(beat.querySelector('.glow'));
+            const delay = parseFloat(glow.animationDelay);
+            if (glow.animationName !== 'aipulse' || !(delay <= 0 && delay > -1.1))
+              out.push('no pulse (' + glow.animationName + ', ' + glow.animationDelay + ')');
           }
           const probe = document.createElement('span');
           probe.style.color = 'var(--' + tone + ')';

@@ -1937,13 +1937,21 @@ class AlertsFetcher(PollingFetcher):
         the same office ending at the same time, whose text says the same
         thing, are one alert: the newest is kept and it says how many times
         it was issued. Two different statements ending together stay two.
+
+        A reissue can also move the end: a Hydrologic Outlook sent at 1:00
+        ending at 3:00 was sent again at 1:02 ending at 4 AM, the first never
+        withdrawn and neither naming the other. So a different end still
+        folds when the areas are the same and the text says the same thing.
         """
         kept = []
         for a in alerts:
             twin = None
             for k in kept:
-                if (k["event"], k["sender"], k["ends"] or k["expires"]) != \
-                        (a["event"], a["sender"], a["ends"] or a["expires"]):
+                if (k["event"], k["sender"]) != (a["event"], a["sender"]):
+                    continue
+                if (k["ends"] or k["expires"]) != (a["ends"] or a["expires"]) and not (
+                        a["description"] and k["description"]
+                        and set(a["areas"]) == set(k["areas"])):
                     continue
                 if a["description"] and k["description"]:
                     alike = difflib.SequenceMatcher(

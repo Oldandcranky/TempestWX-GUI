@@ -190,8 +190,8 @@ body.tv{cursor:none}
 .aibeat .scope > svg{top:15%;height:70%}
 .aibeat .glow{opacity:0;transform-origin:48.5% 50%;animation:aipulse 1.1s ease-in-out infinite;will-change:opacity,transform}
 @keyframes aidrift{to{transform:translateX(-47%)}}
-@keyframes aipulse{0%,62%,100%{opacity:0;transform:scaleY(1)} 12%{opacity:1;transform:scaleY(1.3)}
-                  24%{opacity:.3;transform:scaleY(1.05)} 36%{opacity:.8;transform:scaleY(1.18)}}
+@keyframes aipulse{0%,62%,100%{opacity:0;transform:scaleY(1)} 12%{opacity:1;transform:scaleY(1.45)}
+                  24%{opacity:.35;transform:scaleY(1.08)} 36%{opacity:.9;transform:scaleY(1.28)}}
 .aibeat .ago{font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;text-transform:uppercase;
              color:var(--label);white-space:nowrap;min-width:4.6em;text-align:right}
 .aibeat.down .ago{color:var(--accent)}
@@ -3367,8 +3367,8 @@ function aiBeat(s, readings, flat, tone){
         '<stop offset=".485" stop-color="currentColor"/>' +
         '<stop offset="1" stop-color="currentColor" stop-opacity=".35"/></linearGradient></defs>' +
         line("M0 10H185L188 8L191 12L194 3L197 17L200 10H400", 2, "url(#aifade)")) +
-      svg("glow", "animation-delay:" + pulse.toFixed(2) + "s;filter:drop-shadow(0 0 5px " + col + ")",
-        line("M182 10H185L188 8L191 12L194 3L197 17L200 10H206", 3, "currentColor")) +
+      svg("glow", "animation-delay:" + pulse.toFixed(2) + "s;filter:drop-shadow(0 0 7px " + col + ")",
+        line("M182 10H185L188 8L191 12L194 3L197 17L200 10H206", 3.4, "currentColor")) +
       '</div>';
   w.innerHTML = '<div class="scope" style="color:' + col + '">' + trace + '</div>' +
     '<span class="ago">' + (flat ? "No pulse · " : "") + ago(age) + '</span>';

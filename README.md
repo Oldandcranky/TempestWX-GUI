@@ -365,6 +365,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Only one deploy runs at a time.** Two started seven seconds apart, one
+  from a laptop checkout and one from a Claude session, and their two
+  container rebuilds each removed the other's, leaving the dashboard down.
+  `deploy.sh` now takes a lock on the NAS before shipping anything; a second
+  deploy says whose it is waiting for and goes when the first is done. The
+  lock is let go however a run ends, and one left by a deploy killed outright
+  is taken over after ten minutes.
 - **The AI status card has a heartbeat.** A pulse line along the bottom of the
   card shows when the status pages were last read: each reading puts a beat
   at the right edge, and it drifts left over the two minutes until the next

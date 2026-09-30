@@ -2,6 +2,7 @@
 .gitignore
 README.md
 data/
+.deploy-lock/
 *.json
 __pycache__/
 *.py[cod]

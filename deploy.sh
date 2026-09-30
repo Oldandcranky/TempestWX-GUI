@@ -26,6 +26,7 @@ PORT="${PORT:-8444}"
 DOCKER="${DOCKER:-/usr/local/bin/docker}"   # not on a non-login shell's PATH
 SHIP="tempest_core.py tempest_server.py web Dockerfile .dockerignore"
 TRIES="${TRIES:-30}"                        # × 2s before giving up on the page
+STALE="${STALE:-600}"                       # s before a deploy lock counts as abandoned
 
 cd "$(dirname "$0")"
 
@@ -180,6 +181,60 @@ esac
 # A syntax error would otherwise be built, crash-loop, and be noticed a minute
 # later with the wall display already dark.
 run "check python" "python3 -m py_compile tempest_core.py tempest_server.py" local
+
+# One deploy at a time. On 2026-09-29 two ran seven seconds apart, one from
+# the owner's checkout and one from a Claude session's; their two `compose up`
+# runs each recreated the container under the other and left none running.
+# The lock is a directory on the NAS, because mkdir either makes it or finds
+# it there, never both. It holds a token, when it was taken and by whom; a
+# second deploy waits and says for whom. It is let go however this run ends,
+# and one older than STALE — a deploy killed outright — is taken over.
+token="$(hostname -s)-$$-$(date +%s)"
+tilde="~"   # bash 3.2 keeps the backslash in ${PWD/#$HOME/\~}
+who=$(printf '%s' "$(whoami)@$(hostname -s):${PWD/#$HOME/$tilde}@$head" | tr -c 'A-Za-z0-9@._:/~+-' '_')
+lockcmd(){
+  ssh "$NAS" "sh -s -- $1 '$APP/.deploy-lock' '${2:-$token}' '$who'" <<'SH'
+L="$2"; now=$(date +%s)
+case "$1" in
+  take)
+    if mkdir "$L" 2>/dev/null; then printf '%s\n%s\n%s\n' "$3" "$now" "$4" >"$L/owner"; echo ok
+    else
+      # Just made by someone else and not yet written to: count it as new.
+      t=$(sed -n 2p "$L/owner" 2>/dev/null); o=$(sed -n 1p "$L/owner" 2>/dev/null)
+      echo "$(( now - ${t:-$now} )) ${o:-unknown} $(sed -n 3p "$L/owner" 2>/dev/null)"
+    fi ;;
+  # Only the lock this token names, so a waiter cannot remove one taken since.
+  give) [ "$(sed -n 1p "$L/owner" 2>/dev/null)" = "$3" ] && rm -rf "$L"; true ;;
+esac
+SH
+}
+locked=""
+trap '[ -z "$locked" ] || lockcmd give >/dev/null 2>&1 || true' EXIT
+trap 'exit 130' INT TERM
+
+begin "take the deploy lock"
+t0=$SECONDS; said=""
+while :; do
+  got=$(lockcmd take 2>>"$LOG") || { printf "${R}✗${Z}\n"; die "lost the NAS while taking the deploy lock"; }
+  [ "$got" = "ok" ] && break
+  read -r age other holder <<<"$got"
+  case "$age" in ''|*[!0-9]*) printf "${R}✗${Z}\n"; die "the NAS answered the lock with: $got" ;; esac
+  if [ "$age" -ge "$STALE" ]; then
+    note "=== $(ts)  took over a lock ${age}s old from ${holder:-nobody}"
+    lockcmd give "$other" >/dev/null 2>>"$LOG" || true
+    continue
+  fi
+  if [ -z "$said" ]; then
+    said=1
+    note "=== $(ts)  waiting for the deploy from $holder, ${age}s in"
+    printf "${Y}…${Z}\n    ${D}another deploy is running (%s, %ss in); waiting for it${Z}\n" "$holder" "$age"
+    begin "take the deploy lock"
+  fi
+  sleep 3
+done
+locked=1
+note "=== $(ts)  took the deploy lock as $who"
+ok "$(( SECONDS - t0 ))"
 
 # DSM restricts SFTP, so stream a tar over ssh. The two macOS guards: without
 # COPYFILE_DISABLE its tar sprinkles ._ resource-fork files through the build

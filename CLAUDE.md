@@ -30,6 +30,13 @@ saying so is part of finishing the change.
 Extraction overwrites; it does not sync. A file deleted from the repo lives
 on at `/volume1/docker/tempest` until someone removes it.
 
+The owner often runs `git pull && ./deploy.sh` themselves after a push, so
+a session that also deploys can overlap them. That is what the lock at
+`/volume1/docker/tempest/.deploy-lock` is for: a second deploy waits, naming
+whose deploy it is waiting on. Two unlocked runs left the dashboard with no
+container on 2026-09-29. A lock from a killed deploy is taken over after ten
+minutes (`STALE`), or `rm -rf` it by hand.
+
 ## This station
 
 | | |

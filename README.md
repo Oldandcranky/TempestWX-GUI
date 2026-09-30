@@ -365,6 +365,15 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The Radar card no longer flashes, and it moves.** It embedded Windy, and
+  the card being rebuilt every two seconds moved that iframe each time,
+  which reloads it: a flash every two seconds, and Windy's loop never got as
+  far as playing. The card now draws its own: the last two hours of
+  RainViewer radar in ten-minute frames, cross-fading one into the next with
+  a pause on the newest, over Esri's dark grey map with the station at the
+  centre and the place names on top. It is never rebuilt; the page swaps the
+  other cards in around it. A tap anywhere on it opens the full weather map,
+  and Back (the TV remote's included) comes home.
 - **The AI card's pulse can be your own heartbeat.** Settings → Data sources
   → AI status takes an ECG file from an Apple Health export
   (`electrocardiograms/ecg_….csv`). The server finds every beat in it and

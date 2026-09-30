@@ -283,6 +283,25 @@ console.log = (...args) => {
 
 (async () => {
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
+  /* The Radar card fetches from RainViewer and Esri. A cloud session has no
+     route out, a tile that fails to load is a console error, and live radar
+     changes by the minute, so every page gets a fixed stand-in: three frames
+     ten minutes apart, and a blank tile for every image. */
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async (opts) => {
+    const page = await newPage(opts);
+    await page.route(/^https:\/\/(api\.rainviewer\.com|tilecache\.rainviewer\.com|server\.arcgisonline\.com)\//, route => {
+      if (!route.request().url().includes('weather-maps.json'))
+        return route.fulfill({ status: 200, contentType: 'image/png', body: PNG });
+      const t = Math.floor(Date.now() / 600000) * 600;
+      route.fulfill({ status: 200, contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' },
+        body: JSON.stringify({ host: 'https://tilecache.rainviewer.com', radar: { past:
+          [t - 1200, t - 600, t].map(time => ({ time, path: '/v2/radar/fake' + time })) } }) });
+    });
+    return page;
+  };
   let failures = 0, checked = 0;
   setTimeout(() => {
     say('\n  FAIL out of time: ' + BUDGET_S + 's spent. Still running: ' + [...running].join('; '));
@@ -945,6 +964,79 @@ console.log = (...args) => {
     } else {
       failures += bad.length;
       console.log('  FAIL AI heartbeat, 5 states x 2 sizes');
+      for (const why of bad) console.log('         ' + why);
+    }
+  });
+
+  // ── the Radar card: its own loop, never rebuilt, a tap to the map ──
+  // It embedded Windy, and the two-second rebuild moved that iframe each time,
+  // which reloads it: a flash every two seconds and a loop that never played.
+  section("the Radar card: a loop that is never rebuilt, and a tap to the map", async () => {
+    const bad = [];
+    await abreast([[1920, 1080], [414, 896]], async ([width, height]) => {
+      const page = await browser.newPage({ viewport: { width, height } });
+      // The captured state has no location, which shows the card's placeholder.
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify(Object.assign(freshen(), { lat: 42.1681, lon: -88.4281 })) }));
+      const say = (why) => bad.push(width + 'px  ' + why);
+      try {
+        await page.goto(BASE, { waitUntil: 'networkidle' });
+        await page.waitForSelector('#card-radar .radar-host', { state: 'attached' });
+        await page.evaluate(() => {
+          document.getElementById('card-radar').scrollIntoView();
+          window.__host = document.querySelector('#card-radar .radar-host');
+          window.__lost = 0;
+          window.__seen = new Set();
+          new MutationObserver(ms => { for (const m of ms) for (const n of m.removedNodes)
+            if (n.id === 'card-radar' || (n.querySelector && n.querySelector('.radar-host'))) window.__lost++; })
+            .observe(document.getElementById('grid'), { childList: true, subtree: true });
+          setInterval(() => { const on = document.querySelector('#card-radar .frame.on');
+            if (on) window.__seen.add([...on.parentNode.children].indexOf(on)); }, 200);
+        });
+        await page.waitForTimeout(5000);                     // two rebuilds and more
+        const got = await page.evaluate(() => {
+          const host = document.querySelector('#card-radar .radar-host');
+          const r = host.getBoundingClientRect();
+          const tiles = [...host.querySelectorAll('.base img')].map(i => i.getBoundingClientRect());
+          const me = host.querySelector('.me').getBoundingClientRect();
+          return { same: host === window.__host, lost: window.__lost, seen: window.__seen.size,
+                   iframe: !!document.querySelector('#card-radar iframe'),
+                   frames: host.querySelectorAll('.frame').length,
+                   when: host.querySelector('.when').textContent,
+                   covered: tiles.length > 0 && Math.min(...tiles.map(t => t.left)) <= r.left + 0.5 &&
+                            Math.max(...tiles.map(t => t.right)) >= r.right - 0.5 &&
+                            Math.min(...tiles.map(t => t.top)) <= r.top + 0.5 &&
+                            Math.max(...tiles.map(t => t.bottom)) >= r.bottom - 0.5,
+                   centred: Math.abs((me.left + me.right) / 2 - (r.left + r.right) / 2) < 1.5 &&
+                            Math.abs((me.top + me.bottom) / 2 - (r.top + r.bottom) / 2) < 1.5 };
+        });
+        if (got.iframe) say('the card still holds an iframe');
+        if (!got.same || got.lost) say('the radar was rebuilt or moved (' + got.lost + ' removals)');
+        if (got.frames !== 3) say(got.frames + ' frames, expected 3');
+        if (got.seen < 2) say('the loop did not move: ' + got.seen + ' frame(s) shown in 5s');
+        if (!/\d/.test(got.when)) say('no time on the frame: "' + got.when + '"');
+        if (!got.covered) say('the map tiles do not cover the card');
+        if (!got.centred) say('the station is not at the centre');
+        await page.$eval('#card-radar .radar-host', el => el.click());
+        await page.waitForTimeout(900);
+        if (!await page.evaluate(() => document.body.classList.contains('show-map') && history.state && history.state.map))
+          say('a tap did not open the map with a history entry');
+        await page.goBack();
+        await page.waitForTimeout(900);
+        if (await page.evaluate(() => document.body.classList.contains('show-map')))
+          say('Back did not close the map');
+      } catch (e) {
+        say(e.message.split('\n')[0]);
+      }
+      await page.close();
+    });
+    checked += 2;
+    if (bad.length === 0) {
+      console.log('  ok   radar loop, kept, tap to map');
+    } else {
+      failures += bad.length;
+      console.log('  FAIL radar loop, kept, tap to map');
       for (const why of bad) console.log('         ' + why);
     }
   });

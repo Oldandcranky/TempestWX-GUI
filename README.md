@@ -365,6 +365,9 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **A reissued alert that moves its end time is one banner.** Chicago sent the
+  same Hydrologic Outlook twice, ending 3 PM and 4 AM, and withdrew neither;
+  the newer is shown.
 - **The AI status card's button lights on hover**, like the other cards with a
   page, and the reliability page shows it can be clicked away.
 - **The AI status card has the page button** in its top-right corner, like

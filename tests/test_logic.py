@@ -391,6 +391,24 @@ class OneBannerPerStatement(unittest.TestCase):
                          self.feat("2026-09-27T07:08:00-05:00", "A line of strong storms will move through late tonight."))
         self.assertEqual(len(out), 2)
 
+    def test_a_reissue_that_moves_the_end_is_one_banner_the_newer_kept(self):
+        # Chicago's Hydrologic Outlook, 2026-09-30: sent at 1:00 ending at 3,
+        # again at 1:02 ending at 4 AM, and neither naming the other.
+        text = "Waves of rain will continue through Thursday night, with torrential downpours."
+        out = self.parse(self.feat("2026-09-27T07:02:00-05:00", text, event="Hydrologic Outlook",
+                                   expires="2026-09-28T04:00:00-05:00"),
+                         self.feat("2026-09-27T07:00:00-05:00", text, event="Hydrologic Outlook"))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["copies"], 2)
+        self.assertEqual(out[0]["expires"], "2026-09-28T04:00:00-05:00")
+
+    def test_a_different_end_over_different_areas_stays_two(self):
+        a = self.feat("2026-09-27T07:00:00-05:00", "Flooding on the river.", event="Flood Warning")
+        b = self.feat("2026-09-27T07:02:00-05:00", "Flooding on the river.", event="Flood Warning",
+                      expires="2026-09-28T04:00:00-05:00")
+        b["properties"]["areaDesc"] = "Kane; DuPage"
+        self.assertEqual(len(self.parse(a, b)), 2)
+
     def test_different_events_never_fold(self):
         out = self.parse(self.feat("2026-09-27T07:04:00-05:00", "Snow.", event="Winter Weather Advisory"),
                          self.feat("2026-09-27T07:08:00-05:00", "Snow.", event="Winter Storm Warning"))

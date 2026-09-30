@@ -713,6 +713,20 @@ console.log = (...args) => {
       const at = w + 'x' + h;
       if (asked) bad.push(at + ': the record was fetched before the page was opened');
       if (!await page.$('#card-claude .card-head .flipbtn')) bad.push(at + ': the AI status card has no button to its page');
+      // Hovering the card lights its button, as on the other cards with a page.
+      if (w > 720) {
+        const still = await page.$eval('#card-claude .flipbtn', b => getComputedStyle(b).color);
+        // By position: the card is rebuilt every two seconds, too often for page.hover.
+        const at_ = await page.$eval('#card-claude .card-title', el => { const r = el.getBoundingClientRect();
+          return {x: r.x + r.width / 2, y: r.y + r.height / 2}; });
+        await page.mouse.move(at_.x, at_.y);
+        await page.waitForTimeout(300);
+        const lit = await page.$eval('#card-claude .flipbtn', b => getComputedStyle(b).color);
+        const accent = await page.evaluate(() => { const p = document.createElement('i'); p.style.color = 'var(--accent)';
+          document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; });
+        if (lit !== accent || lit === still) bad.push(at + ': hovering the AI status card does not light its button (' + still + ' -> ' + lit + ')');
+        await page.mouse.move(0, 0);
+      }
       await page.$eval('#card-claude', el => el.click());          // a tap on the card is the way in
       await page.waitForTimeout(2200);
       if (!asked) bad.push(at + ': opening the page fetched nothing');

@@ -632,8 +632,9 @@ body.show-map #map{display:block}
 .radar-host .layer{position:absolute;inset:0}
 .radar-host img{position:absolute;display:block;max-width:none;pointer-events:none;
                 -webkit-user-select:none;user-select:none;-webkit-user-drag:none}
-.radar-host .frame{opacity:0;transition:opacity .9s ease-in-out;will-change:opacity}
-.radar-host .frame.on{opacity:.8}
+.radar-host .frame{opacity:0;transition:opacity .9s ease-in-out;will-change:opacity;
+                   filter:brightness(1.18) saturate(1.2)}
+.radar-host .frame.on{opacity:1}
 .radar-host .me{position:absolute;width:.7em;height:.7em;margin:-.35em 0 0 -.35em;border-radius:50%;
                 background:var(--accent);box-shadow:0 0 0 .25em rgba(255,136,55,.28)}
 .radar-host .when{position:absolute;left:.7em;bottom:.55em;font-size:var(--fs-label);font-weight:600;

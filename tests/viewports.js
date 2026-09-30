@@ -918,7 +918,7 @@ console.log = (...args) => {
             if (mine) {
               if (Math.abs(parseFloat(glow.animationDuration) - loop) > 0.01)
                 out.push('the heartbeat loops in ' + glow.animationDuration + ', the recording is ' + loop + 's');
-              const beats = ((document.getElementById('aiheart') || {}).textContent || '').split('scaleY(1.45)').length - 1;
+              const beats = ((document.getElementById('aiheart') || {}).textContent || '').split('opacity:1;').length - 1;
               if (beats !== rr.length) out.push(beats + ' glows in the loop for ' + rr.length + ' beats');
             }
           }

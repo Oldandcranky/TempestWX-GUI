@@ -200,8 +200,8 @@ body.tv{cursor:none}
                  border-top:1px solid var(--card-edge)}
 .aiset .heartset .say{color:var(--muted);line-height:1.45}
 .aiset .heartset .row{display:flex;align-items:center;gap:.8em;flex-wrap:wrap}
-@keyframes aipulse{0%,62%,100%{opacity:0;transform:scaleY(1)} 12%{opacity:1;transform:scaleY(1.45)}
-                  24%{opacity:.35;transform:scaleY(1.08)} 36%{opacity:.9;transform:scaleY(1.28)}}
+@keyframes aipulse{0%,62%,100%{opacity:0;transform:scaleY(1)} 12%{opacity:1;transform:scaleY(1.6)}
+                  24%{opacity:.45;transform:scaleY(1.12)} 36%{opacity:.95;transform:scaleY(1.35)}}
 .aibeat .ago{font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;text-transform:uppercase;
              color:var(--label);white-space:nowrap;min-width:4.6em;text-align:right}
 .aibeat.down .ago{color:var(--accent)}
@@ -3390,8 +3390,8 @@ function aiBeat(s, readings, flat, tone){
         '<stop offset="1" stop-color="currentColor" stop-opacity=".35"/></linearGradient></defs>' +
         line((h ? "M0 11H164" : "M0 10H185") + beat.replace(/^L[\d.]+ [\d.]+/, "") + "H400", 2, "url(#aifade)")) +
       svg("glow" + (h ? " mine" : ""), (h ? "animation-duration:" + loop.toFixed(3) + "s;" : "") +
-        "animation-delay:" + pulse.toFixed(3) + "s;filter:drop-shadow(0 0 7px " + col + ")",
-        line(spike, 3.4, "currentColor")) +
+        "animation-delay:" + pulse.toFixed(3) + "s;filter:drop-shadow(0 0 10px " + col + ")",
+        line(spike, 4, "currentColor")) +
       '</div>';
   w.innerHTML = '<div class="scope" style="color:' + col + '">' + trace + '</div>' +
     '<span class="ago">' + (flat ? "No pulse · " : "") + ago(age) + '</span>';
@@ -3419,8 +3419,8 @@ function heartKeyframes(h){
   let css = "@keyframes aiheart{0%,100%" + rest;
   at.forEach((b, i) => {
     const next = i + 1 < at.length ? at[i + 1] : total + lead;
-    css += pct(b - 40) + rest + pct(b) + "{opacity:1;transform:scaleY(1.45)}" +
-           pct(b + 110) + "{opacity:.35;transform:scaleY(1.08)}" + pct(Math.min(b + 380, next - 50)) + rest;
+    css += pct(b - 40) + rest + pct(b) + "{opacity:1;transform:scaleY(1.6)}" +
+           pct(b + 120) + "{opacity:.45;transform:scaleY(1.15)}" + pct(Math.min(b + 420, next - 50)) + rest;
   });
   let sheet = document.getElementById("aiheart");
   if (!sheet) {

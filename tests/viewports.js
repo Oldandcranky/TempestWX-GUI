@@ -30,6 +30,9 @@
  * outlook's own header takes you back. The corner scale figures that people
  * misread as normals must stay gone.
  *
+ * Then the phone footer with the clock pinned to its widest minute: nothing
+ * off the screen, every button whole, the date the only thing that gives way.
+ *
  * Then the alert banner at a phone, a tablet and the TV: each alert centred,
  * saying "until …" rather than NWS's sentence, naming the office, and never
  * cutting off the event or the end time.
@@ -350,6 +353,81 @@ console.log = (...args) => {
       console.log('  FAIL ' + label + '  ' + e.message.split('\n')[0]);
     }
     await page.close();
+  });
+
+  // ── the phone footer, at the widest the clock and date ever get ──
+  section("the phone footer at its widest minute", async () => {
+    // 12:59:59 AM on a Wednesday in May. A two-digit hour, AM (a hair wider
+    // than PM), and the widest short weekday and month. The footer fitted at
+    // 7:53 PM and pushed the TV button off the screen at 12:53 AM, so it is
+    // measured at its worst minute rather than whenever the suite happens to
+    // run. The date is kept whole at 414; narrower, it may give way, but the
+    // clock and the buttons never do. 500 is wide enough to show the station
+    // name, which must give way before the date does.
+    const AT = Date.parse('2026-05-27T05:59:59Z');      // 00:59:59 in Chicago
+    const bad = [];
+    await abreast([[414, 896], [390, 844], [360, 780], [500, 900]], async ([width, height]) => {
+      const page = await browser.newPage({ viewport: { width, height },
+                                           locale: 'en-US', timezoneId: 'America/Chicago' });
+      await page.addInitScript((at) => {
+        const Real = Date;
+        window.Date = class extends Real {
+          constructor(...a) { super(...(a.length ? a : [at])); }
+          static now() { return at; }
+        };
+      }, AT);
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify(freshen()),
+      }));
+      try {
+        await page.goto(BASE, { waitUntil: 'networkidle' });
+        await page.waitForSelector('.card[id]', { state: 'attached' });
+        await page.waitForTimeout(SETTLE_MS);
+        const found = await page.evaluate((wholeDate) => {
+          const out = [];
+          const foot = document.querySelector('footer'), fr = foot.getBoundingClientRect();
+          const clock = document.getElementById('clock'), date = document.getElementById('date');
+          // A narrower time would pass and prove nothing.
+          if (!/^12:59(:59)?\sAM$/.test(clock.textContent))
+            return ['the clock reads "' + clock.textContent + '", not the pinned 12:59:59 AM'];
+          const doc = document.documentElement.scrollWidth - innerWidth;
+          if (doc > 0) out.push('the page scrolls sideways by ' + doc + 'px');
+          const ox = foot.scrollWidth - foot.clientWidth;
+          if (ox > 0) out.push('the footer overflows itself by ' + ox + 'px');
+          for (const b of foot.querySelectorAll('.controls button')) {
+            const r = b.getBoundingClientRect();
+            if (r.left < fr.left - 0.5 || r.right > fr.right + 0.5 || r.right > innerWidth)
+              out.push('#' + b.id + ' is cut off at ' + r.right.toFixed(1) + 'px, the footer ends at ' +
+                       fr.right.toFixed(1) + ' and the screen at ' + innerWidth);
+          }
+          const c = clock.getBoundingClientRect();
+          const dot = document.getElementById('footdot').getBoundingClientRect();
+          const first = foot.querySelector('.controls button').getBoundingClientRect();
+          if (c.right > dot.left + 0.5) out.push('the clock runs into the health dot');
+          if (c.right > first.left + 0.5) out.push('the clock runs into the buttons');
+          const cut = date.scrollWidth > date.clientWidth;
+          if (wholeDate && cut)
+            out.push('"' + date.textContent + '" is cut to ' + date.clientWidth + 'px of ' + date.scrollWidth);
+          const station = document.getElementById('station').getBoundingClientRect().width;
+          if (cut && station > 0.5)
+            out.push('the date is cut while the station name still has ' + station.toFixed(0) + 'px');
+          return out;
+        }, width >= 414);
+        for (const why of found) bad.push(width + 'px  ' + why);
+      } catch (e) {
+        bad.push(width + 'px  ' + e.message.split('\n')[0]);
+      }
+      await page.close();
+    });
+    checked += 4;
+    if (bad.length === 0) {
+      console.log('  ok   phone footer at 12:59:59 AM, 360-500');
+    } else {
+      failures += bad.length;
+      console.log('  FAIL phone footer at 12:59:59 AM, 360-500');
+      for (const why of bad) console.log('         ' + why);
+    }
   });
 
   // ── the manifest, and that every icon it names is served at its size ──

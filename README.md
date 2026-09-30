@@ -365,6 +365,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The phone footer fits at every hour.** From 10 to 12 o'clock the clock's
+  extra digit pushed the TV button off a 414px screen, and on a 390px iPhone
+  it was cut off at every hour. Nothing left of the buttons could shrink: the
+  station name had already been squeezed to nothing. On a phone held upright
+  the footer now drops the seconds and the station name, which never had
+  room, so "12:59 AM  Wed, May 27" is whole down to 390px; narrower, the date
+  gives way, never the clock or a button. A test pins the clock to 12:59:59
+  AM on a Wednesday in May, its widest, and measures 360 to 500px.
 - **`deploy.sh` warns before shipping the wrong thing, and never fails
   silently.** It says when the checkout is not `main` or is behind
   `origin/main`, since a forgotten `git pull` would put an older page over a

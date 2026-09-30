@@ -1249,14 +1249,28 @@ body.tv .sheet .linkbtn{display:inline-flex}
           background:var(--bg);padding-bottom:6px}
   footer{order:2}
 
-  /* No room for everything on a 360px footer. Keep the clock, the health
+  /* No room for everything on a narrow footer. Keep the clock, the health
      dot, the station and the buttons; drop the long status string, which is
-     the one thing repeated elsewhere on the cards. */
+     the one thing repeated elsewhere on the cards, and the spacer that made
+     room for it (the buttons' margin-left:auto does its job) but still cost
+     a gap. The station name is what gives way here. */
   footer{gap:8px}
-  footer #meta{display:none}
+  footer #meta,footer .spacer{display:none}
   footer .date{overflow:hidden;text-overflow:ellipsis}
   footer .clock{font-size:1.25em}
   footer button{padding:.3em .45em}
+}
+/* A phone held upright. At 12:59 AM the extra digit pushed the TV button
+   off a 414px screen: the station name had already been squeezed to nothing
+   and nothing else left of the buttons could shrink. So the name goes, with
+   the gap it still cost, and tickClock() drops the seconds at this width;
+   that keeps "12:59 AM  Wed, May 27" whole down to 390px. Narrower still
+   the date gives way, never the clock or a button. min-width:0 is what lets
+   it. It is here and not above because flex shrinks everything in
+   proportion: with the name still showing, the date lost a sliver too. */
+@media (max-width:480px){
+  footer #station{display:none}
+  footer .clockhold{min-width:0}
 }
 </style>
 </head>
@@ -5857,10 +5871,15 @@ function updateFooter(s){
   } else banner.classList.remove("show");
 }
 
+/* The width at which the footer hides the station name. The seconds cost
+   about 25px, which a phone held upright needs for the date. Read on every
+   tick, so turning the phone brings them back within a second. */
+const UPRIGHT_PHONE = window.matchMedia("(max-width:480px)");
 function tickClock(){
   const now = new Date();
   document.getElementById("clock").textContent =
-    now.toLocaleTimeString([], {hour:"numeric", minute:"2-digit", second:"2-digit"});
+    now.toLocaleTimeString([], UPRIGHT_PHONE.matches ? {hour:"numeric", minute:"2-digit"}
+                                 : {hour:"numeric", minute:"2-digit", second:"2-digit"});
   document.getElementById("date").textContent =
     now.toLocaleDateString([], {weekday:"short", month:"short", day:"numeric"});
 }

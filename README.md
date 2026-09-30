@@ -365,6 +365,12 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The map page is the same radar loop, full screen.** It was Windy's
+  embed, paused behind a play button; now it plays the card's loop in step
+  with it, with a bar along the bottom for the two hours. A tap anywhere on
+  it comes back, as on the other pages, and the TV walks home from it after
+  a while. Its tiles are made when it opens and dropped when it closes, to
+  spare a TV's memory. Windy is gone from the dashboard.
 - **The Radar card no longer flashes, and it moves.** It embedded Windy, and
   the card being rebuilt every two seconds moved that iframe each time,
   which reloads it: a flash every two seconds, and Windy's loop never got as
@@ -1281,8 +1287,13 @@ checked against the Host.
 
 ## Credits
 
-**Windy** — the radar map embed, used under their free embed. It loads only
-when you open the map. <https://www.windy.com/>
+**RainViewer** — the radar frames on the Radar card and the map page: the
+past two hours in ten-minute steps, free and without a key, fetched by the
+viewing browser. <https://www.rainviewer.com/api.html>
+
+**Esri** — the dark grey map under the radar, and its place names (World
+Dark Gray Canvas; sources Esri, HERE, Garmin, © OpenStreetMap
+contributors). <https://www.esri.com/>
 
 
 **Open-Meteo** — the forecast feed. Free for non-commercial use, no API key;

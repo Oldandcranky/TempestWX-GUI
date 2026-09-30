@@ -612,12 +612,11 @@ body.tv{
   --fs-label:clamp(.7rem,.95vw,1.2rem);
 }
 
-/* Weather map. The iframe is only created the first time it is opened, so
-   nothing contacts a third party until you ask for it. */
+/* The map page: the Radar card's loop at the size of the screen. */
 #map{display:none;flex:1 1 auto;min-height:min(60dvh,420px);
      border-radius:var(--radius);overflow:hidden;
      border:1px solid var(--card-edge);background:var(--card)}
-#map iframe{width:100%;height:100%;border:0;display:block}
+#map .radar-host{height:100%;border-radius:0}
 #map .placeholder{display:flex;height:100%;align-items:center;
                   justify-content:center;color:var(--label);
                   font-size:clamp(12px,1.1vw,16px);text-align:center;padding:2em}
@@ -641,6 +640,13 @@ body.show-map #map{display:block}
                   letter-spacing:.06em;color:#e8eaed;text-shadow:0 1px 3px #000}
 .radar-host .when b{font-weight:700;color:var(--accent);margin-left:.4em}
 .radar-host .credit{position:absolute;right:.6em;bottom:.45em;font-size:9px;color:rgba(255,255,255,.4)}
+/* Full size: a bigger clock, a bigger station, and the two hours as a bar. */
+.radar-host.big .when{font-size:calc(var(--fs-label)*1.7);left:1em;bottom:1.1em}
+.radar-host.big .me{font-size:1.6em}
+.radar-host.big .credit{font-size:11px}
+.radar-host .ticks{position:absolute;left:1.1em;right:1.1em;bottom:.7em;display:flex;gap:3px}
+.radar-host .ticks i{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.14);transition:background .3s}
+.radar-host .ticks i.on{background:var(--accent)}
 @media (prefers-reduced-motion:reduce){ .radar-host .frame{transition:none} }
 
 /* Native cross-fade between the two states — no library, no keyframable
@@ -2925,43 +2931,56 @@ function fitCards(){
   }
 }
 
-/* The Radar card draws its own loop. It embedded Windy's, and the card being
-   rebuilt every two seconds moved that iframe each time, which reloads it:
-   six reloads in twelve seconds, a flash each, and it never got as far as
-   playing. render() now leaves this card where it is, and the loop is ours,
-   so it runs whatever Windy's player does: RainViewer's past two hours of
-   radar in ten-minute frames (free, no key, CORS open), cross-faded over
-   Esri's dark grey canvas at zoom 8. RainViewer stops at zoom 7, so its
-   tiles are drawn at twice their size to match. The whole page is Windy's,
-   a tap away. Nothing here is rebuilt on the tick; the timers move it. */
-const RADAR = {host: null, lat: 0, lon: 0, w: 0, h: 0, frames: [], at: -1, hold: 0};
+/* The Radar card, and the map page behind it, draw their own loop. The card
+   embedded Windy's, and the card being rebuilt every two seconds moved that
+   iframe each time, which reloads it: six reloads in twelve seconds, a flash
+   each, and it never got as far as playing. render() now leaves the card
+   where it is, and the loop is ours: RainViewer's past two hours of radar in
+   ten-minute frames (free, no key, CORS open), cross-faded over Esri's dark
+   grey canvas at zoom 8. RainViewer stops at zoom 7, so its tiles are drawn
+   at twice their size to match.
+
+   One frame list and one clock for every view, so the card and the page show
+   the same moment. Each view keeps its own tiles, sized to its box; the
+   page's are made when it opens and thrown away when it closes, since at a
+   TV's size they are ten times the card's and a TV's memory is small.
+   Nothing here is rebuilt on the two-second tick; the timers move it. */
+const RADAR = {src: "", frames: [], at: -1, hold: 0, failed: false, views: [], started: false};
 const RADAR_Z = 8, RADAR_FRAMES = 13, RADAR_STEP_MS = 650, RADAR_HOLD = 4;
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/";
 const mercX = (lon, z) => (lon + 180) / 360 * 256 * 2 ** z;
 const mercY = (lat, z) => (1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2 * 256 * 2 ** z;
 
-function radarHost(s){
-  if (RADAR.host) return RADAR.host;
-  const host = el("div", "radar-host");
+function radarView(lat, lon, big){
+  const host = el("div", "radar-host" + (big ? " big" : ""));
   host.innerHTML = '<div class="layer base"></div><div class="layer frames"></div>' +
     '<div class="layer labels"></div><span class="me"></span><span class="when"></span>' +
-    '<span class="credit">Esri · RainViewer</span>';
-  host.title = "Open the weather map";
-  Object.assign(RADAR, {host, lat: s.lat, lon: s.lon});
-  if (window.ResizeObserver) new ResizeObserver(radarLayout).observe(host);
-  radarFetch();
-  setInterval(radarFetch, 5 * 60 * 1000);
-  setInterval(radarStep, RADAR_STEP_MS);
-  return host;
+    (big ? '<div class="ticks"></div>' : '') + '<span class="credit">Esri · RainViewer</span>';
+  host.title = big ? "Back to the dashboard" : "Open the weather map";
+  const view = {host, lat, lon, w: 0, h: 0, nodes: new Map()};
+  RADAR.views.push(view);
+  if (window.ResizeObserver) new ResizeObserver(() => radarLayout(view)).observe(host);
+  if (!RADAR.started) {
+    RADAR.started = true;
+    radarFetch();
+    setInterval(radarFetch, 5 * 60 * 1000);
+    setInterval(radarStep, RADAR_STEP_MS);
+  }
+  return view;
 }
 
-/* Tiles covering the box, placed so the station sits at its centre. */
-function radarTiles(layer, z, url){
+function radarDrop(view){
+  RADAR.views = RADAR.views.filter(v => v !== view);
+  view.host.remove();
+}
+
+/* Tiles covering the view's box, placed so the station sits at its centre. */
+function radarTiles(view, layer, z, url){
   const k = 2 ** (RADAR_Z - z);                       // screen px per tile px
-  const left = mercX(RADAR.lon, RADAR_Z) - RADAR.w / 2, top = mercY(RADAR.lat, RADAR_Z) - RADAR.h / 2;
+  const left = mercX(view.lon, RADAR_Z) - view.w / 2, top = mercY(view.lat, RADAR_Z) - view.h / 2;
   const imgs = [];
-  for (let ty = Math.floor(top / (256 * k)); ty * 256 * k < top + RADAR.h; ty++)
-    for (let tx = Math.floor(left / (256 * k)); tx * 256 * k < left + RADAR.w; tx++) {
+  for (let ty = Math.floor(top / (256 * k)); ty * 256 * k < top + view.h; ty++)
+    for (let tx = Math.floor(left / (256 * k)); tx * 256 * k < left + view.w; tx++) {
       const im = new Image();
       im.alt = "";
       im.decoding = "async";
@@ -2973,23 +2992,36 @@ function radarTiles(layer, z, url){
   layer.replaceChildren(...imgs);
 }
 
-function radarFrame(f){
-  const d = el("div", "layer frame");
-  radarTiles(d, 7, (z, x, y) => RADAR.src + f.path + "/256/" + z + "/" + x + "/" + y + "/2/1_1.png");
-  f.node = d;
-  return d;
+/* The view's frame layers, one per frame in the list: kept where the frame
+   still is, made where it is new, dropped where it has aged out. */
+function radarFrames(view){
+  if (!view.w) return;
+  const keep = new Map();
+  for (const f of RADAR.frames) {
+    let d = view.nodes.get(f.path);
+    if (!d) {
+      d = el("div", "layer frame");
+      radarTiles(view, d, 7, (z, x, y) => RADAR.src + f.path + "/256/" + z + "/" + x + "/" + y + "/2/1_1.png");
+    }
+    keep.set(f.path, d);
+  }
+  view.nodes = keep;
+  view.host.querySelector(".frames").replaceChildren(...keep.values());
+  const ticks = view.host.querySelector(".ticks");
+  if (ticks) ticks.replaceChildren(...RADAR.frames.map(() => el("i")));
 }
 
-function radarLayout(){
-  const h = RADAR.host, w = h.clientWidth, ht = h.clientHeight;
-  if (!w || !ht || (w === RADAR.w && ht === RADAR.h)) return;
-  RADAR.w = w;
-  RADAR.h = ht;
-  radarTiles(h.querySelector(".base"), RADAR_Z,
+function radarLayout(view){
+  const h = view.host, w = h.clientWidth, ht = h.clientHeight;
+  if (!w || !ht || (w === view.w && ht === view.h)) return;
+  view.w = w;
+  view.h = ht;
+  view.nodes = new Map();                             // a new size: new tiles
+  radarTiles(view, h.querySelector(".base"), RADAR_Z,
              (z, x, y) => ESRI + "World_Dark_Gray_Base/MapServer/tile/" + z + "/" + y + "/" + x);
-  radarTiles(h.querySelector(".labels"), RADAR_Z,
+  radarTiles(view, h.querySelector(".labels"), RADAR_Z,
              (z, x, y) => ESRI + "World_Dark_Gray_Reference/MapServer/tile/" + z + "/" + y + "/" + x);
-  h.querySelector(".frames").replaceChildren(...RADAR.frames.map(radarFrame));
+  radarFrames(view);
   const me = h.querySelector(".me");
   me.style.left = w / 2 + "px";
   me.style.top = ht / 2 + "px";
@@ -3003,11 +3035,9 @@ async function radarFetch(){
     const past = ((d.radar || {}).past || []).slice(-RADAR_FRAMES);
     if (!past.length) throw new Error("no frames");
     RADAR.src = d.host || "https://tilecache.rainviewer.com";
-    const had = new Map(RADAR.frames.map(f => [f.path, f]));
-    RADAR.frames = past.map(p => had.get(p.path) || {time: p.time, path: p.path});
-    if (RADAR.w) RADAR.host.querySelector(".frames").replaceChildren(
-      ...RADAR.frames.map(f => f.node || radarFrame(f)));
+    RADAR.frames = past.map(p => ({time: p.time, path: p.path}));
     RADAR.failed = false;
+    RADAR.views.forEach(radarFrames);
   } catch (e) {
     RADAR.failed = true;
   }
@@ -3015,10 +3045,10 @@ async function radarFetch(){
 }
 
 /* Oldest to newest, a frame every RADAR_STEP_MS, a pause on the newest, again.
-   Held on the newest for reduced motion. */
+   Held on the newest for reduced motion, and still while nothing shows. */
 function radarStep(){
   const n = RADAR.frames.length;
-  if (!n || !RADAR.host || !RADAR.host.isConnected || document.hidden) return;
+  if (!n || document.hidden || !RADAR.views.some(v => v.host.isConnected && v.host.offsetParent)) return;
   if (matchMedia("(prefers-reduced-motion:reduce)").matches) RADAR.at = n - 1;
   else if (RADAR.at === n - 1 && RADAR.hold < RADAR_HOLD) RADAR.hold++;
   else { RADAR.hold = 0; RADAR.at = (RADAR.at + 1) % n; }
@@ -3026,15 +3056,24 @@ function radarStep(){
 }
 
 function radarShow(){
-  if (!RADAR.host) return;
   const n = RADAR.frames.length;
   if (RADAR.at < 0 || RADAR.at >= n) RADAR.at = n - 1;
-  RADAR.frames.forEach((f, i) => f.node && f.node.classList.toggle("on", i === RADAR.at));
   const f = RADAR.frames[RADAR.at];
-  RADAR.host.querySelector(".when").innerHTML = !f ? (RADAR.failed ? "Radar unavailable" : "")
+  const when = !f ? (RADAR.failed ? "Radar unavailable" : "")
     : esc(new Date(f.time * 1000).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})) +
       (RADAR.at === n - 1 ? "<b>NOW</b>" : "");
+  for (const view of RADAR.views) {
+    RADAR.frames.forEach((fr, i) => {
+      const d = view.nodes.get(fr.path);
+      if (d) d.classList.toggle("on", i === RADAR.at);
+    });
+    view.host.querySelector(".when").innerHTML = when;
+    const ticks = view.host.querySelector(".ticks");
+    if (ticks) [...ticks.children].forEach((t, i) => t.classList.toggle("on", i <= RADAR.at));
+  }
 }
+
+let cardRadar = null;
 
 function buildRadar(s){
   const {card:c, body:b} = card("radar","Radar","na","cold",s.health);
@@ -3052,7 +3091,11 @@ function buildRadar(s){
   }
   // Only the first card built gets the loop; render() keeps that card from
   // then on and throws the later ones away, so the loop is never moved.
-  if (!RADAR.host || !RADAR.host.isConnected) b.appendChild(radarHost(s));
+  if (!cardRadar || !cardRadar.host.isConnected) {
+    if (cardRadar) radarDrop(cardRadar);
+    cardRadar = radarView(s.lat, s.lon, false);
+    b.appendChild(cardRadar.host);
+  }
   return c;
 }
 
@@ -6123,6 +6166,9 @@ function render(s){
       else renderOutlook();
     }
     if (document.body.classList.contains("show-settings")) refreshSources();
+    // The map walks home on the TV too; it has nothing to read closely.
+    if (document.body.classList.contains("show-map") && document.body.classList.contains("tv") &&
+        Date.now() - outlookSince > OUTLOOK_IDLE_MS && !TESTALL) toggleMap(false);
     updateFooter(s);
     return;                                   // cards are hidden; skip the work
   }
@@ -6416,40 +6462,28 @@ function setTv(on){
   history.replaceState(history.state, "", url);   // keep the outlook's entry
 }
 
-/* The map is a third-party embed (Windy — free, no account, no key). It is
-   the one part of the dashboard that needs internet on the *viewing* device;
-   everything else is served by the NAS. Nothing loads until first opened. */
-function windyUrl(lat, lon, zoom){
-  const q = new URLSearchParams({
-    lat: lat.toFixed(4), lon: lon.toFixed(4),
-    detailLat: lat.toFixed(4), detailLon: lon.toFixed(4),
-    zoom: String(zoom), level: "surface", overlay: "radar", product: "radar",
-    menu: "", message: "", marker: "true", calendar: "now",
-    type: "map", location: "coordinates", detail: "",
-    metricWind: prefs.wind === "km/h" ? "km/h" : prefs.wind === "kts" ? "kt"
-                : prefs.wind === "m/s" ? "m/s" : "mph",
-    metricTemp: prefs.temp === "°C" ? "°C" : "°F",
-  });
-  return "https://embed.windy.com/embed2.html?" + q.toString();
-}
-
-let mapLoaded = false;
-function ensureMap(){
-  if (mapLoaded) return;
+/* The map page is the Radar card's loop at the size of the screen. It was
+   Windy's embed, which sat paused behind a play button; now it moves as the
+   card does, in step with it. Its tiles are made when it opens and dropped
+   when it closes. */
+let mapRadar = null;
+function ensureMap(on){
   const host = document.getElementById("map");
+  if (!on) {
+    if (mapRadar) radarDrop(mapRadar);
+    mapRadar = null;
+    return;
+  }
   const lat = last && last.lat, lon = last && last.lon;
   if (lat == null || lon == null) {
     host.innerHTML = '<div class="placeholder">Set the station location on ' +
       'the server (--lat / --lon) to show the map.</div>';
-    return;                                  // retry if coords arrive later
+    return;
   }
-  const f = document.createElement("iframe");
-  f.src = windyUrl(lat, lon, 8);
-  f.loading = "lazy";
-  f.referrerPolicy = "no-referrer";
-  f.title = "Weather radar map";
-  host.replaceChildren(f);
-  mapLoaded = true;
+  if (!mapRadar) {
+    mapRadar = radarView(lat, lon, true);
+    host.replaceChildren(mapRadar.host);
+  }
 }
 
 /* A history entry, as the other pages have, now that tapping the Radar card
@@ -6466,12 +6500,13 @@ function toggleMap(force, fromHistory){
     }
     if (on && !ours) history.pushState({map: true}, "");
   }
+  if (on) outlookSince = Date.now();
   const swap = () => {
     document.body.classList.toggle("show-map", on);
     if (on) document.body.classList.remove("show-outlook", "show-settings", "show-rel");
     document.getElementById("map").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("mapBtn").setAttribute("aria-pressed", on ? "true" : "false");
-    if (on) ensureMap();
+    ensureMap(on);
   };
   pageTurn(swap);
 }
@@ -6643,11 +6678,14 @@ document.getElementById("relpage").addEventListener("click", () => {
   toggleRel(false);
 });
 
-/* The Radar card opens the full weather map. The map is Windy's and takes
-   its own taps, so the way back is Back, Escape or the map button. */
+/* The Radar card opens the map page, and the whole page is the way back,
+   as with the other pages: nothing on it is for clicking. */
 document.getElementById("grid").addEventListener("click", (e) => {
   if (!e.target.closest("#card-radar")) return;
   toggleMap(true);
+});
+document.getElementById("map").addEventListener("click", () => {
+  toggleMap(false);
 });
 
 /* A tap is not a grab. Cards act on a tap anywhere now, and a card is also

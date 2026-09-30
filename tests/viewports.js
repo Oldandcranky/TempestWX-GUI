@@ -971,7 +971,7 @@ console.log = (...args) => {
   // ── the Radar card: its own loop, never rebuilt, a tap to the map ──
   // It embedded Windy, and the two-second rebuild moved that iframe each time,
   // which reloads it: a flash every two seconds and a loop that never played.
-  section("the Radar card: a loop that is never rebuilt, and a tap to the map", async () => {
+  section("the Radar card and map: a loop that is never rebuilt, and a tap to the map", async () => {
     const bad = [];
     await abreast([[1920, 1080], [414, 896]], async ([width, height]) => {
       const page = await browser.newPage({ viewport: { width, height } });
@@ -1022,6 +1022,31 @@ console.log = (...args) => {
         await page.waitForTimeout(900);
         if (!await page.evaluate(() => document.body.classList.contains('show-map') && history.state && history.state.map))
           say('a tap did not open the map with a history entry');
+        // The page is the same loop, full size and in step, with a bar for the two hours.
+        await page.evaluate(() => { window.__big = new Set();
+          setInterval(() => { const on = document.querySelector('#map .frame.on');
+            if (on) window.__big.add([...on.parentNode.children].indexOf(on)); }, 200); });
+        await page.waitForTimeout(2600);
+        const big = await page.evaluate(() => ({
+          iframe: !!document.querySelector('#map iframe'),
+          frames: document.querySelectorAll('#map .radar-host .frame').length,
+          ticks: document.querySelectorAll('#map .ticks i').length,
+          seen: window.__big.size,
+          fills: (() => { const h = document.querySelector('#map .radar-host'), r = h && h.getBoundingClientRect();
+                          const m = document.getElementById('map').getBoundingClientRect();
+                          return !!r && r.width >= m.width - 3 && r.height >= m.height - 3; })() }));
+        if (big.iframe) say('the map page still holds an iframe');
+        if (big.frames !== 3 || big.ticks !== 3) say('the map page has ' + big.frames + ' frames and ' + big.ticks + ' ticks, expected 3');
+        if (big.seen < 2) say('the map page\'s loop did not move');
+        if (!big.fills) say('the loop does not fill the map page');
+        await page.$eval('#map', el => el.click());
+        await page.waitForTimeout(900);
+        if (await page.evaluate(() => document.body.classList.contains('show-map')))
+          say('a tap on the map page did not close it');
+        if (await page.evaluate(() => !!document.querySelector('#map .radar-host')))
+          say('the map page kept its tiles after closing');
+        await page.$eval('#card-radar .radar-host', el => el.click());
+        await page.waitForTimeout(900);
         await page.goBack();
         await page.waitForTimeout(900);
         if (await page.evaluate(() => document.body.classList.contains('show-map')))

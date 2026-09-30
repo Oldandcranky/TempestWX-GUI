@@ -183,7 +183,7 @@ body.tv{cursor:none}
    glide that slow showed as steps. Stopped for reduced motion, the drift
    still moves once per rebuild and the glow holds still. */
 .aibeat{flex:0 0 auto;display:flex;align-items:center;gap:.6em;margin-top:.3em}
-.aibeat .scope{flex:1 1 auto;min-width:0;height:calc(var(--fs-label)*2.6);position:relative;overflow:hidden}
+.aibeat .scope{flex:1 1 auto;min-width:0;height:calc(var(--fs-label)*3.2);position:relative;overflow:hidden}
 .aibeat .trace{position:absolute;left:0;top:15%;bottom:15%;width:200%;
                animation:aidrift linear forwards;will-change:transform}
 .aibeat svg{position:absolute;left:0;top:0;width:100%;height:100%;display:block;overflow:visible}
@@ -3370,13 +3370,15 @@ function aiBeat(s, readings, flat, tone){
   // taking its fading tail with it. The glow is the spike alone, on top.
   // With the owner's heartbeat loaded, the spike is their own beat, 12 wide
   // before its peak and 24 after, peaking at 176, and the glow keeps the
-  // time their heart kept in the recording.
+  // time their heart kept in the recording. A real QRS is narrow and mostly
+  // upward, so it sits a little low and is drawn taller than the old spike,
+  // or at wall size it was a ten-pixel tick.
   const h = s.heart && s.heart.shape && s.heart.rr_ms ? s.heart : null;
   const peak = h ? 176 : 194;
   const beat = h ? h.shape.map((v, i) => "L" + (164 + i * 36 / (h.shape.length - 1)).toFixed(1) + " " +
-                                           Math.max(1, Math.min(19, 10 - 7 * v)).toFixed(1)).join("")
+                                           Math.max(.5, Math.min(19.5, 11 - 9.5 * v)).toFixed(1)).join("")
                  : "L185 10L188 8L191 12L194 3L197 17L200 10";
-  const spike = h ? "M160 10" + beat + "L204 10" : "M182 10" + beat + "L206 10";
+  const spike = h ? "M160 11" + beat + "L204 11" : "M182 10" + beat + "L206 10";
   const loop = h ? heartKeyframes(h) : 1.1;
   const pulse = -((Date.now() / 1000) % loop);
   const trace = flat ? svg("flat", "", line("M0 10H400", 2, "currentColor").replace("/>", ' opacity=".6"/>'))
@@ -3386,7 +3388,7 @@ function aiBeat(s, readings, flat, tone){
         '<stop offset="0" stop-color="currentColor" stop-opacity=".1"/>' +
         '<stop offset="' + (peak / 400).toFixed(3) + '" stop-color="currentColor"/>' +
         '<stop offset="1" stop-color="currentColor" stop-opacity=".35"/></linearGradient></defs>' +
-        line("M0 10H" + (h ? 164 : 185) + beat.replace(/^L[\d.]+ [\d.]+/, "") + "H400", 2, "url(#aifade)")) +
+        line((h ? "M0 11H164" : "M0 10H185") + beat.replace(/^L[\d.]+ [\d.]+/, "") + "H400", 2, "url(#aifade)")) +
       svg("glow" + (h ? " mine" : ""), (h ? "animation-duration:" + loop.toFixed(3) + "s;" : "") +
         "animation-delay:" + pulse.toFixed(3) + "s;filter:drop-shadow(0 0 7px " + col + ")",
         line(spike, 3.4, "currentColor")) +

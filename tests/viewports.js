@@ -866,10 +866,15 @@ console.log = (...args) => {
       ['late',  100, {claude: OK, chatgpt: 'degraded_performance', gemini: OK}, [], 'accent'],
       ['part',  30,  {claude: 'major_outage', chatgpt: OK, gemini: OK}, ['gemini'], 'red'],
       ['flat',  190, {claude: OK, chatgpt: OK, gemini: OK}, ['claude', 'chatgpt', 'gemini'], 'accent'],
+      // The owner's own heartbeat: the pulse keeps its time, one glow a beat.
+      ['yours', 40,  {claude: OK, chatgpt: OK, gemini: OK}, [], 'green', true],
     ];
+    const RR = [780, 790, 627, 945, 780, 770, 800, 790, 780, 775];
+    const SHAPE = Array.from({length: 48}, (_, i) => i === 16 ? 1 : i === 15 || i === 17 ? .4 :
+                                                     i >= 28 && i <= 36 ? .2 : 0);
     const bad = [];
     await abreast(CASES.flatMap(c => [[1920, 1080], [414, 896]].map(v => [c, v])),
-                  async ([[name, age, status, down, tone], [width, height]]) => {
+                  async ([[name, age, status, down, tone, mine], [width, height]]) => {
       const page = await browser.newPage({ viewport: { width, height } });
       await page.route('**/api/state', route => {
         const s = freshen();
@@ -877,13 +882,14 @@ console.log = (...args) => {
           Object.assign(p, {available: true, status: status[k], every: 120, fetched_at: s.now - age,
                             error: down.includes(k) ? 'status page unreachable (URLError)' : ''});
         }
+        s.heart = mine ? {recorded: '2021-05-05', rr_ms: RR, early: [2], shape: SHAPE} : null;
         route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(s) });
       });
       try {
         await page.goto(BASE, { waitUntil: 'networkidle' });
         await page.waitForSelector('#card-claude', { state: 'attached' });
         await page.waitForTimeout(SETTLE_MS);
-        const found = await page.evaluate(([age, flat, part, tone]) => {
+        const found = await page.evaluate(([age, flat, part, tone, mine, rr]) => {
           const out = [], c = document.getElementById('card-claude');
           const beat = c.querySelector('.aibeat');
           if (!beat) return ['no heartbeat'];
@@ -897,7 +903,7 @@ console.log = (...args) => {
           } else {
             const trace = beat.querySelector('.trace');
             const tx = new DOMMatrix(getComputedStyle(trace).transform).e / trace.offsetWidth;
-            const want = -0.47 * age / 120;
+            const want = (mine ? -0.425 : -0.47) * age / 120;
             // Up to two seconds between a poll and the measurement.
             if (tx > want + 0.003 || tx < want - 0.012)
               out.push('beat at ' + tx.toFixed(3) + ' of the trace, expected ' + want.toFixed(3));
@@ -906,8 +912,15 @@ console.log = (...args) => {
             // rebuild does not restart it.
             const glow = getComputedStyle(beat.querySelector('.glow'));
             const delay = parseFloat(glow.animationDelay);
-            if (glow.animationName !== 'aipulse' || !(delay <= 0 && delay > -1.1))
+            const loop = mine ? rr.reduce((a, b) => a + b, 0) / 1000 : 1.1;
+            if (glow.animationName !== (mine ? 'aiheart' : 'aipulse') || !(delay <= 0 && delay > -loop))
               out.push('no pulse (' + glow.animationName + ', ' + glow.animationDelay + ')');
+            if (mine) {
+              if (Math.abs(parseFloat(glow.animationDuration) - loop) > 0.01)
+                out.push('the heartbeat loops in ' + glow.animationDuration + ', the recording is ' + loop + 's');
+              const beats = ((document.getElementById('aiheart') || {}).textContent || '').split('scaleY(1.45)').length - 1;
+              if (beats !== rr.length) out.push(beats + ' glows in the loop for ' + rr.length + ' beats');
+            }
           }
           const probe = document.createElement('span');
           probe.style.color = 'var(--' + tone + ')';
@@ -919,7 +932,7 @@ console.log = (...args) => {
           if (body.scrollHeight - body.clientHeight > 1) out.push('the card overflows down');
           if (body.scrollWidth - body.clientWidth > 1) out.push('the card overflows sideways');
           return out;
-        }, [age, down.length === 3, down.length === 3 ? 0 : down.length, tone]);
+        }, [age, down.length === 3, down.length === 3 ? 0 : down.length, tone, !!mine, RR]);
         for (const why of found) bad.push(name + ' ' + width + 'px  ' + why);
       } catch (e) {
         bad.push(name + ' ' + width + 'px  ' + e.message.split('\n')[0]);
@@ -928,10 +941,10 @@ console.log = (...args) => {
     });
     checked += CASES.length * 2;
     if (bad.length === 0) {
-      console.log('  ok   AI heartbeat, 4 states x 2 sizes');
+      console.log('  ok   AI heartbeat, 5 states x 2 sizes');
     } else {
       failures += bad.length;
-      console.log('  FAIL AI heartbeat, 4 states x 2 sizes');
+      console.log('  FAIL AI heartbeat, 5 states x 2 sizes');
       for (const why of bad) console.log('         ' + why);
     }
   });

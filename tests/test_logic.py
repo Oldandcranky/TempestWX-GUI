@@ -18,6 +18,7 @@ import time
 import unittest
 import threading
 import json
+import math
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -958,6 +959,88 @@ class StatusPages(unittest.TestCase):
     def test_a_feed_that_is_not_a_list_is_an_error(self):
         with self.assertRaises(ValueError):
             server.GeminiStatusFetcher.parse({"error": "nope"})
+
+
+def fake_ecg(gaps_ms, fs=512, seconds=30, name="Jane Q Example", born="1970-01-01"):
+    """An Apple Health ECG export with beats at known times: a sharp R wave
+    and a slow T wave after it, on a wandering baseline, in its header the
+    name and birth date the parser must not keep."""
+    beats, t = [], 400.0
+    for g in gaps_ms * 100:
+        if t > seconds * 1000 - 400:
+            break
+        beats.append(t)
+        t += g
+    head = ["Name,%s" % name, "Date of Birth,%s" % born,
+            "Recorded Date,2021-05-05 17:13:37 -0500", "Classification,Sinus Rhythm",
+            "Symptoms,", "Software Version,1.90", 'Device,"Watch6,4"',
+            "Sample Rate,%d hertz" % fs, "Lead,Lead I", "Unit,µV", ""]
+    rows = []
+    for i in range(seconds * fs):
+        ms = i * 1000.0 / fs
+        v = 40 * math.sin(ms / 900.0)                                 # baseline drift
+        for b in beats:
+            v += 900 * math.exp(-((ms - b) / 9.0) ** 2)               # R
+            v += 160 * math.exp(-((ms - b - 260) / 45.0) ** 2)        # T
+        rows.append("%.3f" % v)
+    return "\n".join(head + rows), beats
+
+
+class HeartFromAnEcg(unittest.TestCase):
+    def test_the_gaps_between_beats_come_back_and_an_early_one_is_marked(self):
+        text, beats = fake_ecg([800, 800, 560, 1040, 800, 800, 800])
+        got = core.parse_ecg(text)
+        want = [b - a for a, b in zip(beats, beats[1:])]
+        self.assertEqual(len(got["rr_ms"]), len(want))
+        for g, w in zip(got["rr_ms"], want):
+            self.assertAlmostEqual(g, w, delta=4)
+        self.assertEqual(got["early"], [i for i, w in enumerate(want[:-1]) if w == 560])
+        self.assertEqual((got["recorded"], got["classification"]), ("2021-05-05", "Sinus Rhythm"))
+
+    def test_the_shape_peaks_at_one_on_its_own_point(self):
+        shape = core.parse_ecg(fake_ecg([800])[0])["shape"]
+        self.assertEqual(len(shape), core.ECG_POINTS)
+        at = round(core.ECG_BEFORE_S / (core.ECG_BEFORE_S + core.ECG_AFTER_S) * (core.ECG_POINTS - 1))
+        self.assertEqual(shape[at], 1.0)
+        self.assertEqual(max(shape), 1.0)
+
+    def test_nothing_that_says_whose_it_is_comes_out(self):
+        got = json.dumps(core.parse_ecg(fake_ecg([750])[0]))
+        self.assertNotIn("Jane", got)
+        self.assertNotIn("1970", got)
+
+    def test_a_file_that_is_not_one_is_refused(self):
+        for text in ("hello", "Name,x\nSample Rate,512 hertz\n1.0\n2.0", fake_ecg([800], seconds=5)[0]):
+            with self.assertRaises(ValueError):
+                core.parse_ecg(text)
+
+
+class HeartSetting(unittest.TestCase):
+    def cfg(self, path=None):
+        import tempfile
+        return server.Config(path or os.path.join(tempfile.mkdtemp(), "c.json"), {})
+
+    def test_a_loaded_heartbeat_is_kept_switched_and_taken_away(self):
+        c = self.cfg()
+        self.assertIsNone(c.heart_for_page())
+        self.assertTrue(c.set_heart(core.parse_ecg(fake_ecg([800, 800, 560, 1040])[0])))
+        page = c.heart_for_page()
+        self.assertEqual(set(page), {"recorded", "rr_ms", "early", "shape"})
+        self.assertEqual(self.cfg(c.path).heart_for_page(), page)          # it was saved
+        self.assertEqual(c.public()["heart"]["beats"], len(page["rr_ms"]) + 1)
+        self.assertEqual(c.apply({"heart": {"enabled": False}}), (["heart_off"], ""))
+        self.assertIsNone(c.heart_for_page())
+        self.assertEqual(c.apply({"heart": None}), (["heart_cleared"], ""))
+        self.assertIsNone(self.cfg(c.path).public()["heart"])
+
+    def test_switching_one_on_before_any_is_loaded_is_an_error(self):
+        self.assertTrue(self.cfg().apply({"heart": {"enabled": True}})[1])
+
+    def test_a_stored_heartbeat_that_does_not_hold_together_is_dropped(self):
+        for bad in ({"rr_ms": [800] * 3, "shape": [0] * core.ECG_POINTS},
+                    {"rr_ms": [800] * 20, "shape": [0] * 5},
+                    {"rr_ms": ["x"] * 20, "shape": [0] * core.ECG_POINTS}, "nope"):
+            self.assertIsNone(server.Config.clean_heart(bad))
 
 
 class AiStatusSettings(unittest.TestCase):

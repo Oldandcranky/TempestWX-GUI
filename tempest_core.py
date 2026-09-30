@@ -522,6 +522,109 @@ def battery_pct(volts):
     return max(0.0, min(1.0, (volts - 2.355) / (2.80 - 2.355)))
 
 
+# ───────────────────────────────────────── A heartbeat, from an ECG ────────
+
+ECG_BEFORE_S, ECG_AFTER_S, ECG_POINTS = 0.2, 0.4, 48
+
+
+def parse_ecg(text):
+    """An Apple Health ECG export (electrocardiograms/ecg_*.csv) as the AI
+    card's pulse: the gaps between the beats, and the shape of an ordinary
+    one. A picture of the recording, not a reading of it.
+
+    The file's header carries its wearer's name and date of birth. Only the
+    recording date, the Watch's own classification and the sample rate are
+    read; nothing else leaves this function.
+
+    Beats are found the Pan-Tompkins way, cut down: baseline out, the slope
+    squared and smoothed over 80 ms, peaks above a quarter of its loud end,
+    no two within 250 ms. A beat more than 18% early and followed by a
+    pause is marked early, and the shape is the average of the others, from
+    ECG_BEFORE_S before the peak to ECG_AFTER_S after, scaled so the peak is
+    1. Raises ValueError when the file is not one, or holds no steady beat.
+    """
+    import csv
+    import io
+    import statistics as st
+    meta, x = {}, []
+    for row in csv.reader(io.StringIO(text)):
+        if not row or not row[0].strip():
+            continue
+        try:
+            x.append(float(row[0]))
+        except ValueError:
+            if not x and len(row) >= 2:
+                meta[row[0].strip().lstrip("﻿").lower()] = row[1].strip()
+    try:
+        fs = float((meta.get("sample rate") or "512").split()[0])
+    except ValueError:
+        fs = 0
+    if not 100 <= fs <= 2000 or len(x) < fs * 10:
+        raise ValueError("that is not an Apple Watch ECG export (ecg_….csv)")
+
+    n, w = len(x), int(0.3 * fs)
+    pre = [0.0]
+    for v in x:
+        pre.append(pre[-1] + v)
+    hp = []
+    for i in range(n):
+        lo, hi = max(0, i - w // 2), min(n, i + w // 2)
+        hp.append(x[i] - (pre[hi] - pre[lo]) / (hi - lo))
+    # Which way up the lead is: the bigger excursion is the R wave.
+    ranked = sorted(hp)
+    if ranked[int(0.995 * n)] < -ranked[int(0.005 * n)]:
+        hp = [-v for v in hp]
+    slope = [0.0] + [(hp[i + 1] - hp[i - 1]) ** 2 for i in range(1, n - 1)] + [0.0]
+    k = int(0.08 * fs)
+    pe = [0.0]
+    for v in slope:
+        pe.append(pe[-1] + v)
+    energy = [(pe[min(n, i + k)] - pe[i]) / k for i in range(n)]
+    thr = 0.25 * sorted(energy)[int(0.98 * n)]
+    peaks, i, gap = [], 0, int(0.25 * fs)
+    while i < n:
+        if energy[i] <= thr:
+            i += 1
+            continue
+        j = i
+        while j < n and energy[j] > thr:
+            j += 1
+        p = max(range(max(0, i - k), min(n, j + k)), key=hp.__getitem__)
+        if not peaks or p - peaks[-1] > gap:
+            peaks.append(p)
+        i = j
+
+    rr = [(b - a) * 1000.0 / fs for a, b in zip(peaks, peaks[1:])]
+    if len(rr) < 8 or thr <= 0:
+        raise ValueError("could not find a steady heartbeat in that recording")
+    mid = st.median(rr)
+    if not 270 <= mid <= 2000:
+        raise ValueError("could not find a steady heartbeat in that recording")
+    early = [g for g in range(len(rr) - 1) if rr[g] < 0.82 * mid and rr[g + 1] > 1.08 * mid]
+
+    before, after = int(ECG_BEFORE_S * fs), int(ECG_AFTER_S * fs)
+    odd = {g + 1 for g in early}
+    ok = [p for b, p in enumerate(peaks)
+          if b not in odd and p - before >= 0 and p + after < n]
+    if not ok:
+        raise ValueError("could not find a steady heartbeat in that recording")
+    span = before + after
+    mean = [sum(hp[p - before + t] for p in ok) / len(ok) for t in range(span)]
+    top = mean[before] or 1.0
+    # Sampled so that one point falls on the peak itself: a QRS is a few
+    # points wide at this size, and an even grid clipped its top by a tenth.
+    at = round(ECG_BEFORE_S / (ECG_BEFORE_S + ECG_AFTER_S) * (ECG_POINTS - 1))
+    where = lambda t: (round(t * before / at) if t <= at
+                       else before + round((t - at) * (span - 1 - before) / (ECG_POINTS - 1 - at)))
+    shape = [round(max(-1.5, min(1.5, mean[where(t)] / top)), 3) for t in range(ECG_POINTS)]
+    return {"recorded": (meta.get("recorded date") or "")[:10],
+            "classification": meta.get("classification") or "",
+            "bpm": round(60000 / (sum(rr) / len(rr))),
+            "rr_ms": [round(v) for v in rr],
+            "early": early,
+            "shape": shape}
+
+
 # ─────────────────────────────────────────── Astronomy (no network) ────────
 
 def _sun_event_epochs(lat, lon, day):

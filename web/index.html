@@ -190,6 +190,16 @@ body.tv{cursor:none}
 .aibeat .scope > svg{top:15%;height:70%}
 .aibeat .glow{opacity:0;transform-origin:48.5% 50%;animation:aipulse 1.1s ease-in-out infinite;will-change:opacity,transform}
 @keyframes aidrift{to{transform:translateX(-47%)}}
+/* With the owner's own heartbeat the beat is a whole P-QRS-T, wider, so it
+   sits further in and travels less: its peak goes from 176 to 6 of 400. */
+.aibeat .trace.mine{animation-name:aidrift2}
+@keyframes aidrift2{to{transform:translateX(-42.5%)}}
+/* Its pulse keyframes are written from the recording by heartKeyframes(). */
+.aibeat .glow.mine{animation-name:aiheart}
+.aiset .heartset{display:flex;flex-direction:column;gap:.6em;margin-top:1em;padding-top:.9em;
+                 border-top:1px solid var(--card-edge)}
+.aiset .heartset .say{color:var(--muted);line-height:1.45}
+.aiset .heartset .row{display:flex;align-items:center;gap:.8em;flex-wrap:wrap}
 @keyframes aipulse{0%,62%,100%{opacity:0;transform:scaleY(1)} 12%{opacity:1;transform:scaleY(1.45)}
                   24%{opacity:.35;transform:scaleY(1.08)} 36%{opacity:.9;transform:scaleY(1.28)}}
 .aibeat .ago{font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;text-transform:uppercase;
@@ -198,7 +208,7 @@ body.tv{cursor:none}
 @container (max-height: 165px){ .aibeat{display:none} }
 @media (prefers-reduced-motion:reduce){
   .aibeat .trace{animation-play-state:paused}
-  .aibeat .glow{animation:none;opacity:.6}
+  .aibeat .glow,.aibeat .glow.mine{animation:none;opacity:.6}
 }
 .aiset .line2{display:flex;align-items:center;gap:.8em;flex-wrap:wrap;padding:.3em 0}
 .aiset label{display:flex;align-items:center;gap:.5em;min-width:7em;cursor:pointer}
@@ -3358,23 +3368,68 @@ function aiBeat(s, readings, flat, tone){
   // its 400 so all of the spike shows at either end: it slides 47% of its
   // width over one interval, from six in at the right to six in at the left,
   // taking its fading tail with it. The glow is the spike alone, on top.
-  const pulse = -((Date.now() / 1000) % 1.1);
+  // With the owner's heartbeat loaded, the spike is their own beat, 12 wide
+  // before its peak and 24 after, peaking at 176, and the glow keeps the
+  // time their heart kept in the recording.
+  const h = s.heart && s.heart.shape && s.heart.rr_ms ? s.heart : null;
+  const peak = h ? 176 : 194;
+  const beat = h ? h.shape.map((v, i) => "L" + (164 + i * 36 / (h.shape.length - 1)).toFixed(1) + " " +
+                                           Math.max(1, Math.min(19, 10 - 7 * v)).toFixed(1)).join("")
+                 : "L185 10L188 8L191 12L194 3L197 17L200 10";
+  const spike = h ? "M160 10" + beat + "L204 10" : "M182 10" + beat + "L206 10";
+  const loop = h ? heartKeyframes(h) : 1.1;
+  const pulse = -((Date.now() / 1000) % loop);
   const trace = flat ? svg("flat", "", line("M0 10H400", 2, "currentColor").replace("/>", ' opacity=".6"/>'))
-    : '<div class="trace" style="animation-duration:' + every + 's;animation-delay:' + (-age).toFixed(2) + 's">' +
+    : '<div class="trace' + (h ? " mine" : "") + '" style="animation-duration:' + every + 's;animation-delay:' + (-age).toFixed(2) + 's">' +
       svg("line", "filter:drop-shadow(0 0 2px " + col + ")",
         '<defs><linearGradient id="aifade" gradientUnits="userSpaceOnUse" x1="0" x2="400">' +
         '<stop offset="0" stop-color="currentColor" stop-opacity=".1"/>' +
-        '<stop offset=".485" stop-color="currentColor"/>' +
+        '<stop offset="' + (peak / 400).toFixed(3) + '" stop-color="currentColor"/>' +
         '<stop offset="1" stop-color="currentColor" stop-opacity=".35"/></linearGradient></defs>' +
-        line("M0 10H185L188 8L191 12L194 3L197 17L200 10H400", 2, "url(#aifade)")) +
-      svg("glow", "animation-delay:" + pulse.toFixed(2) + "s;filter:drop-shadow(0 0 7px " + col + ")",
-        line("M182 10H185L188 8L191 12L194 3L197 17L200 10H206", 3.4, "currentColor")) +
+        line("M0 10H" + (h ? 164 : 185) + beat.replace(/^L[\d.]+ [\d.]+/, "") + "H400", 2, "url(#aifade)")) +
+      svg("glow" + (h ? " mine" : ""), (h ? "animation-duration:" + loop.toFixed(3) + "s;" : "") +
+        "animation-delay:" + pulse.toFixed(3) + "s;filter:drop-shadow(0 0 7px " + col + ")",
+        line(spike, 3.4, "currentColor")) +
       '</div>';
   w.innerHTML = '<div class="scope" style="color:' + col + '">' + trace + '</div>' +
     '<span class="ago">' + (flat ? "No pulse · " : "") + ago(age) + '</span>';
   w.title = flat ? "No status page has answered for " + ago(age)
-               : "Status pages read " + ago(age) + " ago, every " + ago(every);
+               : "Status pages read " + ago(age) + " ago, every " + ago(every) +
+                 (h ? ". The pulse is your heartbeat, from an Apple Watch ECG" +
+                      (h.recorded ? " on " + h.recorded : "") : "");
   return w;
+}
+
+/* The pulse as the owner's heart kept it: one glow per beat, at the moment
+   it came in the recording, the whole recording on a loop. Written once per
+   recording into a stylesheet of its own; the card is rebuilt every two
+   seconds and takes its place in the loop from the clock. Returns the
+   loop's length in seconds. */
+let heartSig = "", heartLoop = 0;
+function heartKeyframes(h){
+  const sig = h.recorded + ":" + h.rr_ms.join(",");
+  if (sig === heartSig) return heartLoop;
+  const lead = 60, total = h.rr_ms.reduce((a, b) => a + b, 0);
+  const at = [lead];
+  for (const gap of h.rr_ms.slice(0, -1)) at.push(at[at.length - 1] + gap);
+  const pct = (ms) => (Math.max(0, Math.min(total, ms)) / total * 100).toFixed(3) + "%";
+  const rest = "{opacity:0;transform:scaleY(1)}";
+  let css = "@keyframes aiheart{0%,100%" + rest;
+  at.forEach((b, i) => {
+    const next = i + 1 < at.length ? at[i + 1] : total + lead;
+    css += pct(b - 40) + rest + pct(b) + "{opacity:1;transform:scaleY(1.45)}" +
+           pct(b + 110) + "{opacity:.35;transform:scaleY(1.08)}" + pct(Math.min(b + 380, next - 50)) + rest;
+  });
+  let sheet = document.getElementById("aiheart");
+  if (!sheet) {
+    sheet = document.createElement("style");
+    sheet.id = "aiheart";
+    document.head.appendChild(sheet);
+  }
+  sheet.textContent = css + "}";
+  heartSig = sig;
+  heartLoop = total / 1000;
+  return heartLoop;
 }
 
 /* Internet health, from Speedtest Tracker. Speed is the headline because it
@@ -4444,7 +4499,80 @@ function aiPanel(){
   const bar = el("div", "row");
   bar.append(save, state);
   wrap.appendChild(bar);
+  wrap.appendChild(heartSettings());
   return wrap;
+}
+
+/* The AI card's pulse can be the owner's own heartbeat, from an Apple Watch
+   ECG in a Health export (electrocardiograms/ecg_….csv). The server reads
+   the file and keeps only the beat timings and a beat's shape, never the
+   name and birth date in its header. Redrawn by itself, since settings is
+   not rebuilt on the two-second tick. */
+function heartSettings(){
+  const box = el("div", "heartset");
+  const pick = document.createElement("input");
+  pick.type = "file";
+  pick.accept = ".csv,text/csv";
+  pick.hidden = true;
+  const state = el("div", "state");
+  const draw = () => {
+    const h = cfg && cfg.heart;
+    const say = el("div", "say", h
+      ? esc("The pulse on the AI card is your heartbeat, from an Apple Watch ECG" +
+            (h.recorded ? " on " + h.recorded : "") + ": " + h.beats + " beats at " + h.bpm + " bpm" +
+            (h.early ? ", " + h.early + " of them early" : "") + ".")
+      : "The pulse on the AI card can be your own heartbeat. Export your data from the Health " +
+        "app on an iPhone and choose one of the ECG files in its electrocardiograms folder.");
+    const row = el("div", "row");
+    const load = el("button", "", h ? "Use a different ECG…" : "Choose an ECG file…");
+    load.type = "button";
+    load.addEventListener("click", () => pick.click());
+    row.appendChild(load);
+    if (h) {
+      const label = el("label");
+      const on = document.createElement("input");
+      on.type = "checkbox";
+      on.checked = h.enabled;
+      on.addEventListener("change", async () => {
+        if (await saveConfig({heart: {enabled: on.checked}}, state)) draw();
+      });
+      label.append(on, el("span", null, "Use it"));
+      const drop = el("button", "", "Remove");
+      drop.type = "button";
+      drop.addEventListener("click", async () => {
+        if (await saveConfig({heart: null}, state)) draw();
+      });
+      row.append(label, drop);
+    }
+    row.appendChild(state);
+    box.replaceChildren(say, row, pick);
+  };
+  pick.addEventListener("change", async () => {
+    const f = pick.files[0];
+    pick.value = "";
+    if (!f) return;
+    state.className = "state";
+    state.textContent = "Reading " + f.name + "…";
+    try {
+      const r = await fetch("api/heart", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-Tempest-Config": "1"},
+        body: JSON.stringify({csv: await f.text()}),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || body.ok === false) throw new Error(body.error || ("HTTP " + r.status));
+      cfg = body;
+      state.className = "state ok";
+      state.textContent = "Loaded.";
+      draw();
+      poll();
+    } catch (e) {
+      state.className = "state bad";
+      state.textContent = "Could not use that file — " + e.message;
+    }
+  });
+  draw();
+  return box;
 }
 
 /* Check now: ask the server to fetch this source once, right now, and say

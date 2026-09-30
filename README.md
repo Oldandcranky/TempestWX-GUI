@@ -365,6 +365,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The AI card's pulse can be your own heartbeat.** Settings → Data sources
+  → AI status takes an ECG file from an Apple Health export
+  (`electrocardiograms/ecg_….csv`). The server finds every beat in it and
+  keeps two things: the gaps between the beats, and the average shape of an
+  ordinary one. The pulse then glows at the moments your heart beat in that
+  recording, early beats and pauses included, on a loop the length of the
+  recording, and the beat on the line is drawn in your beat's shape. The
+  name and birth date in the file's header are never kept; the profile lives
+  in `data/` with the other settings, never in the repo, and a switch turns
+  it off.
 - **Only one deploy runs at a time.** Two started seven seconds apart, one
   from a laptop checkout and one from a Claude session, and their two
   container rebuilds each removed the other's, leaving the dashboard down.

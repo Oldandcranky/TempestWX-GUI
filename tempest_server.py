@@ -2317,6 +2317,10 @@ class Config:
         self.ai_status = {k: {"enabled": True, "url": ""} for k in AI_SERVICES}
         self.syslog = {"enabled": False, "host": "127.0.0.1", "port": 514,
                        "proto": "udp", "obs": False}
+        # The AI card's pulse, from one of the owner's own ECG recordings
+        # (core.parse_ecg): beat timings and a beat's shape, nothing that
+        # says whose. None until one is loaded from the settings page.
+        self.heart = None
         self.load()
 
     def load(self):
@@ -2344,6 +2348,41 @@ class Config:
             got = saved.get("syslog")
             if isinstance(got, dict):
                 self.syslog.update(self.clean_syslog(got, self.syslog))
+            self.heart = self.clean_heart(saved.get("heart"))
+
+    @staticmethod
+    def clean_heart(raw):
+        """A stored heart profile, or None if it does not hold together."""
+        if not isinstance(raw, dict):
+            return None
+        rr, shape = raw.get("rr_ms"), raw.get("shape")
+        if not (isinstance(rr, list) and 8 <= len(rr) <= 400
+                and all(isinstance(v, (int, float)) and 200 <= v <= 3000 for v in rr)):
+            return None
+        if not (isinstance(shape, list) and len(shape) == core.ECG_POINTS
+                and all(isinstance(v, (int, float)) and -2 <= v <= 2 for v in shape)):
+            return None
+        early = [g for g in (raw.get("early") or []) if isinstance(g, int) and 0 <= g < len(rr)]
+        return {"enabled": raw.get("enabled", True) is not False,
+                "recorded": str(raw.get("recorded") or "")[:10],
+                "classification": str(raw.get("classification") or "")[:40],
+                "bpm": int(raw.get("bpm") or round(60000 * len(rr) / sum(rr))),
+                "rr_ms": [int(v) for v in rr], "early": early,
+                "shape": [float(v) for v in shape]}
+
+    def set_heart(self, profile):
+        with self.lock:
+            self.heart = self.clean_heart(dict(profile, enabled=True))
+        self.save()
+        return self.heart is not None
+
+    def heart_for_page(self):
+        """What the dashboard draws the pulse from, when it is switched on."""
+        with self.lock:
+            h = self.heart
+            if not h or not h["enabled"]:
+                return None
+            return {k: h[k] for k in ("recorded", "rr_ms", "early", "shape")}
 
     def save(self):
         try:
@@ -2353,7 +2392,8 @@ class Config:
                            "pollen_key": self.pollen_key,
                            "speedtest_token": self.speedtest_token,
                            "ai_status": self.ai_status,
-                           "syslog": self.syslog},
+                           "syslog": self.syslog,
+                           "heart": self.heart},
                           f, indent=2)
             os.chmod(tmp, 0o600)          # it holds a token
             os.replace(tmp, self.path)
@@ -2404,7 +2444,10 @@ class Config:
                     "speedtest_token_set": bool(self.speedtest_token),
                     "ai_status": {k: dict(v) for k, v in self.ai_status.items()},
                     "ai_defaults": {k: c.ENDPOINT for k, c in AI_SERVICES.items()},
-                    "syslog": dict(self.syslog)}
+                    "syslog": dict(self.syslog),
+                    "heart": ({k: self.heart[k] for k in ("enabled", "recorded", "classification", "bpm")}
+                              | {"beats": len(self.heart["rr_ms"]) + 1, "early": len(self.heart["early"])}
+                              if self.heart else None)}
 
     @staticmethod
     def clean_syslog(raw, current):
@@ -2486,6 +2529,21 @@ class Config:
                 if fresh != self.syslog:
                     self.syslog = fresh
                     changed.append("syslog")
+            if "heart" in patch:
+                # Switched on or off, or taken away; loading one is /api/heart.
+                got = patch["heart"]
+                if got is None:
+                    if self.heart:
+                        self.heart = None
+                        changed.append("heart_cleared")
+                elif isinstance(got, dict) and isinstance(got.get("enabled"), bool):
+                    if not self.heart:
+                        return [], "no heartbeat has been loaded"
+                    if got["enabled"] != self.heart["enabled"]:
+                        self.heart["enabled"] = got["enabled"]
+                        changed.append("heart_" + ("on" if got["enabled"] else "off"))
+                else:
+                    return [], "heart must be {\"enabled\": true|false} or null"
             if "token" in patch:
                 tok = patch.get("token")
                 if tok is None or (isinstance(tok, str) and not tok.strip()):
@@ -2821,7 +2879,8 @@ class Dashboard:
         # It is a LAN address and no secret; the token stays server-side.
         snap["internet"]["url"] = self.args.speedtest_url or ""
         snap["ai_status"] = {k: f.snapshot() for k, f in list(self.ai.items())}
-        snap["nws"] = (self.nws.snapshot() if self.nws
+        snap["heart"] = self.config.heart_for_page()
+        snap["nws"] =(self.nws.snapshot() if self.nws
                        else {"available": False, "error": ""})
         snap["precip_obs"] = (self.observations.snapshot() if self.observations
                               else {"available": False, "error": ""})
@@ -3134,7 +3193,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if path not in ("/api/config", "/api/record", "/api/check", "/api/log"):
+        if path not in ("/api/config", "/api/record", "/api/check", "/api/log", "/api/heart"):
             self._send(404, "Not found\n", "text/plain; charset=utf-8")
             return
         # There is no login on this dashboard, so require a header a plain
@@ -3161,7 +3220,8 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
-        if length <= 0 or length > 8192:
+        # An Apple Watch ECG export is about 120 KB; everything else is small.
+        if length <= 0 or length > (600_000 if path == "/api/heart" else 8192):
             self._send(400, "Bad request body\n", "text/plain; charset=utf-8")
             return
         try:
@@ -3193,6 +3253,25 @@ class Handler(BaseHTTPRequestHandler):
                 core.log("page", "%s %s: %s" % (who, kind, text),
                          "warning" if kind == "error" else "notice")
             self._send(200, json.dumps({"ok": True}), "application/json; charset=utf-8")
+            return
+        if path == "/api/heart":
+            # {"csv": <an ECG export>}. Read here and kept as beat timings and
+            # a shape; the file itself, and the name in its header, are not.
+            text = (patch if isinstance(patch, dict) else {}).get("csv")
+            try:
+                if not isinstance(text, str):
+                    raise ValueError("send the ECG file's text as csv")
+                profile = core.parse_ecg(text)
+            except ValueError as e:
+                self._send(400, json.dumps({"ok": False, "error": str(e)}),
+                           "application/json; charset=utf-8")
+                return
+            dash.config.set_heart(profile)
+            core.log("settings", "heartbeat loaded: an ECG from %s, %d beats (%s)" % (
+                profile["recorded"] or "an unknown date", len(profile["rr_ms"]) + 1, who), "notice")
+            body = dash.config.public()
+            body["ok"] = True
+            self._send(200, json.dumps(body), "application/json; charset=utf-8")
             return
         if path == "/api/check":
             # A fetch on demand costs the outside service a call — Google

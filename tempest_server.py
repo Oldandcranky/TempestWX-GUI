@@ -488,7 +488,10 @@ STATUS_RANK = {"operational": 0, "under_maintenance": 1, "degraded_performance":
 # What each state is worth to a syslog server that mails on severity: a service
 # that is slow is news; one that is down, or something unheard of, is a warning.
 STATUS_LEVEL = {"under_maintenance": "notice", "degraded_performance": "notice"}
-PARTS_KEPT = 6        # how many failing components a reading or an incident names
+# How many failing components a reading or an incident names. Enough for a
+# whole service: ChatGPT's group has fifteen. It was six, and the page's
+# "+3 more" then under-counted an incident that touched all of them.
+PARTS_KEPT = 20
 
 
 def _iso_epoch(text):
@@ -910,7 +913,8 @@ class AiHistory:
             last = {"at": float(last["at"]), "status": str(last["status"])}
         bf = d.get("backfill")
         if bf is not None:
-            bf = {"at": float(bf["at"]), "from": str(bf["from"]), "events": int(bf["events"])}
+            bf = {"at": float(bf["at"]), "from": str(bf["from"]), "events": int(bf["events"]),
+                  "keeps": int(bf.get("keeps", 1))}
         return {"days": days, "events": events, "last": last, "backfill": bf}
 
     @staticmethod
@@ -1009,9 +1013,15 @@ class AiHistory:
         d = datetime.strptime(day, "%Y-%m-%d").date()
         return time.mktime((d + timedelta(days=1)).timetuple()) - time.mktime(d.timetuple())
 
+    # Raise this when what a backfill keeps changes, as Backfill.SWEEP_KEEPS is
+    # for the WeatherFlow sweep: a history filled the old way is filled again.
+    # 2: all of an incident's components, not the first six.
+    BACKFILL_KEEPS = 2
+
     def backfilled(self, key):
         with self.lock:
-            return bool((self.services.get(key) or {}).get("backfill"))
+            bf = (self.services.get(key) or {}).get("backfill")
+            return bool(bf) and bf.get("keeps") == self.BACKFILL_KEEPS
 
     def backfill(self, key, events, covered_from, now=None):
         """Fill in the days before the live record began, from the service's
@@ -1054,7 +1064,8 @@ class AiHistory:
             s["events"] = sorted(past + [e for e in s["events"] if e.get("src") != "history"],
                                  key=lambda e: e["start"])
             s["backfill"] = {"at": time.time() if now is None else now,
-                             "from": first.isoformat(), "events": len(past)}
+                             "from": first.isoformat(), "events": len(past),
+                             "keeps": self.BACKFILL_KEEPS}
             self._save(True)
             return True
 

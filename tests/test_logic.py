@@ -1265,6 +1265,15 @@ class ReliabilityRecord(unittest.TestCase):
         self.see(rec, self.T0 + 240, "operational")
         self.assertTrue(os.path.exists(path))                         # a quiet stretch, saved in due course
 
+    def test_an_incident_on_every_chatgpt_component_keeps_every_name(self):
+        rec, _, _ = self.new()
+        names = ["C%02d" % i for i in range(15)]                       # ChatGPT's group has fifteen
+        self.see(rec, self.T0, "operational")
+        self.see(rec, self.T0 + 120, "degraded_performance", names)
+        self.assertEqual(rec.services["claude"]["events"][0]["parts"], names)
+        raw = {"components": [comp(n, "degraded_performance") for n in names]}
+        self.assertEqual(len(server.ClaudeStatusFetcher.parse(raw)["parts"]), 15)
+
     def test_a_record_that_cannot_be_kept_is_not_the_status_page_failing(self):
         core.LOG.lines.clear()
         def boom(fresh): raise RuntimeError("disk")
@@ -1518,6 +1527,21 @@ class ServiceHistory(unittest.TestCase):
         self.assertFalse(rec.backfill("claude", [self.ev(9, 10, 9, 12)], self.at(12, 3)))
         self.assertEqual(rec.services, {})
         self.assertFalse(os.path.exists(path))
+
+    def test_a_history_filled_the_old_way_is_filled_again_once(self):
+        # Filled when only six names were kept: done again, so an incident's
+        # whole list replaces the first six. Then left alone.
+        rec, h, path = self.record()
+        rec.backfill("claude", [self.ev(9, 10, 9, 12)], self.at(12, 3))
+        del rec.services["claude"]["backfill"]["keeps"]
+        rec._save(True)
+        again = server.AiHistory(path, h)
+        self.assertFalse(again.backfilled("claude"))
+        wide = dict(self.ev(9, 10, 9, 12), parts=["C%02d" % i for i in range(15)])
+        again.backfill("claude", [wide], self.at(12, 3))
+        self.assertTrue(again.backfilled("claude"))
+        self.assertEqual([len(e["parts"]) for e in again.services["claude"]["events"] if e.get("src") == "history"], [15])
+        self.assertTrue(server.AiHistory(path, h).backfilled("claude"))
 
     def test_it_is_remembered_across_a_restart_and_reported(self):
         rec, h, path = self.record()

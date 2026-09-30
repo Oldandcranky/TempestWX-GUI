@@ -365,6 +365,19 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The reliability page's incident table reads cleanly.** Its columns line up:
+  it was a grid per row, each sizing its own columns, and is one grid now. The
+  headings say what the columns are (Started, Service, State, Duration,
+  Affected); a start is a date, not a weekday; the state is a coloured dot and
+  a word rather than bold capitals; a long list of components is cut to a few
+  names and "+N more", fewer on a narrower screen, with the hostname a status
+  page adds left off and the whole list in the tooltip; "~" marks an
+  approximate duration and the note under the table says so. The shares are
+  labelled "Fine". Nothing on the page shrinks to fit any more: the table
+  sliced its last row in half on a small screen, and the ninety-day strips
+  were flattened; the type shrinks instead. The server now keeps up to twenty
+  component names per incident, not six, so "+N more" counts right, and a
+  history filled under the old limit is filled again once.
 - **The AI status line in settings says how fresh it is.** "Working · fetched
   2m 18s ago", like the other sources, using the oldest of the three readings
   so it only reads fresh if every service is.

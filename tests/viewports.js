@@ -580,7 +580,7 @@ console.log = (...args) => {
       return {available: true, error: '', since: now - 20 * 86400, covered_from: iso(now - 60 * 86400),
               watched_days: 61, services: {
         claude: svc('Claude', i => i % 17 === 0 ? [3600, 900] : [0, 0], 'operational',
-          [ev(30, 25, 'major_outage', ['claude.ai', 'Claude API', 'Claude Code'])], hist),
+          [ev(30, 25, 'major_outage', ['claude.ai', 'Claude API (api.anthropic.com)', 'Claude Code'])], hist),
         chatgpt: svc('ChatGPT', i => i % 5 === 0 ? [7200, i % 15 === 0 ? 1800 : 0] : [0, 0], 'degraded_performance',
           [ev(0.4, 0, 'degraded_performance', ['Voice mode'], true),
            ev(50, 40, 'partial_outage', ['Conversations', 'Login', 'Voice mode', 'GPTs', 'Search', 'Agent']),
@@ -631,15 +631,62 @@ console.log = (...args) => {
       if (r.coloured.some(n => n !== 60)) bad.push(at + ': ' + r.coloured + ' watched days coloured, expected 60 each (30 were not watched)');
       if (r.rows < 5) bad.push(at + ': the incident list has ' + r.rows + ' rows');
       if (r.strip < 8) bad.push(at + ': the strip is only ' + r.strip.toFixed(0) + 'px tall');
-      if (!r.text.includes('ongoing')) bad.push(at + ': the open incident is not marked ongoing');
-      if (!r.text.includes('history until')) bad.push(at + ': no note that the earlier days come from the status pages');
+      if (!r.text.includes('so far')) bad.push(at + ': the open incident is not marked "so far"');
+      if (!r.text.includes("History from each status page")) bad.push(at + ': no note that the earlier days come from the status pages');
+      if (!r.text.includes('~ is approximate')) bad.push(at + ': the note does not say what "~" means');
       // Under an hour seen, a share is a dash; with days seen, it is a number.
-      if (!/^7d\u2014/.test(r.nums[2])) bad.push(at + ': a week with five minutes seen shows "' + r.nums[2] + '", expected a dash');
-      if (!/^7d\d/.test(r.nums[0])) bad.push(at + ': a week with days seen shows "' + r.nums[0] + '", expected a share');
+      if (!/^Fine7d\u2014/.test(r.nums[2])) bad.push(at + ': a week with five minutes seen shows "' + r.nums[2] + '", expected a dash');
+      if (!/^Fine7d\d/.test(r.nums[0])) bad.push(at + ': a week with days seen shows "' + r.nums[0] + '", expected a share');
       // A share is rounded down: a day with any time down is never "100%".
       if (/100\.0%/.test(r.nums[0]) || /100\.0%/.test(r.nums[1]))
         bad.push(at + ': a service with time down claims 100.0% (' + r.nums.slice(0, 2) + ')');
       if (w <= 720 && r.headWhatShown) bad.push(at + ': the list header still shows a column the rows dropped');
+      // One grid: each of the first four columns starts at the same x in every
+      // row, header included. The last is dropped on a phone.
+      const cols = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('#relpage .reltbl .inc')];
+        return [0, 1, 2, 3].map(j => rows.map(x => Math.round(x.children[j].getBoundingClientRect().left)));
+      });
+      cols.forEach((xs, j) => { if (Math.max(...xs) - Math.min(...xs) > 1) bad.push(at + ': table column ' + j + ' does not line up: ' + xs); });
+      const cells = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('#relpage .reltbl .inc:not(.head)')];
+        return {when: rows.map(x => x.children[0].textContent), dur: rows.map(x => x.children[3].textContent),
+                what: rows.map(x => x.children[4].innerText), head: [...document.querySelectorAll('#relpage .inc.head > span')].map(x => x.textContent)};
+      });
+      if (cells.head.join() !== 'Started,Service,State,Duration,Affected') bad.push(at + ': the table header reads "' + cells.head + '"');
+      // A day number and a month, in whatever order the locale puts them; a
+      // weekday alone ("Wed 4:13 AM") is what this replaced.
+      if (cells.when.some(t => !/\b\d{1,2}\b/.test(t.split(',')[0]) || /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/.test(t)))
+        bad.push(at + ': a start is not a date: ' + cells.when);
+      if (cells.when.some(t => t.includes('~'))) bad.push(at + ': "~" is on a start, it belongs on a duration');
+      if (!cells.dur.some(t => t.startsWith('~'))) bad.push(at + ': no duration is marked approximate');
+      if (cells.what.some(t => /\(/.test(t))) bad.push(at + ': a hostname is still on a component: ' + cells.what);
+      if (!cells.what.some(t => /\+\d+ more|^\d+ components$/.test(t))) bad.push(at + ': a long list of components is not shortened: ' + cells.what);
+      if (!/Fine/.test(r.text)) bad.push(at + ': the shares are not labelled');
+      // No row sliced: every row sits inside the card, and no name is cut mid-word.
+      const cut = await page.evaluate(() => {
+        const card = document.querySelector('#relpage .card-body').getBoundingClientRect();
+        const rows = [...document.querySelectorAll('#relpage .reltbl .inc:not(.head)')];
+        const tbl = document.querySelector('#relpage .reltbl');
+        const tb = tbl.getBoundingClientRect();
+        return {sliced: rows.filter(x => x.children[0].getBoundingClientRect().bottom > Math.min(card.bottom, tb.bottom) + 1).length
+                        + (tbl.scrollHeight > tbl.clientHeight + 1 ? 1 : 0),
+                clipped: [...document.querySelectorAll('#relpage .reltbl .what')]
+                  .filter(e => e.offsetParent && e.scrollWidth > e.clientWidth + 1).map(e => e.innerText)};
+      });
+      if (cut.sliced) bad.push(at + ': ' + cut.sliced + ' incident row(s) fall outside the card');
+      // Nothing squeezed to make room: every strip keeps at least its minimum
+      // height, and no service's lines spill out of its own block.
+      const squeeze = await page.evaluate(() => [...document.querySelectorAll('#relpage .relsvc')].map(box => {
+        const b = box.getBoundingClientRect();
+        return {strip: box.querySelector('.relstrip').getBoundingClientRect().height,
+                spill: Math.max(...[...box.children].map(k => k.getBoundingClientRect().bottom - b.bottom))};
+      }));
+      squeeze.forEach((q, i) => {
+        if (q.strip < 9.5) bad.push(at + ': service ' + (i + 1) + "'s strip is squeezed to " + q.strip.toFixed(0) + 'px');
+        if (q.spill > 1) bad.push(at + ': service ' + (i + 1) + ' spills out of its block by ' + q.spill.toFixed(0) + 'px');
+      });
+      if (cut.clipped.length) bad.push(at + ': components cut off mid-word: ' + cut.clipped);
       for (const [id, why] of await page.evaluate(measure, '#relpage')) bad.push(at + ': ' + id + ' ' + why);
       // The whole page is the way back, and the Back button is too.
       await page.$eval('#relpage .card-head', el => el.click());
@@ -653,6 +700,46 @@ console.log = (...args) => {
       if (await page.evaluate(() => document.body.classList.contains('show-rel')))
         bad.push(at + ': Back did not close the page');
       for (const m of errs) bad.push(at + ': pageerror: ' + m);
+      await page.close();
+    }
+    // The helpers behind the Affected column, and a table with no incidents.
+    {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      const errs = [];
+      page.on('pageerror', e => errs.push(e.message));
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()) }));
+      const quiet = JSON.parse(JSON.stringify(rel));
+      for (const v of Object.values(quiet.services)) v.incidents = [];
+      await page.route('**/api/reliability*', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(quiet) }));
+      await page.goto(BASE, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const h = await page.evaluate(() => ({
+        two: relParts(['API', 'Login']).forms,
+        many: relParts(Array.from({length: 15}, (_, i) => 'Component ' + i)).forms,
+        host: relParts(['Claude API (api.anthropic.com)', 'claude.ai']).forms,
+        attr: escAttr('12" display & <b>'),
+      }));
+      if (JSON.stringify(h.two) !== '["API, Login"]') bad.push('relParts falls back from "API, Login" to a longer form: ' + JSON.stringify(h.two));
+      if (h.many.some((f, i) => i && f.length >= h.many[i - 1].length)) bad.push('relParts forms are not each shorter: ' + JSON.stringify(h.many));
+      if (h.many[h.many.length - 1] !== '15 components') bad.push('relParts does not end on the count: ' + JSON.stringify(h.many));
+      if (h.host[0] !== 'Claude API, claude.ai' || h.host.some(f => f.includes('(')))
+        bad.push('relParts keeps a hostname: ' + JSON.stringify(h.host));
+      if (h.attr !== '12&quot; display &amp; &lt;b&gt;') bad.push('escAttr leaves a quote: ' + h.attr);
+      await page.$eval('#card-claude', el => el.click());
+      await page.waitForTimeout(1500);
+      const t = await page.evaluate(() => {
+        const tbl = document.querySelector('#relpage .reltbl');
+        const none = document.querySelector('#relpage .reltbl .inc.none > span');
+        const started = document.querySelector('#relpage .inc.head > span');
+        return {none: none ? none.textContent : null, noneW: none ? none.getBoundingClientRect().width : 0,
+                tblW: tbl.getBoundingClientRect().width, startedW: started.getBoundingClientRect().width};
+      });
+      if (t.none !== 'No incidents recorded yet') bad.push('no incidents: the table says "' + t.none + '"');
+      if (Math.abs(t.noneW - t.tblW) > 2) bad.push('no incidents: the sentence does not span the table (' + t.noneW + ' of ' + t.tblW + 'px)');
+      if (t.startedW > t.noneW / 2) bad.push('no incidents: the sentence widened the first column to ' + t.startedW.toFixed(0) + 'px');
+      for (const m of errs) bad.push('helpers: pageerror: ' + m);
       await page.close();
     }
     // Nothing recorded yet is a sentence, not a blank card or an error.

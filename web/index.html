@@ -735,7 +735,10 @@ body.show-rel #grid{display:none}
 body.show-rel #relpage{display:flex}
 #relpage .card{flex:1;min-width:0}
 #relpage .card-body{justify-content:space-evenly}
-.relsvc{display:flex;flex-direction:column;gap:clamp(2px,.8cqh,8px);flex:0 1 auto;min-height:0}
+/* Nothing on this page shrinks to make room: a squeezed block sliced the table's
+   last row, and then flattened the strips to nothing. Whatever does not fit is
+   the card body's overflow, which is what the fit pass answers by shrinking type. */
+.relsvc{display:flex;flex-direction:column;gap:clamp(2px,.8cqh,8px);flex:0 0 auto}
 .relsvc .ln{display:flex;justify-content:space-between;align-items:baseline;
             gap:.2em .8em;flex-wrap:wrap}
 .relsvc .n{font-size:var(--fs-value);font-weight:700}
@@ -750,20 +753,32 @@ body.show-rel #relpage{display:flex}
 .relstrip i.ok{background:var(--green)}
 .relstrip i.deg{background:var(--accent)}
 .relstrip i.out{background:var(--red)}
-#relpage .reltbl{flex:0 1 auto;min-height:0;overflow:hidden;display:flex;
-                 flex-direction:column;gap:2px;font-size:var(--fs-label)}
-#relpage .reltbl .inc{display:grid;grid-template-columns:auto auto auto auto 1fr;gap:.8em;
-                      align-items:baseline;padding:.15em .4em;border-radius:var(--inset-radius)}
-#relpage .reltbl .inc.head{color:var(--label);letter-spacing:.06em;text-transform:uppercase}
-#relpage .reltbl .inc span{white-space:nowrap}
+/* One grid for the whole table, so every row's cells line up under the same
+   header. The rows are only wrappers (display:contents); it was a grid per
+   row, each sizing its own columns, and nothing lined up. */
+/* It does not shrink: a table that is squeezed would slice its last row in
+   half. The card's fit pass shrinks the type instead, as on every card. */
+#relpage .reltbl{flex:0 0 auto;font-size:var(--fs-label);
+                 display:grid;grid-template-columns:max-content max-content max-content max-content minmax(0,1fr);
+                 column-gap:1em;row-gap:.05em;align-items:baseline}
+#relpage .reltbl .inc{display:contents}
+#relpage .reltbl .inc > span{padding:.14em 0;white-space:nowrap}
+#relpage .reltbl .inc.none > span{grid-column:1 / -1;color:var(--label)}
+#relpage .reltbl .inc.head > span{color:var(--label);font-weight:600;letter-spacing:.02em;
+  font-size:calc(var(--fs-label)*.92);border-bottom:1px solid var(--rule);padding-bottom:.3em;margin-bottom:.15em}
 #relpage .reltbl .inc .what{overflow:hidden;text-overflow:ellipsis;color:var(--label);min-width:0}
-#relpage .reltbl .inc .w{font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+#relpage .reltbl .st{display:inline-flex;align-items:baseline;gap:.45em;font-weight:500}
+#relpage .reltbl .st i{width:.55em;height:.55em;border-radius:50%;background:currentColor;
+                       align-self:center;flex:none}
+.relsvc .nums .lead{color:var(--faint);font-weight:600}
+
+.caption.plain{text-transform:none;letter-spacing:.02em;font-weight:500}
 @media (max-width:720px){
   #relpage{flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
   body.show-rel #relpage{display:block}
   #relpage .card{container-type:inline-size;min-height:100%;overflow:visible}
   #relpage .card-body{justify-content:flex-start;gap:clamp(8px,1.6dvh,16px)}
-  #relpage .reltbl .inc{grid-template-columns:auto auto auto auto;gap:.5em}
+  #relpage .reltbl{grid-template-columns:max-content max-content max-content max-content;column-gap:.6em}
   #relpage .reltbl .inc .what{display:none}
 }
 
@@ -5498,6 +5513,53 @@ function relDay(row){
   return [row.out ? "out" : row.deg ? "deg" : "ok", label + " · " + (bits.join(" · ") || "no problems")];
 }
 
+/* For an attribute value: esc() leaves quotes alone, which is right for text
+   and wrong here, where a quote in a component's name would end the value. */
+const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
+
+/* "Sep 29, 3:02 PM": a weekday alone does not say which one. */
+function relWhen(ts){
+  const d = new Date(ts * 1000);
+  const opts = {month: "short", day: "numeric"};
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString([], opts) + ", " +
+         d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+}
+function relDur(sec){
+  const m = Math.max(1, Math.round(sec / 60));
+  if (m < 60) return m + "m";
+  const h = Math.floor(m / 60), r = m % 60;
+  return h + "h" + (r ? " " + r + "m" : "");
+}
+/* The components an incident touched: a few by name, the rest counted. The
+   hostname a status page tacks on ("Claude API (api.anthropic.com)") is dropped. */
+function relParts(parts){
+  const names = [...new Set((parts || []).map(p => p.replace(/\s*\([^)]*\)\s*$/, "")).filter(Boolean))];
+  const some = (n) => names.slice(0, n).join(", ") + (names.length > n ? " +" + (names.length - n) + " more" : "");
+  // The most telling form first, then only forms that are actually shorter:
+  // "API +1 more" is longer than "API, Login" and says less, so it is never a
+  // fallback for it.
+  const forms = [some(3)];
+  for (const f of [some(1), names.length + " components"])
+    if (f.length < forms[forms.length - 1].length) forms.push(f);
+  return {forms, all: names.join(", ")};
+}
+
+/* Fewer names where there is less room, rather than one cut off mid-word.
+   Measured, after the card is fitted, because how much room there is depends
+   on the type size the fit pass settled on, the dates and the other columns:
+   a width guessed in CSS was wrong for "Conversations +5 more" at 1024. */
+function relFitParts(){
+  for (const cell of document.querySelectorAll("#relpage .reltbl .what[data-forms]")) {
+    const forms = JSON.parse(cell.dataset.forms);
+    let i = 0;
+    cell.textContent = forms[0];
+    // The first that fits; if none does, the shortest, which is the last.
+    while (cell.scrollWidth > cell.clientWidth + 1 && i < forms.length - 1)
+      cell.textContent = forms[++i];
+  }
+}
+
 function renderRelPage(){
   const host = document.getElementById("relpage");
   const r = rel || {};
@@ -5522,6 +5584,9 @@ function renderRelPage(){
     const left = el("span");
     left.append(el("span", "n", esc(name)), el("span", "w " + cur[1], esc(cur[0])));
     const nums = el("span", "nums");
+    const lead = el("span", "lead", "Fine");
+    lead.title = "The share of watched time with no problem reported";
+    nums.appendChild(lead);
     for (const w of ["7", "30", "90"]) {
       const t = svc.windows[w];
       const one = el("span", "", esc(w + "d"));
@@ -5548,33 +5613,35 @@ function renderRelPage(){
   // The latest incidents across all three, newest first.
   const tbl = el("div", "reltbl");
   const head = el("div", "inc head");
-  head.innerHTML = '<span>When</span><span>Service</span><span>State</span><span>Lasted</span><span class="what">What</span>';
+  head.innerHTML = '<span>Started</span><span>Service</span><span>State</span>' +
+                   '<span>Duration</span><span class="what">Affected</span>';
   tbl.appendChild(head);
   all.sort((x, y) => y.start - x.start);
   for (const i of all.slice(0, 6)) {
     const [word, tone] = statusWord(i.worst);
+    const p = relParts(i.parts);
+    const approx = i.approx_start || i.approx_end;
     const row = el("div", "inc");
     row.innerHTML =
-      '<span>' + esc((i.approx_start ? "~" : "") + dayClock(i.start)) + '</span>' +
+      '<span>' + esc(relWhen(i.start)) + '</span>' +
       '<span>' + esc(i.name) + '</span>' +
-      '<span class="w ' + tone + '">' + esc(word) + '</span>' +
-      '<span>' + esc(i.open ? "ongoing " + gap(now - i.start)
-                            : (i.approx_start || i.approx_end ? "~" : "") + gap(i.end - i.start)) + '</span>' +
-      '<span class="what" title="' + esc((i.parts || []).join(", ")) + '">' +
-        esc((i.parts || []).join(", ")) + '</span>';
+      '<span class="st ' + tone + '"><i></i>' + esc(word) + '</span>' +
+      '<span' + (approx ? ' title="Approximate: the start or the end fell in time the dashboard could not see"' : '') + '>' +
+        esc((approx ? "~" : "") + relDur((i.open ? now : i.end) - i.start) + (i.open ? " so far" : "")) + '</span>' +
+      '<span class="what" title="' + escAttr(p.all) + '" data-forms="' +
+        escAttr(JSON.stringify(p.forms)) + '">' + esc(p.forms[0]) + '</span>';
     tbl.appendChild(row);
   }
   if (!all.length)
-    tbl.appendChild(el("div", "inc", "<span>No incidents recorded yet</span>"));
+    tbl.appendChild(el("div", "inc none", "<span>No incidents recorded yet</span>"));
   b.appendChild(tbl);
   const back = Object.values(r.services || {}).some(v => v.backfill);
-  b.appendChild(caption(back
-    ? "Since " + niceDay(r.covered_from) + " · history until " + shortDate(r.since) +
-      ", then watched here · time not seen is not counted"
-    : "Watched since " + shortDate(r.since) + " · as each status page reported it · " +
-      "time not seen is not counted", "faint wrap2"));
+  b.appendChild(caption((back ? "History from each status page's own records, then watched here since "
+                              : "Watched here since ") + shortDate(r.since) +
+    " · ~ is approximate · grey is not covered", "faint wrap2 plain"));
   host.replaceChildren(c);
   fitCards();
+  relFitParts();
 }
 
 let leavingRel = false;
@@ -6321,7 +6388,10 @@ document.addEventListener("keydown", (e) => {
   addEventListener("resize", () => {
     measureChrome();
     clearTimeout(fitJob);
-    fitJob = setTimeout(() => { fitCache.clear(); fitCards(); }, 120);
+    fitJob = setTimeout(() => {
+      fitCache.clear(); fitCards();
+      if (document.body.classList.contains("show-rel")) relFitParts();
+    }, 120);
   });
 })();
 </script>

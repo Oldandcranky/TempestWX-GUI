@@ -3487,6 +3487,7 @@ function buildClaude(s){
   const {card:c, body:b} = card("claude","AI status","na","accent",
     !shown.length || health.includes("waiting") ? "waiting" : health.includes("stale") ? "stale" : "live");
   aiIcon(c);
+  headAction(c, "Show reliability", () => toggleRel(true));
   const list = el("div", "aistat");
   if (!shown.length) list.appendChild(caption("All switched off in settings"));
   const fresh = shown.filter(([k]) => ai[k].available && !ai[k].error);

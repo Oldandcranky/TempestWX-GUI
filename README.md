@@ -365,6 +365,8 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The AI status card has the page button** in its top-right corner, like
+  Forecast, Records and Internet, so it shows it has a page behind it.
 - **The map page is the same radar loop, full screen.** It was Windy's
   embed, paused behind a play button; now it plays the card's loop in step
   with it, with a bar along the bottom for the two hours. A tap anywhere on

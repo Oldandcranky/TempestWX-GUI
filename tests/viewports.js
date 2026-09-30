@@ -712,6 +712,7 @@ console.log = (...args) => {
       await page.waitForTimeout(SETTLE_MS);
       const at = w + 'x' + h;
       if (asked) bad.push(at + ': the record was fetched before the page was opened');
+      if (!await page.$('#card-claude .card-head .flipbtn')) bad.push(at + ': the AI status card has no button to its page');
       await page.$eval('#card-claude', el => el.click());          // a tap on the card is the way in
       await page.waitForTimeout(2200);
       if (!asked) bad.push(at + ': opening the page fetched nothing');

@@ -580,6 +580,13 @@ class StatusFeed(PollingFetcher):
     def fetch_once(self):
         return self.parse(self.get(self.url))
 
+    def snapshot(self):
+        """With how often the page is read, so the card's heartbeat knows how
+        long a beat takes to cross it without keeping its own copy."""
+        out = PollingFetcher.snapshot(self)
+        out["every"] = self.REFRESH
+        return out
+
     def describe(self, exc):
         if isinstance(exc, ValueError):
             return "%s: %s" % (self.LABEL, exc)

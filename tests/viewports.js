@@ -844,6 +844,80 @@ console.log = (...args) => {
     for (const why of bad) console.log('         ' + why);
   });
 
+  // ── the AI card's heartbeat ──
+  // Where the beat sits is the age of the reading: at the right edge just
+  // after one, near the left as the next is due. Its colour is the worst
+  // status shown. With one page out of reach that line keeps its own note;
+  // with all of them out of reach it flatlines and says so once.
+  section("the AI card's heartbeat, fresh, late, part and all out of reach", async () => {
+    const OK = 'operational';
+    const CASES = [
+      ['fresh', 6,   {claude: OK, chatgpt: OK, gemini: OK}, [], 'green'],
+      ['late',  100, {claude: OK, chatgpt: 'degraded_performance', gemini: OK}, [], 'accent'],
+      ['part',  30,  {claude: 'major_outage', chatgpt: OK, gemini: OK}, ['gemini'], 'red'],
+      ['flat',  190, {claude: OK, chatgpt: OK, gemini: OK}, ['claude', 'chatgpt', 'gemini'], 'accent'],
+    ];
+    const bad = [];
+    await abreast(CASES.flatMap(c => [[1920, 1080], [414, 896]].map(v => [c, v])),
+                  async ([[name, age, status, down, tone], [width, height]]) => {
+      const page = await browser.newPage({ viewport: { width, height } });
+      await page.route('**/api/state', route => {
+        const s = freshen();
+        for (const [k, p] of Object.entries(s.ai_status)) {
+          Object.assign(p, {available: true, status: status[k], every: 120, fetched_at: s.now - age,
+                            error: down.includes(k) ? 'status page unreachable (URLError)' : ''});
+        }
+        route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(s) });
+      });
+      try {
+        await page.goto(BASE, { waitUntil: 'networkidle' });
+        await page.waitForSelector('#card-claude', { state: 'attached' });
+        await page.waitForTimeout(SETTLE_MS);
+        const found = await page.evaluate(([age, flat, part, tone]) => {
+          const out = [], c = document.getElementById('card-claude');
+          const beat = c.querySelector('.aibeat');
+          if (!beat) return ['no heartbeat'];
+          const notes = c.querySelectorAll('.inc').length;
+          if (notes !== part) out.push(notes + ' "can\'t reach" notes, expected ' + part);
+          const lbl = beat.querySelector('.ago').textContent;
+          if (flat) {
+            if (!beat.classList.contains('down')) out.push('all out of reach, but not flat');
+            if (beat.querySelector('.trace')) out.push('all out of reach, but still beating');
+            if (!/^No pulse/.test(lbl)) out.push('flat, and says "' + lbl + '"');
+          } else {
+            const tx = new DOMMatrix(getComputedStyle(beat.querySelector('.trace')).transform).e;
+            const want = -188 * age / 120;
+            // Up to two seconds between a poll and the measurement.
+            if (tx > want + 1 || tx < want - 5) out.push('beat at ' + tx.toFixed(1) + ', expected ' + want.toFixed(1));
+            if (!/^\d+[sm]/.test(lbl)) out.push('the age reads "' + lbl + '"');
+          }
+          const probe = document.createElement('span');
+          probe.style.color = 'var(--' + tone + ')';
+          document.body.appendChild(probe);
+          const want = getComputedStyle(probe).color;
+          probe.remove();
+          if (getComputedStyle(beat.querySelector('svg')).color !== want) out.push('the beat is not ' + tone);
+          const body = c.querySelector('.card-body');
+          if (body.scrollHeight - body.clientHeight > 1) out.push('the card overflows down');
+          if (body.scrollWidth - body.clientWidth > 1) out.push('the card overflows sideways');
+          return out;
+        }, [age, down.length === 3, down.length === 3 ? 0 : down.length, tone]);
+        for (const why of found) bad.push(name + ' ' + width + 'px  ' + why);
+      } catch (e) {
+        bad.push(name + ' ' + width + 'px  ' + e.message.split('\n')[0]);
+      }
+      await page.close();
+    });
+    checked += CASES.length * 2;
+    if (bad.length === 0) {
+      console.log('  ok   AI heartbeat, 4 states x 2 sizes');
+    } else {
+      failures += bad.length;
+      console.log('  FAIL AI heartbeat, 4 states x 2 sizes');
+      for (const why of bad) console.log('         ' + why);
+    }
+  });
+
   // ── the Records band, with today at each end of it and in the middle ──
   // On a wall of six large cards as well as the crowded fourteen: the large
   // card is where the labels came adrift, and no other test draws one.

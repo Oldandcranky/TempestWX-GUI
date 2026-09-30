@@ -172,6 +172,20 @@ body.tv{cursor:none}
            overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aistat .w{font-size:var(--fs-value-sm);font-weight:700;letter-spacing:.06em;
            text-transform:uppercase;white-space:nowrap}
+/* When the status pages were last read, as a heartbeat: a beat at the right
+   edge when a reading lands, drifting left until the next is due. The drift
+   is an animation started with a negative delay of the reading's age, so the
+   card being rebuilt every two seconds picks it up where it was rather than
+   jumping. Stopped for reduced motion, it still moves once per rebuild. */
+.aibeat{flex:0 0 auto;display:flex;align-items:center;gap:.6em;margin-top:.3em}
+.aibeat svg{flex:1 1 auto;min-width:0;height:calc(var(--fs-label)*2);display:block}
+.aibeat .trace{animation:aibeat linear forwards}
+@keyframes aibeat{from{transform:translateX(0)} to{transform:translateX(-188px)}}
+.aibeat .ago{font-size:var(--fs-label);font-weight:600;letter-spacing:.085em;text-transform:uppercase;
+             color:var(--label);white-space:nowrap;min-width:4.6em;text-align:right}
+.aibeat.down .ago{color:var(--accent)}
+@container (max-height: 165px){ .aibeat{display:none} }
+@media (prefers-reduced-motion:reduce){ .aibeat .trace{animation-play-state:paused} }
 .aiset .line2{display:flex;align-items:center;gap:.8em;flex-wrap:wrap;padding:.3em 0}
 .aiset label{display:flex;align-items:center;gap:.5em;min-width:7em;cursor:pointer}
 .aiset input[type=text]{flex:1 1 16em;min-width:0}
@@ -3288,19 +3302,58 @@ function buildClaude(s){
   aiIcon(c);
   const list = el("div", "aistat");
   if (!shown.length) list.appendChild(caption("All switched off in settings"));
+  const fresh = shown.filter(([k]) => ai[k].available && !ai[k].error);
+  const stale = shown.filter(([k]) => ai[k].available && ai[k].error);
+  // With every page out of reach the heartbeat flatlines and says so once,
+  // rather than the same note under all three lines.
+  const flat = stale.length && !fresh.length;
+  const tones = [];
   for (const [key, name] of shown) {
     const p = ai[key] || {};
     const [word, tone] = p.available ? statusWord(p.status) : ["Unknown", "muted"];
+    tones.push(tone);
     const ln = el("div", "ln");
     ln.append(el("span", "n", esc(name)), el("span", "w " + tone, esc(word)));
     list.appendChild(ln);
     // Why this line cannot be trusted, when it cannot.
     const note = !p.available ? p.error
-      : p.error ? "Can't reach the status page · as of " + ago(s.now - p.fetched_at) + " ago" : "";
+      : p.error && !flat ? "Can't reach the status page · as of " + ago(s.now - p.fetched_at) + " ago" : "";
     if (note) list.appendChild(el("div", "inc", esc(note)));
   }
   b.appendChild(list);
+  if (fresh.length || flat) b.appendChild(aiBeat(s, fresh.length ? fresh : stale, flat,
+    tones.includes("red") ? "red" : tones.includes("accent") ? "accent" : "green"));
   return c;
+}
+
+/* The heartbeat. The beat's age is the oldest of the readings it stands for,
+   so it looks fresh only when all of them are. Flat, it counts from the
+   newest reading: how long since anything was heard at all. */
+function aiBeat(s, readings, flat, tone){
+  const ai = s.ai_status;
+  const at = readings.map(([k]) => ai[k].fetched_at);
+  const age = Math.max(0, s.now - (flat ? Math.max(...at) : Math.min(...at)));
+  const every = ai[readings[0][0]].every || 120;       // StatusFeed.REFRESH
+  const w = el("div", "aibeat" + (flat ? " down" : ""));
+  // Drawn in a 200-wide box on a 400-long trace, the beat six in from the
+  // box's right edge so all of it shows: the trace slides 188 left over one
+  // interval, to six in from the left, taking its fading tail with it.
+  const trace = flat ? '<path d="M0 10H200" stroke="currentColor" stroke-width="2" ' +
+                       'vector-effect="non-scaling-stroke" opacity=".6"/>'
+    : '<defs><linearGradient id="aifade" gradientUnits="userSpaceOnUse" x1="0" x2="400">' +
+      '<stop offset="0" stop-color="currentColor" stop-opacity=".1"/>' +
+      '<stop offset=".485" stop-color="currentColor"/>' +
+      '<stop offset="1" stop-color="currentColor" stop-opacity=".35"/></linearGradient></defs>' +
+      '<g class="trace" style="animation-duration:' + every + 's;animation-delay:' + (-age).toFixed(1) + 's">' +
+      '<path d="M0 10H185L188 8L191 12L194 3L197 17L200 10H400" fill="none" stroke="url(#aifade)" ' +
+      'stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></g>';
+  w.innerHTML = '<svg viewBox="0 0 200 20" preserveAspectRatio="none" aria-hidden="true" ' +
+    'style="color:var(--' + (flat ? "accent" : tone) + ')' +
+    (flat ? '' : ';filter:drop-shadow(0 0 3px var(--' + tone + '))') + '">' + trace + '</svg>' +
+    '<span class="ago">' + (flat ? "No pulse · " : "") + ago(age) + '</span>';
+  w.title = flat ? "No status page has answered for " + ago(age)
+               : "Status pages read " + ago(age) + " ago, every " + ago(every);
+  return w;
 }
 
 /* Internet health, from Speedtest Tracker. Speed is the headline because it

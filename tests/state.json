@@ -30,19 +30,22 @@
    "available": true,
    "error": "",
    "fetched_at": 1789568499.1540258,
-   "status": "degraded_performance"
+   "status": "degraded_performance",
+   "every": 120
   },
   "claude": {
    "available": true,
    "error": "",
    "fetched_at": 1789568499.1540258,
-   "status": "partial_outage"
+   "status": "partial_outage",
+   "every": 120
   },
   "gemini": {
    "available": true,
    "error": "",
    "fetched_at": 1789568499.1540258,
-   "status": "operational"
+   "status": "operational",
+   "every": 120
   }
  },
  "derived": {

@@ -732,6 +732,14 @@ class CheckNow(unittest.TestCase):
         self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["via"], "names")
         self.assertIsNone(server.ClaudeStatusFetcher.parse(raw)["via"])      # it counts everything
 
+    def test_an_ai_reading_says_how_often_it_is_taken(self):
+        # The card's heartbeat crosses in this long; before the first reading too.
+        f = server.ClaudeStatusFetcher(threading.Event())
+        self.assertEqual(f.snapshot()["every"], server.StatusFeed.REFRESH)
+        f.store({"status": "operational", "fetched_at": 1.0})
+        self.assertEqual(f.snapshot()["every"], server.StatusFeed.REFRESH)
+        self.assertEqual(f.snapshot()["status"], "operational")
+
     def test_ai_status_with_everything_off_says_so(self):
         out = self.dash().check("ai")
         self.assertFalse(out["ok"])

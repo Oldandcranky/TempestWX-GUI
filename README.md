@@ -365,6 +365,15 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The AI status card has a heartbeat.** A pulse line along the bottom of the
+  card shows when the status pages were last read: each reading puts a beat
+  at the right edge, and it drifts left over the two minutes until the next
+  one, with the age beside it. It takes the colour of the worst status on the
+  card. If every status page is out of reach it flatlines in amber and says
+  "No pulse" once, where the card used to repeat "Can't reach the status page"
+  under all three lines; a single page out of reach keeps its own note. The
+  server now sends how often it reads them, so the page does not keep its own
+  copy of the interval.
 - **The phone footer fits at every hour.** From 10 to 12 o'clock the clock's
   extra digit pushed the TV button off a 414px screen, and on a 390px iPhone
   it was cut off at every hour. Nothing left of the buttons could shrink: the

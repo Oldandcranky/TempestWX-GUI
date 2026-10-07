@@ -701,7 +701,7 @@ console.log = (...args) => {
     })();
     for (const [k, v] of Object.entries(rel.services)) v.page = ({claude: 'https://status.claude.com/',
       chatgpt: 'https://status.openai.com/', gemini: 'javascript:alert(1)'})[k];
-    for (const [w, h] of [[1920, 1080], [1400, 860], [1920, 720], [1024, 768], [414, 896]]) {
+    await abreast([[1920, 1080], [1400, 860], [1920, 720], [1024, 768], [414, 896], [375, 812]], async ([w, h]) => {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
       const errs = [];
       let asked = 0;
@@ -812,6 +812,17 @@ console.log = (...args) => {
       });
       if (cut.clipped.length) bad.push(at + ': components cut off mid-word: ' + cut.clipped);
       for (const [id, why] of await page.evaluate(measure, '#relpage')) bad.push(at + ': ' + id + ' ' + why);
+      // The table stays out of the card's padding. measure() cannot see this:
+      // scrollWidth counts no padding, and on a phone "20m so far" ran into it
+      // to touch the card's edge while the card measured clean.
+      const into = await page.evaluate(() => {
+        const body = document.querySelector('#relpage .card-body');
+        const s = getComputedStyle(body), b = body.getBoundingClientRect();
+        const edge = b.right - parseFloat(s.borderRightWidth) - parseFloat(s.paddingRight);
+        const cells = [...document.querySelectorAll('#relpage .reltbl .inc > span')].filter(x => x.offsetParent);
+        return Math.max(...cells.map(x => x.getBoundingClientRect().right)) - edge;
+      });
+      if (into > 1) bad.push(at + ': the incident table runs ' + into.toFixed(1) + "px into the card's padding");
       // Each service has a button to its own status page, and only ever to a
       // web address. Following one leaves this page open behind it.
       const links = await page.evaluate(() => [...document.querySelectorAll('#relpage .relsvc')].map(box => {
@@ -841,7 +852,7 @@ console.log = (...args) => {
         bad.push(at + ': Back did not close the page');
       for (const m of errs) bad.push(at + ': pageerror: ' + m);
       await page.close();
-    }
+    });
     // The helpers behind the Affected column, and a table with no incidents.
     {
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });

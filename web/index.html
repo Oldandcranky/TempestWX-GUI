@@ -847,7 +847,14 @@ body.tv .relsvc .linkbtn{display:none}
   body.show-rel #relpage{display:block}
   #relpage .card{container-type:inline-size;min-height:100%;overflow:visible}
   #relpage .card-body{justify-content:flex-start;gap:clamp(8px,1.6dvh,16px)}
-  #relpage .reltbl{grid-template-columns:max-content max-content max-content max-content;column-gap:.6em}
+  /* As wide as its columns, plus the card's own padding, so that running into
+     that padding is overflow the fit pass sees. Stretched to the card, the
+     grid's box ended where the padding starts while its columns ran on into
+     it, and scrollWidth counts neither the card's padding nor a child's
+     margin, only the child's box: "20m so far" touched the card's edge and
+     measured clean. */
+  #relpage .reltbl{grid-template-columns:max-content max-content max-content max-content;column-gap:.5em;
+                   width:max-content;padding-right:var(--pad)}
   #relpage .reltbl .inc .what{display:none}
   .relsvc .linkbtn{display:table;margin:.35em 0 0}     /* its own line, under the name */
 }

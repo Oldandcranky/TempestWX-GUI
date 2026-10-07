@@ -365,6 +365,12 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The AI reliability page's incident list stays inside the card on a
+  phone.** At 414 wide, "20m so far" ran through the card's padding to touch
+  its edge, and the fit pass did not notice: scrollWidth counts no padding.
+  The table is now as wide as its columns plus that padding, so running into
+  it is overflow the fit pass shrinks the type for, and its columns sit a
+  little closer.
 - **Each service on the AI reliability page has a Status page button**:
   status.claude.com, status.openai.com and Gemini's history on Google's
   Workspace dashboard, for the detail behind an incident. It began as a small

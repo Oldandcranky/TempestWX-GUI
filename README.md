@@ -365,6 +365,13 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The Lightning card counts down to the thunder and says which way the storm
+  is going.** A strike within ten miles sends a ring out from the cloud at the
+  speed of sound, reaching you when the thunder should, with "Thunder in 9 s"
+  counting down. From the last half hour of strikes the caption says *Getting
+  closer · 15 → 7 mi*, *Moving away* or *Holding steady*, and an **All clear**
+  time takes a cell until thirty minutes after the last strike in earshot, the
+  NWS rule. `?teststorm=closer`, `away` and `thunder` preview them.
 - **The AI reliability page's incident list stays inside the card on a
   phone.** At 414 wide, "20m so far" ran through the card's padding to touch
   its edge, and the fit pass did not notice: scrollWidth counts no padding.

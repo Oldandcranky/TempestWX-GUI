@@ -1864,9 +1864,14 @@ console.log = (...args) => {
       nearby:   {words: 'Storm nearby', sheet: false, kite: false},
       quiet:    {words: 'No activity', sheet: false, kite: false},
       kite:     {words: 'Nothing since', sheet: false, kite: true},
+      // Which way it is heading, in whole miles, and thunder on its way.
+      closer:   {words: 'Getting closer · 15 \u2192 7 mi', sheet: false, kite: false, tone: 'red', clear: true},
+      away:     {words: 'Moving away · 5 \u2192 12 mi', sheet: false, kite: false, tone: 'green', clear: true},
+      thunder:  {words: 'Thunder in ', sheet: false, kite: false, tone: 'yellow', clear: true, ring: true},
     };
-    for (const kind of Object.keys(SPEC)) {
-      for (const [w, h] of [[1920, 1080], [1920, 720], [414, 896]]) {
+    await abreast(Object.keys(SPEC).flatMap(kind => [[1920, 1080], [1920, 720], [414, 896]].map(v => [kind, v])),
+      async ([kind, [w, h]]) => {
+      {
         const page = await browser.newPage({ viewport: { width: w, height: h } });
         const errs = [];
         page.on('pageerror', e => errs.push(e.message));
@@ -1892,6 +1897,10 @@ console.log = (...args) => {
             // the kite's own red diamond, drawn nowhere else
             kite: !!(sky && /d9483b/.test(sky.innerHTML)),
             caption: [...card.querySelectorAll('.caption')].map(c => c.textContent).join(' | '),
+            colour: getComputedStyle(card.querySelector('.caption')).color,
+            ring: !!(sky && sky.querySelector('.thunder')),
+            clear: card.querySelector('.card-body').innerText.includes('ALL CLEAR') ||
+                   /all clear/i.test(card.querySelector('.card-body').innerText),
             // A backdrop may sit behind the figures, as the wind card's tree
             // does, but never behind the headline number.
             overHero: (() => { const h = card.querySelector('.hero');
@@ -1909,10 +1918,25 @@ console.log = (...args) => {
         if ((kind === 'overhead' || kind === 'nearby') && !r.bolt) bad.push(at + ': no bolt');
         if (!r.caption.includes(sp.words)) bad.push(at + ': caption says "' + r.caption + '"');
         if (kind === 'overhead' && /—\s*mi/.test(r.caption)) bad.push(at + ': overhead without a distance');
+        if (!!sp.ring !== r.ring) bad.push(at + ': the thunder ring is ' + (r.ring ? 'there' : 'missing'));
+        if (sp.clear && !r.clear) bad.push(at + ': no all-clear time');
+        if (sp.tone) {
+          const want = await page.evaluate(t => { const p = document.createElement('i'); p.style.color = 'var(--' + t + ')';
+            document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; }, sp.tone);
+          if (r.colour !== want) bad.push(at + ': the caption is ' + r.colour + ', not ' + sp.tone);
+        }
+        if (kind === 'thunder') {
+          // It counts down between rebuilds, a second at a time.
+          const a = await page.$eval('#card-bolt [data-thunder-at]', e => e.textContent).catch(() => '');
+          await page.waitForTimeout(2600);
+          const b2 = await page.$eval('#card-bolt [data-thunder-at]', e => e.textContent).catch(() => '');
+          const n = t => Number((t.match(/(\d+) s/) || [])[1]);
+          if (!(n(a) - n(b2) >= 2)) bad.push(at + ': the countdown went "' + a + '" then "' + b2 + '"');
+        }
         for (const m of errs) bad.push(at + ': pageerror: ' + m);
         await page.close();
       }
-    }
+    });
     // A wall display asked for less motion must not be lit up by lightning.
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce' });
     await page.route('**/api/state', route => route.fulfill({
@@ -1923,6 +1947,10 @@ console.log = (...args) => {
     const still = await page.evaluate(() => [...document.querySelectorAll('#card-bolt .bolt, #card-bolt .sheet')]
       .map(e => getComputedStyle(e).animationName));
     if (still.some(n => n !== 'none')) bad.push('reduced motion: the storm still flashes');
+    await page.goto(BASE + '/?teststorm=thunder', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(SETTLE_MS);
+    if (await page.$eval('#card-bolt', c => { const t = c.querySelector('.thunder'); return !!t && getComputedStyle(t).display !== 'none'; }))
+      bad.push('reduced motion: the thunder ring still spreads');
     await page.close();
     failures += bad.length;
     console.log(bad.length ? '  FAIL lightning storm' : '  ok   lightning storm');

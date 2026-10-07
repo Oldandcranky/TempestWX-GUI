@@ -306,9 +306,17 @@ body.tv .linkbtn{display:none}
 @keyframes sheetflash{
   0%,3%{opacity:1} 4%,8%{opacity:.25} 9%,12%{opacity:.9} 13%,100%{opacity:0}
 }
+.caption.loud.red{color:var(--red)} .caption.loud.green{color:var(--green)}
+.caption.loud.yellow{color:var(--yellow)}
+/* Thunder on its way: a ring from the strike that reaches you when the sound
+   does. It grows from nothing to the distance between you, once. */
+.stormsky .thunder{fill:none;stroke:var(--yellow);transform-box:fill-box;transform-origin:center;
+  animation-name:thunder;animation-timing-function:linear;animation-fill-mode:forwards}
+@keyframes thunder{from{transform:scale(0);opacity:.95} to{transform:scale(1);opacity:.5}}
 @media (prefers-reduced-motion:reduce){
   .stormsky .bolt,.stormsky .sheet{animation:none}
   .stormsky .sheet{opacity:0}
+  .stormsky .thunder{display:none}
 }
 
 /* Rain falling behind the Rainfall card while it is actually raining — the
@@ -1916,7 +1924,8 @@ const STORM_RINGS_MI = [5, 10, 20, 30];
 const STORM_OVERHEAD_MI = 5;
 const STORM_QUIET_DAYS = 7;
 
-/* ?teststorm=overhead|nearby|quiet|kite, the same idea as ?testrain. */
+/* ?teststorm=overhead|nearby|closer|away|thunder|quiet|kite, the same idea
+   as ?testrain. */
 /* ?testwinter: a hard freeze forecast, snow in the days ahead, and a wind
    chill now — so the winter lines can be seen in September. ?testwinter=now
    is the night it has arrived: below freezing for three hours, frostbite
@@ -1955,7 +1964,14 @@ function stormPreset(name){
   const now = Date.now() / 1000;
   switch ((name || "nearby").toLowerCase()) {
     case "overhead": return {kind: "overhead", mi: 3.1, age: 120,
-                             last: {ts: now - 120, dist_km: 5}};
+                             last: {ts: now - 120, dist_km: 5}, clear: now - 120 + 1800};
+    case "closer":   return {kind: "nearby", mi: 7.5, age: 90, last: {ts: now - 90, dist_km: 12},
+                             trend: {dir: "closer", from_km: 24, to_km: 12, minutes: 18}, clear: now - 90 + 1800};
+    case "away":     return {kind: "nearby", mi: 12.4, age: 240, last: {ts: now - 240, dist_km: 20},
+                             trend: {dir: "away", from_km: 8, to_km: 20, minutes: 22}, clear: now - 900 + 1800};
+    // A strike every 45 s, 12 km off: the thunder takes 35 s to arrive.
+    case "thunder":  return {kind: "nearby", mi: 7.5, repeat: 45, last: {dist_km: 12},
+                             trend: {dir: "closer", from_km: 20, to_km: 12, minutes: 15}};
     case "quiet":    return {kind: "quiet", kite: false, mi: null, age: 3 * 86400,
                              last: {ts: now - 3 * 86400, dist_km: 30}};
     case "kite":     return {kind: "quiet", kite: true, mi: null, age: 12 * 86400,
@@ -1966,20 +1982,45 @@ function stormPreset(name){
 }
 
 function stormState(d, now){
+  if (TEST_STORM && TEST_STORM.repeat) {
+    const t = now - (now % TEST_STORM.repeat);
+    return Object.assign({}, TEST_STORM, {age: now - t, clear: t + 1800,
+                                          last: Object.assign({}, TEST_STORM.last, {ts: t})});
+  }
   if (TEST_STORM) return TEST_STORM;
   const last = d.strike_last || null;
   const age = last && last.ts ? now - last.ts : null;
   const nearMi = d.strike_nearest_km == null ? null : d.strike_nearest_km / 1.609;
   const lastMi = last && last.dist_km != null ? last.dist_km / 1.609 : null;
+  // Whether it is coming or going, and when it is safe to go out: the
+  // server's sums, from the last half hour of strikes.
+  const trend = d.storm_trend || null, clear = d.all_clear_at || null;
   if (age != null && age < 600 && (nearMi != null && nearMi <= STORM_OVERHEAD_MI))
-    return {kind: "overhead", mi: nearMi, age, last};
+    return {kind: "overhead", mi: nearMi, age, last, trend, clear};
   if (age != null && age < 3 * 3600)
-    return {kind: "nearby", mi: nearMi != null ? nearMi : lastMi, age, last};
+    return {kind: "nearby", mi: nearMi != null ? nearMi : lastMi, age, last, trend, clear};
   const stale = age == null || age > STORM_QUIET_DAYS * 86400;
   return {kind: "quiet", kite: stale, mi: null, age, last};
 }
 
-function stormSky(st, strikes1h){
+/* Thunder from the last strike, while it is still on its way: sound covers a
+   kilometre in about three seconds, and thunder carries about ten miles, so
+   nothing farther is counted down. `at` is in the server's clock; the page
+   counts down in its own, put right by how far the two disagree. */
+const SOUND_KM_S = 0.343, THUNDER_KM = 16;
+let thunderSkew = 0;
+function thunderOf(st, now){
+  const last = st.last;
+  if (!last || last.ts == null || last.dist_km == null || last.dist_km > THUNDER_KM) return null;
+  const travel = last.dist_km / SOUND_KM_S, at = last.ts + travel;
+  return now < at ? {at, travel, km: last.dist_km} : null;
+}
+function thunderText(at){
+  const left = Math.ceil(at - (Date.now() / 1000 + thunderSkew));
+  return left > 0 ? "Thunder in " + left + " s" : "Thunder now";
+}
+
+function stormSky(st, strikes1h, thunder, now){
   const w = el("div", "stormsky");
   const R = 50;                                  // the 30-mile ring, in units
   const ring = (mi) => R * mi / 30;
@@ -2003,15 +2044,26 @@ function stormSky(st, strikes1h){
               'fill="var(--yellow)"/>' : "") +
     '</g>';
 
+  // The thunder, as a ring spreading from the cloud at the speed of sound:
+  // it reaches you when the sound does. Its place in the spread comes from
+  // the strike's own time, so a rebuild carries on rather than starting over.
+  const boom = (x, y) => {
+    if (!thunder) return "";
+    const r = Math.hypot(x - 50, y - 58);
+    return '<circle class="thunder" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + r.toFixed(1) +
+      '" stroke-width="1.6" vector-effect="non-scaling-stroke" style="animation-duration:' +
+      thunder.travel.toFixed(2) + 's;animation-delay:' + (-(now - st.last.ts)).toFixed(2) + 's"/>';
+  };
   if (st.kind === "overhead") {
-    art += cloud(50, 22, 1.9, true);
+    art += boom(50, 22) + cloud(50, 22, 1.9, true);
   } else if (st.kind === "nearby" && st.mi != null) {
     // A fixed angle for this strike: from its own timestamp, so the cloud
     // stays put between renders.
     const seed = st.last && st.last.ts ? st.last.ts : 0;
     const ang = (25 + (Math.abs(Math.sin(seed)) * 130)) * Math.PI / 180;
     const r = ring(Math.max(2, Math.min(30, st.mi)));
-    art += cloud(50 + r * Math.cos(ang), 58 - r * Math.sin(ang), 0.95, true);
+    const x = 50 + r * Math.cos(ang), y = 58 - r * Math.sin(ang);
+    art += boom(x, y) + cloud(x, y, 0.95, true);
   } else {
     art += cloud(76, 20, 0.85, false);           // a harmless one, passing by
     if (st.kite) {
@@ -3116,8 +3168,11 @@ function buildRadar(s){
 function buildLightning(s){
   const d = s.derived;
   const {card:c, body:b} = card("bolt","Lightning","lightning","yellow",s.health);
-  const st = stormState(d, s.now || Date.now() / 1000);
-  c.insertBefore(stormSky(st, d.strikes_1h), c.firstChild);
+  const now = s.now || Date.now() / 1000;
+  if (s.now) thunderSkew = s.now - Date.now() / 1000;
+  const st = stormState(d, now);
+  const thunder = thunderOf(st, now);
+  c.insertBefore(stormSky(st, d.strikes_1h, thunder, now), c.firstChild);
   const n = d.strikes_today || 0;
   b.appendChild(hero(String(n), "today", n ? "yellow" : null));
   // Close by, the card says so plainly. It is the one weather on here that
@@ -3126,12 +3181,27 @@ function buildLightning(s){
   // whichever of the two knows it.
   const nearKm = d.strike_nearest_km != null ? d.strike_nearest_km
                : st.mi != null ? st.mi * 1.609 : null;
+  // Then which way it is heading, which is what decides whether to go in.
+  // Thunder on its way outranks everything, for the few seconds it lasts.
+  const tr = st.kind !== "quiet" ? st.trend : null;
+  // Whole miles: the station reports distance in steps of a few kilometres,
+  // so "14.9 → 7.5" would claim a precision it does not have.
+  const whole = (km) => String(Math.round(dist(km)));
+  const span = tr ? whole(tr.from_km) + " \u2192 " + whole(tr.to_km) + " " + prefs.dist : "";
   const said =
-    st.kind === "overhead" ? ["Overhead · " + fg(dist(nearKm)) + " " + prefs.dist, "yellow"]
-  : st.kind === "nearby" ? ["Storm nearby", "yellow"]
+    thunder ? [thunderText(thunder.at), "yellow"]
+  : tr && tr.dir === "closer" ? ["Getting closer · " + span, "red"]
+  : tr && tr.dir === "away" ? ["Moving away · " + span, "green"]
+  : st.kind === "overhead" ? ["Overhead · " + fg(dist(nearKm)) + " " + prefs.dist, "yellow"]
+  : st.kind === "nearby" ? [tr ? "Holding steady · " + whole(tr.to_km) + " " + prefs.dist
+                               : "Storm nearby", "yellow"]
   : st.kite && st.last && st.last.ts ? ["Nothing since " + shortDate(st.last.ts), "label"]
   : [n ? "Strikes detected" : "No activity detected", n ? "yellow" : "label"];
-  b.appendChild(caption(said[0], said[1]));
+  const cap = caption(said[0], said[1]);
+  // Captions are grey everywhere; these three are the ones worth colour.
+  if (thunder || (tr && tr.dir !== "steady")) cap.classList.add("loud");
+  if (thunder) cap.dataset.thunderAt = thunder.at;       // counted down by tickClock
+  b.appendChild(cap);
   b.appendChild(el("div","mid"));
   const last = d.strike_last;
   b.appendChild(cells([
@@ -3144,8 +3214,12 @@ function buildLightning(s){
   b.appendChild(cells([
     {k:"Last hour", v:String(d.strikes_1h || 0), small:true},
     {k:"Last 3 hr", v:String(d.strikes_3h || 0), small:true},
-    {k:"Avg dist", v:fg(dist(s.obs.strike_dist_km)),
-     u:s.obs.strike_dist_km == null ? "" : prefs.dist, small:true, tone:"label"},
+    // Thirty minutes after the last strike in earshot, the NWS says it is
+    // safe to go back out; until then that time takes this cell.
+    st.clear && st.clear > now
+      ? {k:"All clear", v:clock(st.clear), small:true, tone:"accent"}
+      : {k:"Avg dist", v:fg(dist(s.obs.strike_dist_km)),
+         u:s.obs.strike_dist_km == null ? "" : prefs.dist, small:true, tone:"label"},
   ]));
   return c;
 }
@@ -5031,6 +5105,7 @@ function recordPanel(panel){
   for (const [href, text] of [["testall", "Walk through every preview"],
                               ["?testalert", "Preview the alert banner"],
                               ["?teststorm=overhead", "Preview a storm overhead"],
+                              ["?teststorm=thunder", "Preview thunder on its way"],
                               ["?testwinter", "Preview winter"]]) {
     const a = el("a", "linkbtn", esc(text));
     a.href = href;
@@ -6108,6 +6183,9 @@ const TESTALL_STEPS = [
   {label: "Sleet", rain: "sleet"},
   {label: "Lightning — a storm nearby", storm: "nearby"},
   {label: "Lightning — overhead", storm: "overhead"},
+  {label: "Lightning — getting closer", storm: "closer"},
+  {label: "Lightning — moving away", storm: "away"},
+  {label: "Lightning — thunder on its way", storm: "thunder"},
   {label: "Lightning — quiet, and the kite", storm: "kite"},
   {label: "Alerts — the three worst", alerts: ["extreme", "severe", "moderate"]},
   {label: "Alerts — minor and unknown", alerts: ["minor", "unknown"]},
@@ -6289,6 +6367,8 @@ function updateFooter(s){
    tick, so turning the phone brings them back within a second. */
 const UPRIGHT_PHONE = window.matchMedia("(max-width:480px)");
 function tickClock(){
+  for (const e of document.querySelectorAll("[data-thunder-at]"))
+    e.textContent = thunderText(Number(e.dataset.thunderAt));
   const now = new Date();
   document.getElementById("clock").textContent =
     now.toLocaleTimeString([], UPRIGHT_PHONE.matches ? {hour:"numeric", minute:"2-digit"}

@@ -319,6 +319,66 @@ def apparent_temp_c(temp_c, rh, wind_ms):
     return temp_c, ""
 
 
+# ─────────────────────────────────────────────────────── Lightning ─────────
+#
+# Thunder carries about ten miles, which is why the NWS's rule is to stay in
+# until thirty minutes after the last thunder heard. The Tempest hears farther
+# than that, so only a strike within earshot starts the clock.
+THUNDER_HEARD_KM = 16.0
+ALL_CLEAR_S = 30 * 60
+# The Tempest gives distance in coarse steps (1, 5, 8, 10, 12 … 40 km), so a
+# trend takes several strikes, some minutes and a real change before it says
+# anything; a storm that has gone quiet has no trend at all.
+TREND_WINDOW_S, TREND_MIN_STRIKES, TREND_MIN_SPAN_S = 30 * 60, 4, 6 * 60
+TREND_MIN_KM, TREND_STALE_S = 3.0, 10 * 60
+
+
+def _strikes(events, now, window_s):
+    """(time, km) for the strikes inside the window, oldest first."""
+    out = []
+    for e in events:
+        try:
+            t, km = float(e["ts"]), float(e["dist_km"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= now - t <= window_s:
+            out.append((t, km))
+    return sorted(out)
+
+
+def _median(xs):
+    xs = sorted(xs)
+    mid = len(xs) // 2
+    return xs[mid] if len(xs) % 2 else (xs[mid - 1] + xs[mid]) / 2
+
+
+def storm_trend(events, now=None):
+    """Whether the lightning is getting closer, moving away or holding, from
+    the last half hour of strikes: the median distance of the earlier half
+    against the later half. None when there is too little to go on, or when
+    nothing has struck for ten minutes."""
+    now = time.time() if now is None else now
+    pts = _strikes(events, now, TREND_WINDOW_S)
+    if (len(pts) < TREND_MIN_STRIKES or pts[-1][0] - pts[0][0] < TREND_MIN_SPAN_S
+            or now - pts[-1][0] > TREND_STALE_S):
+        return None
+    half = len(pts) // 2
+    was, now_km = _median([k for _, k in pts[:half]]), _median([k for _, k in pts[-half:]])
+    change = now_km - was
+    way = "closer" if change <= -TREND_MIN_KM else "away" if change >= TREND_MIN_KM else "steady"
+    return {"dir": way, "from_km": was, "to_km": now_km,
+            "minutes": int(round((pts[-1][0] - pts[0][0]) / 60))}
+
+
+def all_clear_at(events, now=None):
+    """When it is safe to be outside again: thirty minutes after the last
+    strike close enough to be heard. None once that has passed, or when no
+    strike has come that close."""
+    now = time.time() if now is None else now
+    near = [t for t, km in _strikes(events, now, ALL_CLEAR_S) if km <= THUNDER_HEARD_KM]
+    return max(near) + ALL_CLEAR_S if near else None
+
+
 # ────────────────────────────────────────────────────────── Winter ─────────
 #
 # NWS conventions, in Fahrenheit because that is how they are written: frost
@@ -2156,6 +2216,8 @@ class StationState:
                 "strikes_1h": sum(1 for e in events if now - e["ts"] <= 3600),
                 "strikes_3h": sum(1 for e in events
                                   if now - e["ts"] <= 3 * 3600),
+                "storm_trend": storm_trend(events, now),
+                "all_clear_at": all_clear_at(events, now),
             },
             "sun": sun,
             "hardware": {

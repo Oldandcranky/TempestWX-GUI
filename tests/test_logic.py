@@ -1960,6 +1960,55 @@ STRIKE = {"type": "evt_strike", "serial_number": "ST-TEST",
           "evt": [0, 8, 4200]}
 
 
+class StormMovement(unittest.TestCase):
+    """Closer, away or holding, from strike distances that come in coarse
+    steps; and the all-clear, thirty minutes after the last one in earshot."""
+
+    NOW = 1_800_000_000
+
+    def run_of(self, *pairs):
+        """(minutes ago, km) pairs as strike events."""
+        return [{"ts": self.NOW - m * 60, "dist_km": km, "energy": 1} for m, km in pairs]
+
+    def test_a_storm_coming_in(self):
+        t = core.storm_trend(self.run_of((20, 24), (16, 20), (12, 17), (8, 12), (4, 10), (1, 8)), self.NOW)
+        self.assertEqual(t["dir"], "closer")
+        self.assertEqual((t["from_km"], t["to_km"], t["minutes"]), (20, 10, 19))
+
+    def test_a_storm_going_away(self):
+        t = core.storm_trend(self.run_of((15, 5), (12, 5), (8, 10), (2, 14)), self.NOW)
+        self.assertEqual(t["dir"], "away")
+
+    def test_steps_of_the_sensor_are_not_movement(self):
+        t = core.storm_trend(self.run_of((15, 12), (12, 10), (8, 12), (2, 10)), self.NOW)
+        self.assertEqual(t["dir"], "steady")
+
+    def test_too_little_to_say(self):
+        self.assertIsNone(core.storm_trend(self.run_of((9, 24), (5, 12), (1, 5)), self.NOW))     # three strikes
+        self.assertIsNone(core.storm_trend(self.run_of((4, 24), (3, 20), (2, 12), (1, 5)), self.NOW))  # three minutes
+        self.assertIsNone(core.storm_trend([], self.NOW))
+
+    def test_a_storm_gone_quiet_has_no_trend(self):
+        self.assertIsNone(core.storm_trend(self.run_of((29, 24), (25, 20), (20, 12), (12, 5)), self.NOW))
+
+    def test_older_strikes_are_not_counted(self):
+        # A storm an hour ago, then a new one holding steady.
+        t = core.storm_trend(self.run_of((70, 2), (65, 2), (60, 2), (14, 20), (10, 20), (5, 20), (1, 20)), self.NOW)
+        self.assertEqual(t["dir"], "steady")
+
+    def test_bad_readings_are_skipped(self):
+        evs = self.run_of((20, 24), (15, 20), (8, 12), (1, 8)) + [{"ts": self.NOW, "dist_km": None}, {"ts": None}]
+        self.assertEqual(core.storm_trend(evs, self.NOW)["dir"], "closer")
+
+    def test_all_clear_is_half_an_hour_after_the_last_strike_in_earshot(self):
+        evs = self.run_of((20, 12), (10, 30), (5, 40))
+        self.assertEqual(core.all_clear_at(evs, self.NOW), self.NOW - 20 * 60 + 30 * 60)
+
+    def test_no_all_clear_for_a_storm_out_of_earshot_or_long_gone(self):
+        self.assertIsNone(core.all_clear_at(self.run_of((10, 30), (5, 40)), self.NOW))
+        self.assertIsNone(core.all_clear_at(self.run_of((31, 5)), self.NOW))
+
+
 class StrikeCounting(unittest.TestCase):
     """A strike arrives twice — as an event, then inside the next
     observation's count. Both were added, so every storm counted double."""

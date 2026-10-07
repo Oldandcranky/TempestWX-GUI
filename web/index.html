@@ -232,9 +232,10 @@ svg.plot{width:100%;height:100%;display:block;overflow:visible}
 body:not(.tv) #card-fc:hover .flipbtn,
 body:not(.tv) #card-records:hover .flipbtn,
 body:not(.tv) #card-internet:hover .flipbtn,
-body:not(.tv) #card-claude:hover .flipbtn{color:var(--accent)}
-body:not(.tv) #relpage .card{cursor:pointer}
-body:not(.tv) #relpage .card:hover .flipbtn{color:var(--accent)}
+body:not(.tv) #card-claude:hover .flipbtn,
+body:not(.tv) #card-bolt:hover .flipbtn{color:var(--accent)}
+body:not(.tv) :is(#relpage,#boltpage) .card{cursor:pointer}
+body:not(.tv) :is(#relpage,#boltpage) .card:hover .flipbtn{color:var(--accent)}
 body:not(.tv) #outlook .card{cursor:pointer}
 body:not(.tv) #outlook .card:hover .flipbtn{color:var(--accent)}
 
@@ -678,8 +679,8 @@ body.show-map #map{display:block}
 /* Alerts belong to the cards. On the outlook, the almanac, the Internet page
    or settings only an Extreme one — a tornado warning — stays, because being
    on another page is no reason not to be told that. */
-body:is(.show-outlook,.show-net,.show-almanac,.show-rel,.show-settings,.show-map) #alerts .alert:not(.sev-extreme){display:none}
-body:is(.show-outlook,.show-net,.show-almanac,.show-rel,.show-settings,.show-map) #alerts.show:not(.has-extreme){display:none}
+body:is(.show-outlook,.show-net,.show-almanac,.show-rel,.show-bolt,.show-settings,.show-map) #alerts .alert:not(.sev-extreme){display:none}
+body:is(.show-outlook,.show-net,.show-almanac,.show-rel,.show-bolt,.show-settings,.show-map) #alerts.show:not(.has-extreme){display:none}
 .alert{
   padding:.5em .9em;border-radius:var(--inset-radius);
   font-size:clamp(12px,1.05vw,17px);font-weight:600;
@@ -850,6 +851,49 @@ body.tv .relsvc .linkbtn{display:none}
 .relsvc .nums .lead{color:var(--faint);font-weight:600}
 
 .caption.plain{text-transform:none;letter-spacing:.02em;font-weight:500}
+
+/* The Lightning page: the storm as strikes against time, nearer is lower, so a
+   storm coming in is a run of dots sloping down to you; then the strikes by
+   distance, and the record by day. The chart takes the room going spare. */
+#boltpage{display:none;flex:1;min-height:0}
+body.show-bolt #grid{display:none}
+body.show-bolt #boltpage{display:flex}
+#boltpage .card{flex:1;min-width:0}
+#boltpage .card-body{gap:clamp(6px,1.4cqh,14px)}
+.boltsum{display:flex;justify-content:space-between;align-items:baseline;gap:.3em 1em;flex-wrap:wrap;flex:0 0 auto}
+.boltsum .say{font-size:var(--fs-value-sm);font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.boltsum .clr{font-size:var(--fs-label);color:var(--label);white-space:nowrap}
+.boltsum .clr b{color:var(--accent);font-weight:700;margin-left:.35em}
+.boltplot{position:relative;flex:1 1 auto;min-height:clamp(110px,30cqh,420px);max-height:60cqh;
+          margin:0 0 1.4em 2.6em;font-size:var(--fs-label)}
+.boltplot .ear{position:absolute;left:0;right:0;bottom:0;background:rgba(245,197,24,.07);
+               border-top:1px dashed rgba(245,197,24,.35)}
+.boltplot .ear span{position:absolute;right:.4em;top:.2em;color:var(--faint);font-size:.85em;letter-spacing:.04em}
+.boltplot .gl{position:absolute;left:0;right:0;border-top:1px solid var(--rule)}
+.boltplot .gl span{position:absolute;right:100%;margin-right:.5em;transform:translateY(-50%);color:var(--label);white-space:nowrap}
+.boltplot .you{border-top:2px solid var(--label)}
+.boltplot .tk{position:absolute;top:100%;margin-top:.35em;transform:translateX(-50%);color:var(--label);white-space:nowrap}
+.boltplot .tk.end{transform:translateX(-100%)}
+.boltplot .tk.start{transform:none}
+.boltplot i{position:absolute;width:.55em;height:.55em;margin:0 0 -.275em -.275em;border-radius:50%;
+            background:var(--yellow);box-shadow:0 0 .5em rgba(245,197,24,.6)}
+.boltplot .none{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--label)}
+.boltbands{flex:0 0 auto}
+.boltrec{display:flex;flex-direction:column;gap:.35em;flex:0 0 auto}
+.boltrec .ln{display:flex;justify-content:space-between;align-items:baseline;gap:.2em 1em;flex-wrap:wrap;
+             font-size:var(--fs-label);color:var(--label)}
+.boltrec .ln b{color:var(--text);font-weight:700}
+.boltstrip{display:grid;grid-template-columns:repeat(90,1fr);gap:1px;height:clamp(10px,3.2cqh,26px)}
+.boltstrip i{background:var(--rule);border-radius:1px}
+.boltstrip i.none{background:rgba(255,255,255,.07)}
+.boltstrip i.some{background:var(--yellow)}
+@media (max-width:720px){
+  #boltpage{flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
+  body.show-bolt #boltpage{display:block}
+  #boltpage .card{container-type:inline-size;min-height:100%;overflow:visible}
+  #boltpage .card-body{justify-content:flex-start}
+  .boltplot{flex:none;height:46vh;max-height:none}
+}
 @media (max-width:720px){
   #relpage{flex:none;overflow:auto;-webkit-overflow-scrolling:touch}
   body.show-rel #relpage{display:block}
@@ -1371,6 +1415,7 @@ body.tv .sheet .linkbtn{display:inline-flex}
   <div id="netpage" aria-hidden="true"></div>
   <div id="almanac" aria-hidden="true"></div>
   <div id="relpage" aria-hidden="true"></div>
+  <div id="boltpage" aria-hidden="true"></div>
   <footer>
     <span class="clockhold" id="clockHold" title="Hold for settings">
       <span class="clock" id="clock">--:--:--</span>
@@ -1969,8 +2014,9 @@ function stormPreset(name){
                              trend: {dir: "closer", from_km: 24, to_km: 12, minutes: 18}, clear: now - 90 + 1800};
     case "away":     return {kind: "nearby", mi: 12.4, age: 240, last: {ts: now - 240, dist_km: 20},
                              trend: {dir: "away", from_km: 8, to_km: 20, minutes: 22}, clear: now - 900 + 1800};
-    // A strike every 45 s, 12 km off: the thunder takes 35 s to arrive.
-    case "thunder":  return {kind: "nearby", mi: 7.5, repeat: 45, last: {dist_km: 12},
+    // A strike every 45 s, 12 km off: the thunder takes 35 s to arrive. The
+    // first fell just before the preview opened, so it is counting down at once.
+    case "thunder":  return {kind: "nearby", mi: 7.5, repeat: 45, t0: now - 3, last: {dist_km: 12},
                              trend: {dir: "closer", from_km: 20, to_km: 12, minutes: 15}};
     case "quiet":    return {kind: "quiet", kite: false, mi: null, age: 3 * 86400,
                              last: {ts: now - 3 * 86400, dist_km: 30}};
@@ -1983,7 +2029,7 @@ function stormPreset(name){
 
 function stormState(d, now){
   if (TEST_STORM && TEST_STORM.repeat) {
-    const t = now - (now % TEST_STORM.repeat);
+    const t = TEST_STORM.t0 + Math.floor((now - TEST_STORM.t0) / TEST_STORM.repeat) * TEST_STORM.repeat;
     return Object.assign({}, TEST_STORM, {age: now - t, clear: t + 1800,
                                           last: Object.assign({}, TEST_STORM.last, {ts: t})});
   }
@@ -3168,6 +3214,7 @@ function buildRadar(s){
 function buildLightning(s){
   const d = s.derived;
   const {card:c, body:b} = card("bolt","Lightning","lightning","yellow",s.health);
+  headAction(c, "Show the storm", () => toggleBolt(true));
   const now = s.now || Date.now() / 1000;
   if (s.now) thunderSkew = s.now - Date.now() / 1000;
   const st = stormState(d, now);
@@ -5579,7 +5626,7 @@ function toggleNet(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-net", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac", "show-rel");
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac", "show-rel", "show-bolt");
       renderNetPage();
       loadNetWeek();
     }
@@ -5931,7 +5978,7 @@ function toggleAlmanac(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-almanac", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-net", "show-rel");
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-net", "show-rel", "show-bolt");
       renderAlmanac();
       loadAlmanac();
     }
@@ -6148,11 +6195,160 @@ function toggleRel(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-rel", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac", "show-net");
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac", "show-net", "show-bolt");
       renderRelPage();
       loadRel(true);
     }
     document.getElementById("relpage").setAttribute("aria-hidden", on ? "false" : "true");
+  };
+  pageTurn(swap);
+}
+
+/* ── Lightning ───────────────────────────────────────────────────────────
+   The storm, strike by strike: how far each was and when, so whether it is
+   coming or going can be seen rather than taken on trust. Opened from the
+   Lightning card and fetched only then, like the reliability page. */
+let bolt = null, boltAt = 0, boltBusy = false;
+const BOLT_MS = 30 * 1000;               // strikes arrive live; the chart keeps up
+
+async function loadBolt(force){
+  if (boltBusy) return bolt;
+  if (!force && bolt && Date.now() - boltAt < BOLT_MS) return bolt;
+  boltBusy = true;
+  try {
+    const r = await fetch("api/lightning", {cache: "no-store"});
+    bolt = await r.json();
+    boltAt = Date.now();
+  } catch (e) {
+    if (!bolt) bolt = {error: "Could not reach the dashboard server"};
+  } finally {
+    boltBusy = false;
+  }
+  if (document.body.classList.contains("show-bolt")) renderBoltPage();
+  return bolt;
+}
+
+function renderBoltPage(){
+  const host = document.getElementById("boltpage");
+  const r = bolt || {};
+  const {card: c, body: b} = card("boltpage", "Lightning", "lightning", "yellow", "live");
+  headAction(c, "Back to the cards", () => toggleBolt(false));
+  if (!r.days) {
+    b.appendChild(el("div", "mid"));
+    b.appendChild(caption(r.error || "Loading…"));
+    b.appendChild(el("div", "mid"));
+    host.replaceChildren(c);
+    return;
+  }
+  const strikes = r.strikes || [];
+  const whole = (km) => String(Math.round(dist(km)));
+  const unit = prefs.dist;
+
+  // What the storm is doing, in the card's own words, and the all-clear.
+  const sum = el("div", "boltsum");
+  const tr = r.trend;
+  const span = tr ? whole(tr.from_km) + " \u2192 " + whole(tr.to_km) + " " + unit : "";
+  const [say, tone] =
+      tr && tr.dir === "closer" ? ["Getting closer · " + span, "red"]
+    : tr && tr.dir === "away" ? ["Moving away · " + span, "green"]
+    : tr ? ["Holding steady · " + whole(tr.to_km) + " " + unit, "yellow"]
+    : !strikes.length ? ["No lightning in the last two days", "muted"]
+    : r.live ? [strikes.length + " strike" + (strikes.length === 1 ? "" : "s") + " in the last three hours", "yellow"]
+    : ["The last storm · " + shortDate(r.end), "muted"];
+  sum.appendChild(el("span", "say " + tone, esc(say)));
+  if (r.all_clear_at && r.all_clear_at > r.now) {
+    const clr = el("span", "clr", "All clear");
+    clr.appendChild(el("b", "", esc(clock(r.all_clear_at))));
+    sum.appendChild(clr);
+  }
+  b.appendChild(sum);
+
+  // The chart: nearer is lower, you are the floor. The tint is earshot, the
+  // ten miles thunder carries.
+  const top = prefs.dist === "mi" ? 25 : 40;                  // the farthest the station hears
+  const y = (km) => Math.max(0, Math.min(100, dist(km) / top * 100));
+  const x = (t) => (t - r.start) / (r.end - r.start) * 100;
+  const plot = el("div", "boltplot");
+  let html = '<div class="ear" style="height:' + y(THUNDER_KM).toFixed(2) + '%"><span>within earshot</span></div>';
+  for (const v of (prefs.dist === "mi" ? [5, 10, 20, 25] : [10, 20, 30, 40]))
+    html += '<div class="gl" style="bottom:' + (v / top * 100).toFixed(2) + '%"><span>' + v + " " + unit + '</span></div>';
+  html += '<div class="gl you" style="bottom:0"><span>you</span></div>';
+  for (let h = 0; h <= 3; h++) {
+    const t = r.start + h * 3600;
+    html += '<span class="tk' + (h === 3 ? " end" : h === 0 ? " start" : "") + '" style="left:' + x(t).toFixed(2) + '%">' +
+            esc(h === 3 && r.live ? "now" : clock(t)) + '</span>';
+  }
+  // Newer strikes brighter, so the way the storm went reads from the fade.
+  for (const [t, km] of strikes) {
+    const age = (r.end - t) / (r.end - r.start);
+    html += '<i style="left:' + x(t).toFixed(2) + '%;bottom:' + y(km).toFixed(2) + '%;opacity:' +
+            (1 - 0.7 * age).toFixed(2) + '" title="' + esc(clock(t) + " · " + whole(km) + " " + unit) + '"></i>';
+  }
+  if (!strikes.length) html += '<div class="none">Nothing to chart: no strikes kept from the last two days</div>';
+  plot.innerHTML = html;
+  b.appendChild(plot);
+
+  // How near they came, in the bands the card's rings draw.
+  const bands = [[0, 5], [5, 10], [10, 20], [20, Infinity]];
+  const mi = (km) => km * 0.621371;
+  const n = bands.map(([a, z]) => strikes.filter(([, km]) => mi(km) >= a && mi(km) < z).length);
+  // Short, so four fit across a phone.
+  const lab = prefs.dist === "mi" ? ["0\u20135 mi", "5\u201310 mi", "10\u201320 mi", "20+ mi"]
+                                  : ["0\u20138 km", "8\u201316 km", "16\u201332 km", "32+ km"];
+  const row = cells(lab.map((k, i) => ({k, v: String(n[i]), small: true, tone: i === 0 && n[0] ? "accent" : ""})));
+  row.classList.add("boltbands");
+  b.appendChild(row);
+
+  // The record: ninety days, and the year so far.
+  const rec = el("div", "boltrec");
+  const y0 = r.year || {};
+  const head = el("div", "ln");
+  head.innerHTML = '<span>Last 90 days</span><span>' + esc(String(y0.year)) + ': <b>' + (y0.days || 0) +
+    '</b> day' + (y0.days === 1 ? "" : "s") + ' with lightning · <b>' + (y0.strikes || 0).toLocaleString() + '</b> strikes' +
+    (r.busiest ? ' · busiest <b>' + esc(niceDay(r.busiest.date)) + '</b>, ' + r.busiest.strikes.toLocaleString() : '') + '</span>';
+  rec.appendChild(head);
+  const strip = el("div", "boltstrip");
+  const most = Math.max(1, ...r.days.map(d => d.strikes || 0));
+  for (const d of r.days) {
+    const cell = document.createElement("i");
+    cell.title = niceDay(d.date) + " · " + (d.strikes == null ? "not recorded" : d.strikes + " strike" + (d.strikes === 1 ? "" : "s"));
+    if (d.strikes == null) { cell.className = "none"; }
+    else if (d.strikes) {
+      cell.className = "some";
+      cell.style.opacity = (0.35 + 0.65 * Math.log(1 + d.strikes) / Math.log(1 + most)).toFixed(2);
+    }
+    strip.appendChild(cell);
+  }
+  rec.appendChild(strip);
+  b.appendChild(rec);
+  b.appendChild(caption("Distances are the station's estimates, in steps of a few kilometres" +
+                        " · lighter dots are older", "faint plain"));
+  host.replaceChildren(c);
+  fitCards();
+}
+
+let leavingBolt = false;
+
+function toggleBolt(force, fromHistory){
+  const open = document.body.classList.contains("show-bolt");
+  const on = force != null ? force : !open;
+  if (!fromHistory) {
+    const ours = !!(history.state && history.state.bolt);
+    if (!on && ours) {
+      if (!leavingBolt) { leavingBolt = true; history.back(); }
+      return;                               // popstate does the closing
+    }
+    if (on && !ours) history.pushState({bolt: true}, "");
+  }
+  if (on) outlookSince = Date.now();
+  const swap = () => {
+    document.body.classList.toggle("show-bolt", on);
+    if (on) {
+      document.body.classList.remove("show-map", "show-settings", "show-outlook", "show-almanac", "show-net", "show-rel");
+      renderBoltPage();
+      loadBolt(true);
+    }
+    document.getElementById("boltpage").setAttribute("aria-hidden", on ? "false" : "true");
   };
   pageTurn(swap);
 }
@@ -6251,7 +6447,15 @@ function render(s){
       document.body.classList.contains("show-net") ||
       document.body.classList.contains("show-almanac") ||
       document.body.classList.contains("show-rel") ||
+      document.body.classList.contains("show-bolt") ||
       document.body.classList.contains("show-outlook")) {
+    if (document.body.classList.contains("show-bolt")) {
+      // Home on the TV after a while, as the others do; a fresh look every
+      // thirty seconds, since a storm keeps striking while it is open.
+      if (document.body.classList.contains("tv") &&
+          Date.now() - outlookSince > OUTLOOK_IDLE_MS && !TESTALL) toggleBolt(false);
+      else if (Date.now() - boltAt > BOLT_MS) loadBolt(true);
+    }
     if (document.body.classList.contains("show-rel")) {
       // The same walk home as the almanac's, and a fresh look once a minute.
       if (document.body.classList.contains("tv") &&
@@ -6615,7 +6819,7 @@ function toggleMap(force, fromHistory){
   if (on) outlookSince = Date.now();
   const swap = () => {
     document.body.classList.toggle("show-map", on);
-    if (on) document.body.classList.remove("show-outlook", "show-settings", "show-rel");
+    if (on) document.body.classList.remove("show-outlook", "show-settings", "show-rel", "show-bolt");
     document.getElementById("map").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("mapBtn").setAttribute("aria-pressed", on ? "true" : "false");
     ensureMap(on);
@@ -6641,7 +6845,7 @@ function toggleSettings(force, fromHistory){
   }
   const swap = () => {
     document.body.classList.toggle("show-settings", on);
-    if (on) document.body.classList.remove("show-map", "show-outlook", "show-net", "show-almanac", "show-rel");
+    if (on) document.body.classList.remove("show-map", "show-outlook", "show-net", "show-almanac", "show-rel", "show-bolt");
     document.getElementById("settings").setAttribute("aria-hidden", on ? "false" : "true");
     document.getElementById("setBtn").setAttribute("aria-pressed", on ? "true" : "false");
     if (on) { recordInfo = null; renderSettings(); }   // records move; ask again
@@ -6675,7 +6879,7 @@ function toggleOutlook(force, fromHistory){
   const swap = () => {
     document.body.classList.toggle("show-outlook", on);
     if (on) {
-      document.body.classList.remove("show-map", "show-settings", "show-almanac", "show-rel");
+      document.body.classList.remove("show-map", "show-settings", "show-almanac", "show-rel", "show-bolt");
       renderOutlook();
     }
     document.getElementById("outlook").setAttribute("aria-hidden", on ? "false" : "true");
@@ -6728,6 +6932,7 @@ window.addEventListener("popstate", () => {
   leavingNet = false;
   leavingAlmanac = false;
   leavingRel = false;
+  leavingBolt = false;
   leavingSettings = false;
   leavingMap = false;
   const map = !!(history.state && history.state.map);
@@ -6750,6 +6955,9 @@ window.addEventListener("popstate", () => {
   const rp = !!(history.state && history.state.rel);
   if (rp !== document.body.classList.contains("show-rel"))
     toggleRel(rp, true);
+  const bp = !!(history.state && history.state.bolt);
+  if (bp !== document.body.classList.contains("show-bolt"))
+    toggleBolt(bp, true);
 });
 
 /* The whole outlook is the way back, header included: nothing on it is
@@ -6788,6 +6996,15 @@ document.getElementById("grid").addEventListener("click", (e) => {
 });
 document.getElementById("relpage").addEventListener("click", () => {
   toggleRel(false);
+});
+
+/* The Lightning card opens its page the same way, and the page is the way back. */
+document.getElementById("grid").addEventListener("click", (e) => {
+  if (!e.target.closest("#card-bolt")) return;
+  toggleBolt(true);
+});
+document.getElementById("boltpage").addEventListener("click", () => {
+  toggleBolt(false);
 });
 
 /* The Radar card opens the map page, and the whole page is the way back,
@@ -6857,6 +7074,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "d") toggleOutlook();
   if (e.key === "n") toggleNet();
   if (e.key === "a") toggleAlmanac();
+  if (e.key === "l") toggleBolt();
   if (e.key === "Escape" && alertOpen) { alertOpen = null; if (last) renderAlerts(last); }
   if (e.key === "Escape" && document.body.classList.contains("show-almanac"))
     toggleAlmanac(false);
@@ -6864,6 +7082,8 @@ document.addEventListener("keydown", (e) => {
     toggleNet(false);
   if (e.key === "Escape" && document.body.classList.contains("show-rel"))
     toggleRel(false);
+  if (e.key === "Escape" && document.body.classList.contains("show-bolt"))
+    toggleBolt(false);
   if (e.key === "Escape" && document.body.classList.contains("show-outlook"))
     toggleOutlook(false);
   if (e.key === "s") { if (!cfg) loadConfig().then(() => toggleSettings());
@@ -6893,6 +7113,7 @@ document.addEventListener("keydown", (e) => {
   if (history.state && history.state.outlook) toggleOutlook(true, true);
   if (history.state && history.state.netpage) toggleNet(true, true);
   if (history.state && history.state.rel) toggleRel(true, true);
+  if (history.state && history.state.bolt) toggleBolt(true, true);
   loadPrefs(null);
   if (history.state && history.state.almanac) toggleAlmanac(true, true);
   if (history.state && history.state.settings) loadConfig().then(() => toggleSettings(true, true));

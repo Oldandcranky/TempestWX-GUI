@@ -2954,6 +2954,14 @@ class Dashboard:
                     date.fromtimestamp(covered).isoformat()), "notice")
             self.stop.wait(30)
 
+    def lightning(self):
+        """The Lightning page: the storm chart and the record by day. Under
+        the state's lock, as the almanac is, since the listener writes both."""
+        with self.state.lock:
+            events = list(self.state.strike_events)
+            days = {k: dict(v) for k, v in self.history.days.items()}
+        return core.lightning_report(events, days)
+
     def reliability(self):
         """How often each AI service has been degraded or down, for its page,
         with a link to each one's own status page for the detail."""
@@ -3440,6 +3448,11 @@ class Handler(BaseHTTPRequestHandler):
                         body = {"available": False,
                                 "error": dash.speedtest.describe(e)}
                 self._send(200, json.dumps(body), "application/json; charset=utf-8")
+            elif path == "/api/lightning":
+                # Fetched when the Lightning page is opened: two days of
+                # strikes are no use in the two-second snapshot.
+                self._send(200, json.dumps(self.server.dashboard.lightning(), allow_nan=False),
+                           "application/json; charset=utf-8")
             elif path == "/api/reliability":
                 # Fetched when the reliability page is opened, like the almanac.
                 self._send(200, json.dumps(self.server.dashboard.reliability(),

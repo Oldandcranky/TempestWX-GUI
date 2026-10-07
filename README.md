@@ -73,6 +73,9 @@ Four more pages, each behind an icon in the footer:
 - **Ten-day outlook** (`d`) — the full forecast, each day's range drawn against
   the ten-day span so a warm spell or a cold snap reads at a glance.
 - **Radar** (`w`) — full-screen weather map.
+- **Lightning** (`l`, or a tap on the Lightning card) — the storm strike by
+  strike: how far each was and when, which way it is heading, the all-clear,
+  and ninety days of the record.
 - **Almanac** (`a`, or a tap on the Records card) — where today stands in the
   station's own record: today against the normal and against this day last
   year, the year drawn as a band of daily highs and lows over the normal
@@ -365,6 +368,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **A Lightning page** (`l`, or a tap on the Lightning card): the storm strike
+  by strike, distance against time over the last three hours, so a storm
+  coming in is a run of dots sloping down to you. Earshot is shaded, the
+  summary says which way it is going and when it is all clear, the strikes
+  are counted by distance, and ninety days of the record sit underneath with
+  the year so far and the busiest day. With nothing about it shows the last
+  storm the station kept. The station now keeps two days of strikes, up to
+  3,000, across restarts; it kept 200, and only 50 survived a deploy.
 - **The Lightning card counts down to the thunder and says which way the storm
   is going.** A strike within ten miles sends a ring out from the cloud at the
   speed of sound, reaching you when the thunder should, with "Thunder in 9 s"

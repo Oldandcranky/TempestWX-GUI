@@ -370,6 +370,40 @@ def storm_trend(events, now=None):
             "minutes": int(round((pts[-1][0] - pts[0][0]) / 60))}
 
 
+# The Lightning page's storm chart reads strikes one by one, so the station
+# keeps two days of them, enough for last night's storm, and saves them all.
+STRIKE_KEEP_S, STRIKE_KEEP_N = 48 * 3600, 3000
+STORM_CHART_S = 3 * 3600
+
+
+def lightning_report(events, days, now=None):
+    """The Lightning page: the strikes for its storm chart, which way the
+    storm is going, and the station's record of lightning by day.
+
+    The chart is the last three hours while there is lightning about; when
+    there is not, it is the three hours that ended with the last strike kept,
+    so the page shows last night's storm rather than an empty plot."""
+    now = time.time() if now is None else now
+    today = date.fromtimestamp(now)
+    pts = _strikes(events, now, STRIKE_KEEP_S)
+    live = not pts or now - pts[-1][0] <= STORM_CHART_S
+    end = now if live else pts[-1][0] + 5 * 60
+    # A day the record has, with no strikes counted, had none; a day it does
+    # not have at all is not known.
+    count = lambda rec: None if rec is None else int(rec.get("strikes") or 0)
+    rows = [{"date": d, "strikes": count(days.get(d))}
+            for d in ((today - timedelta(days=i)).isoformat() for i in range(89, -1, -1))]
+    year = [count(r) for d, r in days.items() if d.startswith(str(today.year))]
+    busiest = max(((count(r), d) for d, r in days.items() if count(r)), default=None)
+    return {"now": now, "live": live, "start": end - STORM_CHART_S, "end": end,
+            "strikes": [[t, km] for t, km in pts if end - STORM_CHART_S <= t <= end],
+            "trend": storm_trend(events, now), "all_clear_at": all_clear_at(events, now),
+            "days": rows, "since": min(days) if days else None,
+            "year": {"year": today.year, "days": sum(1 for n in year if n),
+                     "strikes": sum(n for n in year if n)},
+            "busiest": busiest and {"date": busiest[1], "strikes": busiest[0]}}
+
+
 def all_clear_at(events, now=None):
     """When it is safe to be outside again: thirty minutes after the last
     strike close enough to be heard. None once that has passed, or when no
@@ -1766,6 +1800,20 @@ class StationState:
     # restored: freshness must reflect real packets, not what we reloaded.
     MAX_RESTORE_AGE = 3600
 
+    @staticmethod
+    def _recent_strikes(events, now=None):
+        """The strikes worth keeping: the last two days, at most a few
+        thousand, and only ones with a time."""
+        cut = (time.time() if now is None else now) - STRIKE_KEEP_S
+        keep = []
+        for e in events:
+            try:
+                if isinstance(e, dict) and float(e["ts"]) >= cut:
+                    keep.append(e)
+            except (KeyError, TypeError, ValueError):
+                pass
+        return keep[-STRIKE_KEEP_N:]
+
     def dump_state(self):
         with self.lock:
             return {
@@ -1775,7 +1823,7 @@ class StationState:
                 "hub_serial": self.hub_serial,
                 "obs": dict(self.data),
                 "rapid": dict(self.last_rapid_wind),
-                "strike_events": list(self.strike_events)[-50:],
+                "strike_events": list(self.strike_events),
                 "last_precip_time": self.last_precip_time,
                 "saved_at": self.last_packet,
             }
@@ -1786,6 +1834,11 @@ class StationState:
         if not isinstance(saved, dict):
             return False
         self.load_day(saved.get("day"), saved.get("strikes_today", 0))
+        # Strikes are dated, so they come back however old the save is; the
+        # ones too old to keep are dropped on the way in.
+        if isinstance(saved.get("strike_events"), list):
+            with self.lock:
+                self.strike_events = self._recent_strikes(saved["strike_events"])
         try:
             saved_at = float(saved.get("saved_at") or 0)
         except (TypeError, ValueError):
@@ -1797,9 +1850,6 @@ class StationState:
                 self.data.update(saved["obs"])
             if isinstance(saved.get("rapid"), dict):
                 self.last_rapid_wind = dict(saved["rapid"])
-            if isinstance(saved.get("strike_events"), list):
-                self.strike_events = [e for e in saved["strike_events"]
-                                      if isinstance(e, dict) and "ts" in e]
             if saved.get("serial"):
                 self.serial = str(saved["serial"])
             if saved.get("hub_serial"):
@@ -1916,7 +1966,7 @@ class StationState:
             if len(evt) >= 3:
                 self.strike_events.append({"ts": evt[0], "dist_km": evt[1],
                                            "energy": evt[2]})
-                del self.strike_events[:-200]
+                self.strike_events = self._recent_strikes(self.strike_events)
                 self._count_strikes(1)
                 self._strikes_heard += 1
                 try:
@@ -2094,7 +2144,9 @@ class StationState:
         with self.lock:
             d = dict(self.data)
             rapid = dict(self.last_rapid_wind)
-            events = list(self.strike_events)
+            # The card reads the latest two hundred, as it always has; the
+            # two days kept are for the Lightning page.
+            events = list(self.strike_events)[-200:]
             strikes_today = self.strikes_today
             serial = self.serial
             hub_serial = self.hub_serial

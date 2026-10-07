@@ -1957,6 +1957,86 @@ console.log = (...args) => {
     for (const why of bad) console.log('         ' + why);
   });
 
+  // ── the Lightning page: the storm strike by strike, and the record ──
+  section("the Lightning page: a storm chart, fetched when it is opened", async () => {
+    const bad = [];
+    const now = Date.now() / 1000, start = now - 3 * 3600;
+    const iso = (t) => { const d = new Date(t * 1000);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+    const steps = [40, 34, 27, 20, 14, 10, 8, 5, 1, 5];
+    const storm = {now, live: true, start, end: now,
+      strikes: Array.from({length: 120}, (_, i) => [start + 900 + i * 80, steps[Math.floor(i / 12)]]),
+      trend: {dir: 'closer', from_km: 12, to_km: 5, minutes: 24}, all_clear_at: now + 1500,
+      days: Array.from({length: 90}, (_, i) => ({date: iso(now - (89 - i) * 86400),
+        strikes: i < 20 ? null : i % 9 === 0 ? 400 + i : 0})),
+      since: iso(now - 70 * 86400), year: {year: 2026, days: 7, strikes: 3412},
+      busiest: {date: iso(now - 30 * 86400), strikes: 812}};
+    const quiet = Object.assign({}, storm, {strikes: [], trend: null, all_clear_at: null, busiest: null});
+    const cases = [[1920, 1080], [1920, 720], [1024, 768], [414, 896]].map(v => ['storm', storm, v])
+      .concat([['quiet', quiet, [1280, 800]]]);
+    await abreast(cases, async ([name, body, [w, h]]) => {
+      const page = await browser.newPage({ viewport: { width: w, height: h } });
+      const errs = [];
+      let asked = 0;
+      page.on('pageerror', e => errs.push(e.message));
+      await page.route('**/api/state', route => route.fulfill({
+        status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(freshen()) }));
+      await page.route('**/api/lightning*', route => { asked++;
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body) }); });
+      await page.goto(BASE, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const at = name + ' at ' + w + 'x' + h;
+      if (asked) bad.push(at + ': the strikes were fetched before the page was opened');
+      if (!await page.$('#card-bolt .card-head .flipbtn')) bad.push(at + ': the Lightning card has no button to its page');
+      await page.$eval('#card-bolt', el => el.click());             // a tap on the card is the way in
+      await page.waitForTimeout(2200);
+      if (!asked) bad.push(at + ': opening the page fetched nothing');
+      const r = await page.evaluate(() => {
+        const host = document.getElementById('boltpage');
+        return {open: document.body.classList.contains('show-bolt'),
+                dots: host.querySelectorAll('.boltplot i').length,
+                plot: host.querySelector('.boltplot').getBoundingClientRect().height,
+                strip: host.querySelectorAll('.boltstrip i').length,
+                lit: host.querySelectorAll('.boltstrip i.some').length,
+                say: host.querySelector('.boltsum').innerText,
+                text: host.innerText,
+                // a band's label running into the next one's (inline, so measured by its box)
+                crowded: [...host.querySelectorAll('.boltbands .cell')].filter(c => {
+                  const k = c.querySelector('.k');
+                  return k && k.getBoundingClientRect().width > c.clientWidth + 1; }).length};
+      });
+      if (!r.open) bad.push(at + ': the page did not open');
+      if (name === 'storm') {
+        if (r.dots !== 120) bad.push(at + ': ' + r.dots + ' strikes drawn, expected 120');
+        if (r.plot < 100) bad.push(at + ': the chart is only ' + Math.round(r.plot) + 'px tall');
+        if (!/Getting closer/i.test(r.say)) bad.push(at + ': the summary says "' + r.say + '"');
+        if (!/All clear/i.test(r.say)) bad.push(at + ': no all-clear time');
+        if (r.lit !== 7) bad.push(at + ': ' + r.lit + ' days lit, expected 7');
+      } else {
+        if (!/No lightning in the last two days/i.test(r.say)) bad.push(at + ': quiet, the summary says "' + r.say + '"');
+        if (!/Nothing to chart/i.test(r.text)) bad.push(at + ': quiet, the chart does not say it is empty');
+      }
+      if (r.strip !== 90) bad.push(at + ': the record has ' + r.strip + ' days, expected 90');
+      if (/Invalid|NaN|undefined/.test(r.text)) bad.push(at + ': the page reads "' + (r.text.match(/.{0,30}(Invalid|NaN|undefined).{0,20}/) || [''])[0] + '"');
+      if (r.crowded) bad.push(at + ': ' + r.crowded + ' distance label(s) too wide for their cell');
+      for (const [id, why] of await page.evaluate(measure, '#boltpage')) bad.push(at + ': ' + id + ' ' + why);
+      // The whole page is the way back, and the Back button is too.
+      await page.$eval('#boltpage .card-head', el => el.click());
+      await page.waitForTimeout(900);
+      if (await page.evaluate(() => document.body.classList.contains('show-bolt'))) bad.push(at + ': tapping the page did not close it');
+      await page.$eval('#card-bolt', el => el.click());
+      await page.waitForTimeout(1200);
+      await page.goBack();
+      await page.waitForTimeout(900);
+      if (await page.evaluate(() => document.body.classList.contains('show-bolt'))) bad.push(at + ': Back did not close the page');
+      for (const m of errs) bad.push(at + ': pageerror: ' + m);
+      await page.close();
+    });
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL lightning page' : '  ok   lightning page');
+    for (const why of bad) console.log('         ' + why);
+  });
+
   // ── the slow half: series and Internet history come every 30 s, not 2 ─
   section("the slow half: series and Internet history come every 30 s, not 2", async () => {
     const bad = [];

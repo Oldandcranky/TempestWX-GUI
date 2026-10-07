@@ -2009,6 +2009,58 @@ class StormMovement(unittest.TestCase):
         self.assertIsNone(core.all_clear_at(self.run_of((31, 5)), self.NOW))
 
 
+class LightningPage(unittest.TestCase):
+    """The storm chart's window, the record by day, and strikes surviving a
+    restart, which every deploy is."""
+
+    NOW = time.mktime((2026, 7, 15, 21, 0, 0, 0, 0, -1))
+
+    def strikes(self, *pairs):
+        return [{"ts": self.NOW - m * 60, "dist_km": km, "energy": 1} for m, km in pairs]
+
+    def test_a_storm_now_is_charted_up_to_now(self):
+        r = core.lightning_report(self.strikes((200, 30), (100, 20), (10, 8)), {}, self.NOW)
+        self.assertTrue(r["live"])
+        self.assertEqual((r["start"], r["end"]), (self.NOW - 3 * 3600, self.NOW))
+        self.assertEqual([km for _, km in r["strikes"]], [20, 8])      # 200 minutes ago is off the chart
+
+    def test_with_none_about_it_charts_the_last_storm(self):
+        r = core.lightning_report(self.strikes((26 * 60, 30), (20 * 60, 12), (19 * 60, 6)), {}, self.NOW)
+        self.assertFalse(r["live"])
+        self.assertEqual(r["end"], self.NOW - 19 * 3600 + 300)
+        self.assertEqual(len(r["strikes"]), 2)
+
+    def test_nothing_kept_is_an_empty_chart_not_an_error(self):
+        r = core.lightning_report([], {}, self.NOW)
+        self.assertEqual((r["strikes"], r["live"], r["busiest"], r["since"]), ([], True, None, None))
+        self.assertEqual(len(r["days"]), 90)
+
+    def test_the_record_by_day(self):
+        days = {"2026-07-15": {"strikes": 40.0}, "2026-07-14": {"gust": 9.0},
+                "2026-06-02": {"strikes": 812.0}, "2025-08-01": {"strikes": 999.0}}
+        r = core.lightning_report([], days, self.NOW)
+        by = {row["date"]: row["strikes"] for row in r["days"]}
+        self.assertEqual((by["2026-07-15"], by["2026-07-14"], by["2026-07-13"]), (40, 0, None))
+        self.assertEqual(r["year"], {"year": 2026, "days": 2, "strikes": 852})
+        self.assertEqual(r["busiest"], {"date": "2025-08-01", "strikes": 999})
+        self.assertEqual(r["since"], "2025-08-01")
+
+    def test_two_days_of_strikes_survive_a_restart(self):
+        now = time.time()
+        st = core.StationState(history=blank_history())
+        saved = {"day": "1999-01-01", "saved_at": now - 6 * 3600,      # too old for the reading itself
+                 "strike_events": [{"ts": now - 50 * 3600, "dist_km": 9}, {"ts": now - 5 * 3600, "dist_km": 12},
+                                   {"ts": "junk"}, "junk", {"ts": now - 4 * 3600, "dist_km": 7}]}
+        st.load_state(saved)
+        self.assertEqual([e["dist_km"] for e in st.strike_events], [12, 7])
+        self.assertEqual(len(st.dump_state()["strike_events"]), 2)
+
+    def test_the_kept_strikes_are_capped(self):
+        now = time.time()
+        many = [{"ts": now - i, "dist_km": 10} for i in range(core.STRIKE_KEEP_N + 50, 0, -1)]
+        self.assertEqual(len(core.StationState._recent_strikes(many, now)), core.STRIKE_KEEP_N)
+
+
 class StrikeCounting(unittest.TestCase):
     """A strike arrives twice — as an event, then inside the next
     observation's count. Both were added, so every storm counted double."""

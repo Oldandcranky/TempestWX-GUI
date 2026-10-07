@@ -699,6 +699,8 @@ console.log = (...args) => {
           g.windows['7'] = {ok: 0, deg: 300, out: 0, observed: 300, days: 7, deg_events: 1, out_events: 0};
           return g; })()}};
     })();
+    for (const [k, v] of Object.entries(rel.services)) v.page = ({claude: 'https://status.claude.com/',
+      chatgpt: 'https://status.openai.com/', gemini: 'javascript:alert(1)'})[k];
     for (const [w, h] of [[1920, 1080], [1400, 860], [1920, 720], [1024, 768], [414, 896]]) {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
       const errs = [];
@@ -810,6 +812,19 @@ console.log = (...args) => {
       });
       if (cut.clipped.length) bad.push(at + ': components cut off mid-word: ' + cut.clipped);
       for (const [id, why] of await page.evaluate(measure, '#relpage')) bad.push(at + ': ' + id + ' ' + why);
+      // Each name is the way to its own status page, and only ever to a web
+      // address. Following one leaves this page open behind it.
+      const links = await page.evaluate(() => [...document.querySelectorAll('#relpage .relsvc .n')]
+        .map(n => n.tagName === 'A' ? n.getAttribute('href') + ' ' + n.target : ''));
+      if (links.join('|') !== 'https://status.claude.com/ _blank|https://status.openai.com/ _blank|')
+        bad.push(at + ': the names link to ' + JSON.stringify(links));
+      await page.$eval('#relpage .relsvc a.n', a => {
+        a.addEventListener('click', e => e.preventDefault(), {once: true});
+        a.click();
+      });
+      await page.waitForTimeout(900);
+      if (!await page.evaluate(() => document.body.classList.contains('show-rel')))
+        bad.push(at + ': following a status page link closed the page');
       // The whole page is the way back, and the Back button is too.
       await page.$eval('#relpage .card-head', el => el.click());
       await page.waitForTimeout(900);
@@ -851,6 +866,16 @@ console.log = (...args) => {
       if (h.attr !== '12&quot; display &amp; &lt;b&gt;') bad.push('escAttr leaves a quote: ' + h.attr);
       await page.$eval('#card-claude', el => el.click());
       await page.waitForTimeout(1500);
+      // On the TV a link would open a tab the remote cannot use: the name is
+      // inert there, and a tap on it closes the page like a tap anywhere.
+      const tv = await page.evaluate(() => {
+        document.body.classList.add('tv');
+        const a = document.querySelector('#relpage .relsvc a.n');
+        const r = {events: getComputedStyle(a).pointerEvents, arrow: getComputedStyle(a.querySelector('.arr')).display};
+        document.body.classList.remove('tv');
+        return r;
+      });
+      if (tv.events !== 'none' || tv.arrow !== 'none') bad.push('on the TV the status page link is live: ' + JSON.stringify(tv));
       const t = await page.evaluate(() => {
         const tbl = document.querySelector('#relpage .reltbl');
         const none = document.querySelector('#relpage .reltbl .inc.none > span');

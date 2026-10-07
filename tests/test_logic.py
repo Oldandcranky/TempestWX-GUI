@@ -1093,6 +1093,27 @@ class AiStatusSettings(unittest.TestCase):
         c.apply({"ai_status": {"claude": {"url": ""}}})
         self.assertEqual(c.ai_status["claude"]["url"], "")
 
+    def test_the_link_out_is_the_page_a_person_reads(self):
+        for cls in server.AI_SERVICES.values():
+            self.assertTrue(cls.page_for("").startswith("https://"), cls.NAME)
+            self.assertEqual(cls.page_for(cls.ENDPOINT), cls.PAGE)
+            self.assertNotEqual(cls.PAGE, cls.ENDPOINT, cls.NAME)
+        self.assertIn(server.GeminiStatusFetcher.PRODUCT, server.GeminiStatusFetcher.PAGE)
+        # A replaced address links to the front of its own site, never to a feed's JSON.
+        self.assertEqual(server.ClaudeStatusFetcher.page_for("https://status.example.org/api/v2/summary.json"),
+                         "https://status.example.org/")
+        for bad in ("javascript:alert(1)", "ftp://x.example/y", "https://"):
+            self.assertEqual(server.ClaudeStatusFetcher.page_for(bad), "", bad)
+
+    def test_the_reliability_page_carries_each_services_link(self):
+        c = self.cfg()
+        c.apply({"ai_status": {"chatgpt": {"url": "https://mirror.example.org/v2/summary.json"}}})
+        d = self.dash(c)
+        d.ai_history = type("H", (), {"report": lambda self, watching: {"services": {"claude": {}, "chatgpt": {}}}})()
+        body = d.reliability()
+        self.assertEqual(body["services"]["claude"]["page"], "https://status.claude.com/")
+        self.assertEqual(body["services"]["chatgpt"]["page"], "https://mirror.example.org/")
+
     def dash(self, c):
         d = server.Dashboard.__new__(server.Dashboard)
         d.config, d.ai = c, {}

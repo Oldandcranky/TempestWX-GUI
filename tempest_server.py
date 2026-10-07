@@ -513,7 +513,19 @@ class StatusFeed(PollingFetcher):
     REFRESH = 120
     RETRY = 60
     ENDPOINT = ""
+    PAGE = ""                         # the page a person reads, for a link
     NAME = ""
+
+    @classmethod
+    def page_for(cls, url):
+        """Where to send someone who wants more than the card says: the
+        service's own page, or, when the address has been replaced, the front
+        of the site it was replaced with. Only ever http(s), since it becomes
+        a link."""
+        if not url or url == cls.ENDPOINT:
+            return cls.PAGE
+        u = urllib.parse.urlsplit(url)
+        return "%s://%s/" % (u.scheme, u.netloc) if u.scheme in ("http", "https") and u.netloc else ""
 
     def __init__(self, stop_event, url=None, record=None):
         PollingFetcher.__init__(self, stop_event)
@@ -631,6 +643,7 @@ class StatuspageFetcher(StatusFeed):
 class ClaudeStatusFetcher(StatuspageFetcher):
     ENDPOINT = "https://status.claude.com/api/v2/summary.json"
     HISTORY = "https://status.claude.com/api/v2/incidents.json"
+    PAGE = "https://status.claude.com/"
     LABEL = "Claude status"
     NAME = "Claude"
     IMPACT = {"minor": "degraded_performance", "major": "partial_outage",
@@ -801,6 +814,8 @@ class GeminiStatusFetcher(StatusFeed):
 
     ENDPOINT = "https://www.google.com/appsstatus/dashboard/incidents.json"
     PRODUCT = "npdyhgECDJ6tB66MxXyo"
+    # Gemini's own history on the Workspace dashboard, not all of Workspace.
+    PAGE = "https://www.google.com/appsstatus/dashboard/products/npdyhgECDJ6tB66MxXyo/history"
     LABEL = "Gemini status"
     NAME = "Gemini"
 
@@ -2940,8 +2955,12 @@ class Dashboard:
             self.stop.wait(30)
 
     def reliability(self):
-        """How often each AI service has been degraded or down, for its page."""
-        return self.ai_history.report(watching=set(self.ai))
+        """How often each AI service has been degraded or down, for its page,
+        with a link to each one's own status page for the detail."""
+        body = self.ai_history.report(watching=set(self.ai))
+        for key, svc in body["services"].items():
+            svc["page"] = AI_SERVICES[key].page_for(self.config.ai_status[key]["url"])
+        return body
 
     def almanac(self, **thresholds):
         """Where today stands in the station's record, for the Almanac page.

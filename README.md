@@ -365,6 +365,9 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Each name on the AI reliability page links to its own status page**:
+  status.claude.com, status.openai.com and Gemini's history on Google's
+  Workspace dashboard, for the detail behind an incident. Not on the TV.
 - **A reissued alert that moves its end time is one banner.** Chicago sent the
   same Hydrologic Outlook twice, ending 3 PM and 4 AM, and withdrew neither;
   the newer is shown.

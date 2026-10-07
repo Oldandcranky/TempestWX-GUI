@@ -905,8 +905,11 @@ body.show-bolt #boltpage{display:flex}
      it, and scrollWidth counts neither the card's padding nor a child's
      margin, only the child's box: "20m so far" touched the card's edge and
      measured clean. */
+  /* Two pixels over the padding: the fit pass lets a pixel of overflow by,
+     and with no slack that pixel landed in the padding at some hours, as the
+     start times' widths changed with the clock. */
   #relpage .reltbl{grid-template-columns:max-content max-content max-content max-content;column-gap:.5em;
-                   width:max-content;padding-right:var(--pad)}
+                   width:max-content;padding-right:calc(var(--pad) + 2px)}
   #relpage .reltbl .inc .what{display:none}
   .relsvc .linkbtn{display:table;margin:.35em 0 0}     /* its own line, under the name */
 }

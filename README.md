@@ -368,6 +368,9 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The reliability page's phone table keeps two pixels of slack** inside the
+  card's padding, so the fit pass's one-pixel allowance cannot land in it at
+  the hours when the start times run widest.
 - **A Lightning page** (`l`, or a tap on the Lightning card): the storm strike
   by strike, distance against time over the last three hours, so a storm
   coming in is a run of dots sloping down to you. Earshot is shaded, the

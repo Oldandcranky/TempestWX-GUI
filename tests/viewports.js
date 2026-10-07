@@ -812,13 +812,16 @@ console.log = (...args) => {
       });
       if (cut.clipped.length) bad.push(at + ': components cut off mid-word: ' + cut.clipped);
       for (const [id, why] of await page.evaluate(measure, '#relpage')) bad.push(at + ': ' + id + ' ' + why);
-      // Each name is the way to its own status page, and only ever to a web
-      // address. Following one leaves this page open behind it.
-      const links = await page.evaluate(() => [...document.querySelectorAll('#relpage .relsvc .n')]
-        .map(n => n.tagName === 'A' ? n.getAttribute('href') + ' ' + n.target : ''));
-      if (links.join('|') !== 'https://status.claude.com/ _blank|https://status.openai.com/ _blank|')
-        bad.push(at + ': the names link to ' + JSON.stringify(links));
-      await page.$eval('#relpage .relsvc a.n', a => {
+      // Each service has a button to its own status page, and only ever to a
+      // web address. Following one leaves this page open behind it.
+      const links = await page.evaluate(() => [...document.querySelectorAll('#relpage .relsvc')].map(box => {
+        const a = box.querySelector('a.linkbtn');
+        return a ? a.textContent + ' ' + a.getAttribute('href') + ' ' + a.target : '';
+      }));
+      if (links.join('|') !== 'Status page \u2197 https://status.claude.com/ _blank|' +
+                              'Status page \u2197 https://status.openai.com/ _blank|')
+        bad.push(at + ': the status page buttons are ' + JSON.stringify(links));
+      await page.$eval('#relpage .relsvc a.linkbtn', a => {
         a.addEventListener('click', e => e.preventDefault(), {once: true});
         a.click();
       });
@@ -866,16 +869,14 @@ console.log = (...args) => {
       if (h.attr !== '12&quot; display &amp; &lt;b&gt;') bad.push('escAttr leaves a quote: ' + h.attr);
       await page.$eval('#card-claude', el => el.click());
       await page.waitForTimeout(1500);
-      // On the TV a link would open a tab the remote cannot use: the name is
-      // inert there, and a tap on it closes the page like a tap anywhere.
+      // On the TV a link would open a tab the remote cannot use: no button there.
       const tv = await page.evaluate(() => {
         document.body.classList.add('tv');
-        const a = document.querySelector('#relpage .relsvc a.n');
-        const r = {events: getComputedStyle(a).pointerEvents, arrow: getComputedStyle(a.querySelector('.arr')).display};
+        const shown = [...document.querySelectorAll('#relpage .relsvc a.linkbtn')].filter(a => a.offsetParent).length;
         document.body.classList.remove('tv');
-        return r;
+        return shown;
       });
-      if (tv.events !== 'none' || tv.arrow !== 'none') bad.push('on the TV the status page link is live: ' + JSON.stringify(tv));
+      if (tv) bad.push('on the TV ' + tv + ' status page button(s) still show');
       const t = await page.evaluate(() => {
         const tbl = document.querySelector('#relpage .reltbl');
         const none = document.querySelector('#relpage .reltbl .inc.none > span');

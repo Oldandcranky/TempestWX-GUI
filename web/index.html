@@ -809,11 +809,8 @@ body.show-rel #relpage{display:flex}
 .relsvc .ln{display:flex;justify-content:space-between;align-items:baseline;
             gap:.2em .8em;flex-wrap:wrap}
 .relsvc .n{font-size:var(--fs-value);font-weight:700}
-.relsvc a.n{color:inherit;text-decoration:none;-webkit-tap-highlight-color:transparent}
-.relsvc a.n .arr{font-size:.55em;color:var(--label);margin-left:.3em;vertical-align:.45em}
-body:not(.tv) .relsvc a.n:hover,body:not(.tv) .relsvc a.n:hover .arr{color:var(--accent)}
-body.tv .relsvc a.n{pointer-events:none}
-body.tv .relsvc a.n .arr{display:none}
+.relsvc .linkbtn{display:inline-block;margin:0 0 0 1em;padding:.2em .8em}
+body.tv .relsvc .linkbtn{display:none}
 .relsvc .w{font-size:var(--fs-value-sm);font-weight:700;letter-spacing:.06em;
            text-transform:uppercase;margin-left:.7em}
 .relsvc .nums{font-size:var(--fs-label);color:var(--label);white-space:nowrap}
@@ -852,6 +849,7 @@ body.tv .relsvc a.n .arr{display:none}
   #relpage .card-body{justify-content:flex-start;gap:clamp(8px,1.6dvh,16px)}
   #relpage .reltbl{grid-template-columns:max-content max-content max-content max-content;column-gap:.6em}
   #relpage .reltbl .inc .what{display:none}
+  .relsvc .linkbtn{display:table;margin:.35em 0 0}     /* its own line, under the name */
 }
 
 #outlook{display:none;flex:1;min-height:0}
@@ -5903,12 +5901,12 @@ function relDay(row){
   return [row.out ? "out" : row.deg ? "deg" : "ok", label + " · " + (bits.join(" · ") || "no problems")];
 }
 
-/* The service's name, as a way to its own status page for the detail this
-   page leaves out. Inert on the TV, where a second tab is no use to a remote,
-   and it keeps its own tap, since the page closes on a tap anywhere. */
+/* A way to the service's own status page, for the detail this page leaves
+   out. Not on the TV, where a second tab is no use to a remote, and it keeps
+   its own tap, since the page closes on a tap anywhere. */
 function relLink(name, page){
-  if (!/^https?:\/\//.test(page || "")) return el("span", "n", esc(name));
-  const a = el("a", "n out", esc(name) + '<span class="arr">\u2197</span>');
+  if (!/^https?:\/\//.test(page || "")) return null;
+  const a = el("a", "linkbtn out", "Status page \u2197");
   a.href = page;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
@@ -5987,7 +5985,9 @@ function renderRelPage(){
     const cur = svc.watching && svc.status ? statusWord(svc.status) : ["Not watched", "muted"];
     const ln = el("div", "ln");
     const left = el("span");
-    left.append(relLink(name, svc.page), el("span", "w " + cur[1], esc(cur[0])));
+    left.append(el("span", "n", esc(name)), el("span", "w " + cur[1], esc(cur[0])));
+    const out = relLink(name, svc.page);
+    if (out) left.appendChild(out);
     const nums = el("span", "nums");
     const lead = el("span", "lead", "Fine");
     lead.title = "The share of watched time with no problem reported";

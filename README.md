@@ -368,6 +368,16 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Four holes in that change, found by a review after it shipped.** A
+  history refill counted its first day from midnight, though Anthropic's list
+  begins at its first incident, so a real degradation that had dropped off the
+  list was overwritten as fine; the first day now counts from that incident.
+  A recount drops only incidents on components named as no longer counted,
+  so one on a renamed component that still counts stays. A history that names
+  components but none of Claude's is refused rather than read as months of
+  Claude being fine, and a counted component missing by both id and name is
+  logged and shown by Check now rather than dropping out silently. A clock
+  that steps back no longer has the same minutes counted twice.
 - **Claude's AI status counts claude.ai, the API and Claude Code, not the
   Console or Cowork.** All six share Anthropic's status page, and the
   Console's usage charts running late held the card at Degraded for a day and

@@ -749,7 +749,9 @@ class CheckNow(unittest.TestCase):
         self.assertEqual(server.ChatGptStatusFetcher.parse(raw, ids={"chat-conv"})["via"], "group")
         self.assertEqual(server.ChatGptStatusFetcher.parse(raw, ids={"nope"})["via"], "names")
         self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["via"], "names")
-        self.assertIsNone(server.ClaudeStatusFetcher.parse({"components": [comp("claude.ai")]})["via"])
+        three = [comp("claude.ai"), comp("Claude API (api.anthropic.com)"), comp("Claude Code")]
+        self.assertIsNone(server.ClaudeStatusFetcher.parse({"components": three})["via"])
+        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": three[:2]})["via"], "some")
 
     def test_an_ai_reading_says_how_often_it_is_taken(self):
         # The card's heartbeat crosses in this long; before the first reading too.
@@ -916,6 +918,18 @@ class StatusPages(unittest.TestCase):
                          "degraded_performance")
         with self.assertRaises(ValueError):                        # none of them at all: not fine
             server.ClaudeStatusFetcher.parse({"components": [comp("Claude Console (platform.claude.com)")]})
+
+    def test_claude_says_so_when_a_counted_component_cannot_be_found(self):
+        # Replaced with a new id and a new name: it would drop out silently.
+        core.LOG.lines.clear()
+        f = server.ClaudeStatusFetcher(threading.Event())
+        raw = {"components": [comp("claude.ai"), comp("Claude API (api.anthropic.com)"),
+                              comp("Claude Code (CLI and web)", "major_outage", id="new")]}
+        for _ in range(2):
+            f.store(f.parse(raw))
+        lines = [l["text"] for l in core.LOG.recent() if l["tag"] == "claude status"]
+        self.assertEqual(len(lines), 1)                             # once, not every poll
+        self.assertIn("one is missing by both id and name", lines[0])
     def test_all_operational_is_operational(self):
         self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("claude.ai"), comp("Claude Code")]})["status"], "operational")
 
@@ -1498,6 +1512,23 @@ class ReliabilityRecord(unittest.TestCase):
         self.assertEqual(len(again.services["claude"]["events"]), 1)
         self.assertEqual(again.services["claude"]["days"][self.DAY]["deg"], 120.0)
 
+    def test_a_renamed_component_that_still_counts_is_not_dropped_by_a_recount(self):
+        rec, h, path = self.new()
+        for dt, st, parts in ((0, "operational", ()), (120, "partial_outage", ["Claude Platform API"]),
+                              (240, "operational", ())):
+            self.see(rec, self.T0 + dt, st, parts)
+        rec = self.written_before_the_narrowing(rec, path, h)
+        self.assertEqual(rec.services["claude"]["days"][self.DAY]["out"], 120.0)
+        self.assertEqual(len(rec.services["claude"]["events"]), 1)
+
+    def test_a_clock_that_steps_back_does_not_count_the_same_time_twice(self):
+        rec, _, _ = self.new()
+        for dt, st in ((0, "operational"), (120, "degraded_performance"), (20, "degraded_performance"),
+                       (140, "degraded_performance"), (260, "operational")):
+            self.see(rec, self.T0 + dt, st)
+        day = rec.services["claude"]["days"][self.DAY]
+        self.assertEqual((day["ok"], day["deg"]), (120.0, 140.0))           # 260 s, each counted once
+
 class ServiceHistory(unittest.TestCase):
     """Filling the days before the live record from each service's own list of
     past incidents."""
@@ -1561,6 +1592,13 @@ class ServiceHistory(unittest.TestCase):
             {"code": "c1", "name": "claude.ai", "new_status": "degraded_performance"}]}]
         [event], _ = server.ClaudeStatusFetcher.parse_history({"incidents": [inc]})
         self.assertEqual((event["worst"], event["parts"]), ("degraded_performance", ["claude.ai"]))
+
+    def test_a_history_that_names_none_of_claudes_components_is_refused(self):
+        # The page rearranged under new ids and names: not months of Claude being fine.
+        raw = {"incidents": [self.incident(self.at(3, 1), self.at(3, 2), comps=self.CONSOLE, worst="partial_outage"),
+                             self.incident(self.at(5, 1), self.at(5, 2), comps=(("z", "Claude Web"),))]}
+        with self.assertRaises(ValueError):
+            server.ClaudeStatusFetcher.parse_history(raw)
 
     def test_an_incident_that_names_no_components_still_counts(self):
         # It cannot say whose it was, so it is not read as clean.
@@ -1786,6 +1824,11 @@ class ServiceHistory(unittest.TestCase):
         rec.backfill("claude", [], self.T0 + 3 * self.DAY)             # a list that starts after the live days
         self.assertIsNone(self.day(rec, 9))
         self.assertIsNotNone(self.day(rec, 0))                         # leaves the live days alone
+
+    def test_the_lists_first_day_is_covered_only_from_its_first_incident(self):
+        rec, _, _ = self.record()
+        rec.backfill("claude", [self.ev(12, 6, 12, 7)], self.at(12, 6))
+        self.assertEqual(self.day(rec, 12), {"ok": 17 * 3600.0, "deg": 3600.0, "out": 0.0})
     def test_it_is_remembered_across_a_restart_and_reported(self):
         rec, h, path = self.record()
         self.assertFalse(rec.backfilled("claude"))

@@ -516,8 +516,11 @@ class StatusFeed(PollingFetcher):
     PAGE = ""                         # the page a person reads, for a link
     NAME = ""
     # Raised when a service stops counting some of its page's components, so
-    # that the days already watched are recounted without them, once.
+    # that the days already watched are recounted without them, once. DROPPED
+    # names them as the record has them: an incident is dropped only when every
+    # part is one of these, so a renamed component that still counts stays.
     SCOPE = 1
+    DROPPED = frozenset()
 
     @classmethod
     def page_for(cls, url):
@@ -666,6 +669,8 @@ class ClaudeStatusFetcher(StatuspageFetcher):
                "yyzkbfz2thpt": "Claude Code"}
     PARTS = frozenset(COUNTED.values())
     SCOPE = 2
+    DROPPED = frozenset({"Claude Console (platform.claude.com)", "Claude Cowork",
+                         "Claude for Government"})
 
     @classmethod
     def counts(cls, c, id_key="id"):
@@ -673,7 +678,9 @@ class ClaudeStatusFetcher(StatuspageFetcher):
 
     @classmethod
     def chosen(cls, real, ids):
-        return [c for c in real if cls.counts(c)], None
+        missing = [cid for cid, name in cls.COUNTED.items()
+                   if not any(c.get("id") == cid or c.get("name") == name for c in real)]
+        return [c for c in real if cls.counts(c)], "some" if missing else None
 
     @classmethod
     def parse_history(cls, raw):
@@ -687,16 +694,17 @@ class ClaudeStatusFetcher(StatuspageFetcher):
         starts = [t for t in starts if t is not None]
         if not starts:
             raise ValueError("its history has no incidents to go on")
-        events = []
+        events, named_any, ours_any = [], False, False
         for i in incidents:
-            start = _iso_epoch(i.get("started_at") or i.get("created_at"))
-            end = _iso_epoch(i.get("resolved_at"))         # one still open is the live record's
-            if start is None or end is None or end <= start:
-                continue
             named = i.get("components") or []
             changes = [ac for u in i.get("incident_updates") or []
                        for ac in u.get("affected_components") or []]
             ours = [c for c in named if cls.counts(c)] + [ac for ac in changes if cls.counts(ac, "code")]
+            named_any, ours_any = named_any or bool(named or changes), ours_any or bool(ours)
+            start = _iso_epoch(i.get("started_at") or i.get("created_at"))
+            end = _iso_epoch(i.get("resolved_at"))         # one still open is the live record's
+            if start is None or end is None or end <= start:
+                continue
             if (named or changes) and not ours:
                 continue
             seen = [ac.get("new_status") for ac in changes if cls.counts(ac, "code")
@@ -707,6 +715,10 @@ class ClaudeStatusFetcher(StatuspageFetcher):
                 continue
             events.append({"start": start, "end": end, "worst": worst,
                            "parts": sorted({c.get("name") or "" for c in ours})[:PARTS_KEPT]})
+        # Components named and none of them ours: the page has been rearranged,
+        # and an empty list would be read as months of Claude being fine.
+        if named_any and not ours_any:
+            raise ValueError("none of its components were found in its history")
         return events, min(starts)
 
     def history(self):
@@ -899,7 +911,8 @@ class GeminiStatusFetcher(StatusFeed):
 
 # How a service's components were chosen, for Check now to say.
 VIA_WORDS = {"group": "the page's own group",
-             "names": "the fixed list of names: the page's grouping was not usable"}
+             "names": "the fixed list of names: the page's grouping was not usable",
+             "some": "fewer than it counts: one is missing by both id and name"}
 
 AI_SERVICES = {"claude": ClaudeStatusFetcher, "chatgpt": ChatGptStatusFetcher,
                "gemini": GeminiStatusFetcher}
@@ -1020,20 +1033,20 @@ class AiHistory:
             cls = AI_SERVICES[key]
             if s["scope"] >= cls.SCOPE:
                 continue
-            dropped, moved = self._narrow(s, cls.PARTS) if cls.PARTS else (0, 0.0)
+            dropped, moved = self._narrow(s, cls.DROPPED) if cls.DROPPED else (0, 0.0)
             s["scope"] = cls.SCOPE
-            core.log("ai status", "%s recounted with only %s: %d incident%s dropped, %s moved "
-                     "to operational" % (cls.NAME, ", ".join(sorted(cls.PARTS or ())), dropped,
+            core.log("ai status", "%s recounted without %s: %d incident%s dropped, %s moved "
+                     "to operational" % (cls.NAME, ", ".join(sorted(cls.DROPPED)), dropped,
                                          "" if dropped == 1 else "s",
                                          core.format_uptime(moved) or "nothing"), "notice")
             self._save(True)
 
-    def _narrow(self, s, counts):
-        """Take out of the watched days what only components no longer in
-        `counts` accounted for: (incidents dropped, seconds moved to ok).
+    def _narrow(self, s, dropped):
+        """Take out of the watched days what only the `dropped` components
+        accounted for: (incidents dropped, seconds moved to ok).
 
         An incident's parts are every component seen not operational while it
-        was open, so one whose parts all fall outside `counts` was never this
+        was open, so one whose parts are all dropped ones was never this
         service's: it goes, and so does the time it was counted bad. That time
         is not kept per incident, only per day, so on a day it shares with a
         kept incident only what the kept one cannot have had is moved. That
@@ -1042,7 +1055,7 @@ class AiHistory:
             return 0, 0.0
         last = (s["last"] or {}).get("at", 0.0)
         live = [e for e in s["events"] if e.get("src") != "history"]
-        gone = [e for e in live if e["parts"] and not counts.intersection(e["parts"])]
+        gone = [e for e in live if e["parts"] and dropped.issuperset(e["parts"])]
         kept = [e for e in live if not any(e is g for g in gone)]
         span = lambda evs, a, b: sum(
             max(0.0, min(b, last if e["end"] is None else e["end"]) - max(a, e["start"])) for e in evs)
@@ -1062,7 +1075,7 @@ class AiHistory:
             row["ok"] += deg + out
             moved += deg + out
         for e in kept:
-            e["parts"] = [p for p in e["parts"] if p in counts]
+            e["parts"] = [p for p in e["parts"] if p not in dropped]
         s["events"] = [e for e in s["events"] if not any(e is g for g in gone)]
         # The last sighting's components were in the open incident's parts.
         if s["last"] and any(e["end"] is None for e in gone):
@@ -1119,7 +1132,9 @@ class AiHistory:
             elif open_ is not None:
                 open_["end"], open_["approx_end"] = t, silent
                 changed = True
-            s["last"] = {"at": t, "status": status}
+            # Never back: after a clock step, the time up to where it had got
+            # to would be credited a second time.
+            s["last"] = {"at": t if last is None else max(t, last["at"]), "status": status}
             self._save(changed)
 
     # ── history ───────────────────────────────────────────────────────────
@@ -1132,7 +1147,8 @@ class AiHistory:
     # for the WeatherFlow sweep: a history filled the old way is filled again.
     # 2: all of an incident's components, not the first six.
     # 3: Claude's only where claude.ai, the API or Claude Code were in them.
-    BACKFILL_KEEPS = 3
+    # 4: the list's first day only from its first incident, not from midnight.
+    BACKFILL_KEEPS = 4
 
     def backfilled(self, key):
         with self.lock:
@@ -1155,7 +1171,7 @@ class AiHistory:
             s = self.services.setdefault(key, self._blank(key))
             first = date.fromtimestamp(covered_from)
             first_live = date.fromtimestamp(self.since)
-            floor = time.mktime(first.timetuple())
+            floor = covered_from                              # not that day's midnight
             ceiling = time.mktime(first_live.timetuple())     # where the live days begin
             spans = [(max(e["start"], floor), min(e["end"], ceiling), self._bucket(e["worst"]))
                      for e in events]
@@ -1175,7 +1191,9 @@ class AiHistory:
             while day < first_live:
                 k = day.strftime("%Y-%m-%d")
                 row = tmp["days"].get(k, {"ok": 0.0, "deg": 0.0, "out": 0.0})
-                row["ok"] = max(0.0, self._day_seconds(k) - row["deg"] - row["out"])
+                # The list's first day is covered from its first incident on.
+                begun = max(0.0, floor - time.mktime(day.timetuple()))
+                row["ok"] = max(0.0, self._day_seconds(k) - begun - row["deg"] - row["out"])
                 s["days"][k] = row
                 day += timedelta(days=1)
             # History covers whole days. An incident that ran on into the live

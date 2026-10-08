@@ -368,6 +368,17 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **Claude's AI status counts claude.ai, the API and Claude Code, not the
+  Console or Cowork.** All six share Anthropic's status page, and the
+  Console's usage charts running late held the card at Degraded for a day and
+  a half while all three were fine. They are found by id, so a rename does
+  not lose one, or by name, so a replacement does not. The days already
+  watched are recounted once, on the first start: an incident that touched
+  only the Console or Cowork goes, and so does the time it was counted bad,
+  except where a day shares that time with a kept incident and the two cannot
+  be told apart, when it stays counted bad. The days before are filled again
+  from Anthropic's incident list by the same rule, and days that list no
+  longer reaches go back to grey rather than stay counted the old way.
 - **The reliability page's phone table keeps two pixels of slack** inside the
   card's padding, so the fit pass's one-pixel allowance cannot land in it at
   the hours when the start times run widest.

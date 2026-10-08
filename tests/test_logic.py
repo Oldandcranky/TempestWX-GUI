@@ -739,7 +739,7 @@ class CheckNow(unittest.TestCase):
                 "chatgpt": F("ChatGPT", {"status": "degraded_performance", "via": "group"})}
         out = d.check("ai")
         self.assertTrue(out["ok"])
-        self.assertIn("Claude operational ·", out["summary"])                # counts everything: nothing to say
+        self.assertIn("Claude operational ·", out["summary"])                # a fixed set: nothing to say
         self.assertIn("ChatGPT degraded performance (from the page's own group)", out["summary"])
         d.ai["chatgpt"] = F("ChatGPT", {"status": "operational", "via": "names"})
         self.assertIn("(from the fixed list of names", d.check("ai")["summary"])
@@ -749,7 +749,7 @@ class CheckNow(unittest.TestCase):
         self.assertEqual(server.ChatGptStatusFetcher.parse(raw, ids={"chat-conv"})["via"], "group")
         self.assertEqual(server.ChatGptStatusFetcher.parse(raw, ids={"nope"})["via"], "names")
         self.assertEqual(server.ChatGptStatusFetcher.parse(raw)["via"], "names")
-        self.assertIsNone(server.ClaudeStatusFetcher.parse(raw)["via"])      # it counts everything
+        self.assertIsNone(server.ClaudeStatusFetcher.parse({"components": [comp("claude.ai")]})["via"])
 
     def test_an_ai_reading_says_how_often_it_is_taken(self):
         # The card's heartbeat crosses in this long; before the first reading too.
@@ -893,12 +893,31 @@ class StatusPages(unittest.TestCase):
     """What the AI status card says. The shapes are those the pages really send."""
 
     def test_claude_is_the_worst_of_its_components(self):
-        raw = {"components": [comp("claude.ai"), comp("Claude API", "partial_outage"),
+        raw = {"components": [comp("claude.ai"), comp("Claude API (api.anthropic.com)", "partial_outage"),
                               {"id": "g", "name": "Group", "status": "operational", "group": True}]}
         self.assertEqual(server.ClaudeStatusFetcher.parse(raw, now=1.0)["status"], "partial_outage")
 
+
+    def test_claude_counts_only_the_app_the_api_and_claude_code(self):
+        raw = {"components": [comp("claude.ai"), comp("Claude Code"), comp("Claude API (api.anthropic.com)"),
+                              comp("Claude Console (platform.claude.com)", "major_outage"),
+                              comp("Claude Cowork", "partial_outage")]}
+        got = server.ClaudeStatusFetcher.parse(raw)
+        self.assertEqual((got["status"], got["parts"]), ("operational", []))
+        raw["components"][1]["status"] = "degraded_performance"
+        got = server.ClaudeStatusFetcher.parse(raw)
+        self.assertEqual((got["status"], got["parts"]), ("degraded_performance", ["Claude Code"]))
+
+    def test_claude_finds_a_counted_component_renamed_or_replaced(self):
+        renamed = comp("Claude Platform API", "partial_outage", id="k8w3r06qmzrp")
+        replaced = comp("claude.ai", "degraded_performance", id="a-new-id")
+        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [renamed]})["status"], "partial_outage")
+        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [replaced]})["status"],
+                         "degraded_performance")
+        with self.assertRaises(ValueError):                        # none of them at all: not fine
+            server.ClaudeStatusFetcher.parse({"components": [comp("Claude Console (platform.claude.com)")]})
     def test_all_operational_is_operational(self):
-        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("a"), comp("b")]})["status"], "operational")
+        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("claude.ai"), comp("Claude Code")]})["status"], "operational")
 
     def test_chatgpt_ignores_the_api_and_codex(self):
         raw = {"components": [comp("Conversations"), comp("Realtime", "major_outage"),
@@ -949,7 +968,7 @@ class StatusPages(unittest.TestCase):
             self.assertEqual(f.fetch_once()["status"], "degraded_performance")
 
     def test_an_unknown_status_is_not_fine(self):
-        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("x", "on_fire")]})["status"], "on_fire")
+        self.assertEqual(server.ClaudeStatusFetcher.parse({"components": [comp("claude.ai", "on_fire")]})["status"], "on_fire")
 
     def gemini(self, *incidents):
         return server.GeminiStatusFetcher.parse(list(incidents), now=1.0)["status"]
@@ -1402,7 +1421,7 @@ class ReliabilityRecord(unittest.TestCase):
         self.see(rec, self.T0 + 120, "degraded_performance", names)
         self.assertEqual(rec.services["claude"]["events"][0]["parts"], names)
         raw = {"components": [comp(n, "degraded_performance") for n in names]}
-        self.assertEqual(len(server.ClaudeStatusFetcher.parse(raw)["parts"]), 15)
+        self.assertEqual(len(server.StatuspageFetcher.parse(raw)["parts"]), 15)
 
     def test_a_record_that_cannot_be_kept_is_not_the_status_page_failing(self):
         core.LOG.lines.clear()
@@ -1417,9 +1436,67 @@ class ReliabilityRecord(unittest.TestCase):
     def test_a_reading_names_the_components_that_are_not_operational(self):
         raw = {"components": [comp("Login"), comp("Search", "degraded_performance"),
                               comp("Agent", "partial_outage")]}
-        self.assertEqual(server.ClaudeStatusFetcher.parse(raw)["parts"], ["Agent", "Search"])
+        self.assertEqual(server.StatuspageFetcher.parse(raw)["parts"], ["Agent", "Search"])
         self.assertEqual(server.GeminiStatusFetcher.parse([])["parts"], [])
 
+
+    # ── Claude counting only claude.ai, the API and Claude Code ──
+    CONSOLE = "Claude Console (platform.claude.com)"
+
+    def written_before_the_narrowing(self, rec, path, h):
+        """The record as a server from before the narrowing left it, read again."""
+        rec.services["claude"]["scope"] = 1
+        rec._save(True)
+        return server.AiHistory(path, h)
+
+    def test_a_record_kept_before_claude_was_narrowed_is_recounted_once(self):
+        rec, h, path = self.new()
+        for dt, st, parts in ((0, "operational", ()), (120, "partial_outage", [self.CONSOLE]),
+                              (240, "operational", ()), (360, "degraded_performance", ["claude.ai", self.CONSOLE]),
+                              (480, "operational", ())):
+            self.see(rec, self.T0 + dt, st, parts)
+        rec = self.written_before_the_narrowing(rec, path, h)
+        day = rec.services["claude"]["days"][self.DAY]
+        self.assertEqual((day["ok"], day["deg"], day["out"]), (360.0, 120.0, 0.0))
+        [ev] = rec.services["claude"]["events"]                        # the Console's alone has gone
+        self.assertEqual((ev["worst"], ev["parts"]), ("degraded_performance", ["claude.ai"]))
+        again = server.AiHistory(path, h)                              # and it is not done twice
+        self.assertEqual(again.services["claude"]["days"][self.DAY], day)
+        self.assertEqual(again.services["claude"]["scope"], server.ClaudeStatusFetcher.SCOPE)
+
+    def test_time_the_narrowing_cannot_tell_apart_stays_counted_bad(self):
+        # The kept incident hides a silence, so it could have had any of its
+        # span; the Console's minutes cannot be told from its, and stay.
+        rec, h, path = self.new()
+        for dt, st, parts in ((0, "degraded_performance", ["claude.ai"]), (120, "degraded_performance", ["claude.ai"]),
+                              (1120, "operational", ()),
+                              (1240, "degraded_performance", [self.CONSOLE]), (1360, "operational", ())):
+            self.see(rec, self.T0 + dt, st, parts)
+        before = dict(rec.services["claude"]["days"][self.DAY])
+        rec = self.written_before_the_narrowing(rec, path, h)
+        self.assertEqual(rec.services["claude"]["days"][self.DAY], before)
+        self.assertEqual(len(rec.services["claude"]["events"]), 1)
+
+    def test_a_console_incident_still_open_is_closed_by_the_narrowing(self):
+        rec, h, path = self.new()
+        self.see(rec, self.T0, "operational")
+        self.see(rec, self.T0 + 120, "degraded_performance", [self.CONSOLE])
+        self.see(rec, self.T0 + 240, "degraded_performance", [self.CONSOLE])
+        rec = self.written_before_the_narrowing(rec, path, h)
+        self.see(rec, self.T0 + 360, "operational")                    # as the narrowed page now reads
+        day = rec.services["claude"]["days"][self.DAY]
+        self.assertEqual((day["ok"], day["deg"], day["out"]), (360.0, 0.0, 0.0))
+        self.assertEqual(rec.services["claude"]["events"], [])
+
+    def test_a_new_record_starts_at_the_current_scope_and_is_never_recounted(self):
+        rec, h, path = self.new()
+        self.see(rec, self.T0, "operational")
+        self.see(rec, self.T0 + 120, "degraded_performance", ["Login"])
+        self.see(rec, self.T0 + 240, "operational")
+        rec._save(True)
+        again = server.AiHistory(path, h)
+        self.assertEqual(len(again.services["claude"]["events"]), 1)
+        self.assertEqual(again.services["claude"]["days"][self.DAY]["deg"], 120.0)
 
 class ServiceHistory(unittest.TestCase):
     """Filling the days before the live record from each service's own list of
@@ -1464,7 +1541,29 @@ class ServiceHistory(unittest.TestCase):
         self.assertEqual(events[0]["parts"], ["claude.ai"])
         self.assertEqual(round(covered), round(self.at(20, 10)))      # the oldest incident, skipped or not
 
-    def test_claude_counts_every_incident_on_its_page(self):
+    CONSOLE = (("con", "Claude Console (platform.claude.com)"),)
+
+    def test_claude_history_leaves_out_incidents_on_only_the_console_or_cowork(self):
+        raw = {"incidents": [
+            self.incident(self.at(5, 1), self.at(5, 2), impact="major", comps=self.CONSOLE,
+                          worst="partial_outage", name="console"),
+            self.incident(self.at(4, 1), self.at(4, 2), comps=(("cw", "Claude Cowork"),), name="cowork"),
+            self.incident(self.at(3, 1), self.at(3, 2), worst="degraded_performance", name="app")]}
+        events, covered = server.ClaudeStatusFetcher.parse_history(raw)
+        self.assertEqual([round(e["start"]) for e in events], [round(self.at(3, 1))])
+        self.assertEqual(round(covered), round(self.at(5, 1)))      # still complete from the oldest
+
+    def test_an_incident_on_the_console_and_the_app_is_as_bad_as_the_app_got(self):
+        inc = self.incident(self.at(3, 1), self.at(3, 2), impact="major",
+                            comps=self.CONSOLE + (("c1", "claude.ai"),))
+        inc["incident_updates"] = [{"affected_components": [
+            {"code": "con", "name": "Claude Console (platform.claude.com)", "new_status": "major_outage"},
+            {"code": "c1", "name": "claude.ai", "new_status": "degraded_performance"}]}]
+        [event], _ = server.ClaudeStatusFetcher.parse_history({"incidents": [inc]})
+        self.assertEqual((event["worst"], event["parts"]), ("degraded_performance", ["claude.ai"]))
+
+    def test_an_incident_that_names_no_components_still_counts(self):
+        # It cannot say whose it was, so it is not read as clean.
         raw = {"incidents": [dict(self.incident(self.at(3, 1), self.at(3, 2), name="a"), components=[])]}
         self.assertEqual(len(server.ClaudeStatusFetcher.parse_history(raw)[0]), 1)
 
@@ -1673,6 +1772,20 @@ class ServiceHistory(unittest.TestCase):
         self.assertEqual([len(e["parts"]) for e in again.services["claude"]["events"] if e.get("src") == "history"], [15])
         self.assertTrue(server.AiHistory(path, h).backfilled("claude"))
 
+
+    def test_days_a_new_history_no_longer_reaches_go_back_to_not_covered(self):
+        # They were counted the old way, and nothing now says how the new way would.
+        rec, _, _ = self.record()
+        ReliabilityRecord.see(rec, self.T0 + 120, "operational")      # a live day with time in it
+        rec.backfill("claude", [self.ev(20, 10, 20, 12)], self.at(25, 3))
+        self.assertIsNotNone(self.day(rec, 22))
+        rec.backfill("claude", [self.ev(9, 10, 9, 12)], self.at(12, 3))
+        self.assertIsNone(self.day(rec, 22))
+        self.assertIsNone(self.day(rec, 13))
+        self.assertEqual(self.day(rec, 9)["deg"], 2 * 3600.0)
+        rec.backfill("claude", [], self.T0 + 3 * self.DAY)             # a list that starts after the live days
+        self.assertIsNone(self.day(rec, 9))
+        self.assertIsNotNone(self.day(rec, 0))                         # leaves the live days alone
     def test_it_is_remembered_across_a_restart_and_reported(self):
         rec, h, path = self.record()
         self.assertFalse(rec.backfilled("claude"))

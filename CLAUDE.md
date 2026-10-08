@@ -191,6 +191,16 @@ untouched), so keep it that way and never let it feed anything live. The unit
 tests are `ReliabilityRecord` and `ServiceHistory`; the page has a section of
 its own in `tests/viewports.js`, fed a fixture written there.
 
+Claude counts only claude.ai, the API and Claude Code
+(`ClaudeStatusFetcher.COUNTED`), at the owner's request on 2026-10-08: the
+Console's usage charts had held the card amber for a day and a half. **If a
+service stops counting a component, raise both its `SCOPE` and
+`AiHistory.BACKFILL_KEEPS`.** The first recounts the days already watched
+(`AiHistory._narrow`), the second refills the history before them; with either
+missing, the old count lingers for ninety days. Narrowing can be recounted from
+an incident's parts; widening cannot, because a component that did not count
+was never recorded.
+
 ## Tests
 
 `tests/run.sh` — unit tests plus a headless-browser geometry pass. Run it

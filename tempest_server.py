@@ -515,6 +515,9 @@ class StatusFeed(PollingFetcher):
     ENDPOINT = ""
     PAGE = ""                         # the page a person reads, for a link
     NAME = ""
+    # Raised when a service stops counting some of its page's components, so
+    # that the days already watched are recounted without them, once.
+    SCOPE = 1
 
     @classmethod
     def page_for(cls, url):
@@ -618,16 +621,21 @@ class StatuspageFetcher(StatusFeed):
     PARTS = None          # the names of the components that count; None is all
 
     @classmethod
-    def parse(cls, raw, now=None, ids=None):
-        # Component groups are headings, not things that can be down.
-        real = [c for c in raw.get("components") or [] if not c.get("group")]
+    def chosen(cls, real, ids):
+        """The components that count, and how they were found."""
         # By id when the page's own grouping is to hand: names can repeat.
         # Otherwise, or if no id matched, by name.
         comps = [c for c in real if c.get("id") in ids] if ids else []
-        via = "group" if comps else None
-        if not comps:
-            comps = [c for c in real if cls.PARTS is None or c.get("name") in cls.PARTS]
-            via = None if cls.PARTS is None else "names"
+        if comps:
+            return comps, "group"
+        return ([c for c in real if cls.PARTS is None or c.get("name") in cls.PARTS],
+                None if cls.PARTS is None else "names")
+
+    @classmethod
+    def parse(cls, raw, now=None, ids=None):
+        # Component groups are headings, not things that can be down.
+        real = [c for c in raw.get("components") or [] if not c.get("group")]
+        comps, via = cls.chosen(real, ids)
         if not comps:
             # Not "operational": a renamed component must not read as fine.
             raise ValueError("none of its components were found")
@@ -648,13 +656,32 @@ class ClaudeStatusFetcher(StatuspageFetcher):
     NAME = "Claude"
     IMPACT = {"minor": "degraded_performance", "major": "partial_outage",
               "critical": "major_outage"}
+    # What counts is what people use: the app, the API and Claude Code. The
+    # Console and Cowork share the page, and the Console's usage charts running
+    # late once held the card amber for a day and a half while all of these
+    # were fine. By id, which survives a rename, or by name, which survives a
+    # component being replaced.
+    COUNTED = {"rwppv331jlwc": "claude.ai",
+               "k8w3r06qmzrp": "Claude API (api.anthropic.com)",
+               "yyzkbfz2thpt": "Claude Code"}
+    PARTS = frozenset(COUNTED.values())
+    SCOPE = 2
+
+    @classmethod
+    def counts(cls, c, id_key="id"):
+        return c.get(id_key) in cls.COUNTED or c.get("name") in cls.PARTS
+
+    @classmethod
+    def chosen(cls, real, ids):
+        return [c for c in real if cls.counts(c)], None
 
     @classmethod
     def parse_history(cls, raw):
         """The past incidents from Statuspage's list: (events, the earliest
         moment the list is complete from). An event is when one began and
-        ended, how bad it got, and which components it touched. Claude counts
-        every component, so every incident on its page is its own."""
+        ended, how bad it got, and which of the counted components it touched.
+        One that names components, none of them counted, was not Claude's; one
+        that names none at all cannot say, so it counts rather than flatter."""
         incidents = raw.get("incidents") or []
         starts = [_iso_epoch(i.get("started_at") or i.get("created_at")) for i in incidents]
         starts = [t for t in starts if t is not None]
@@ -666,16 +693,20 @@ class ClaudeStatusFetcher(StatuspageFetcher):
             end = _iso_epoch(i.get("resolved_at"))         # one still open is the live record's
             if start is None or end is None or end <= start:
                 continue
-            seen = [ac.get("new_status") for u in i.get("incident_updates") or []
-                    for ac in u.get("affected_components") or []
-                    if ac.get("new_status") not in (None, "operational")]
+            named = i.get("components") or []
+            changes = [ac for u in i.get("incident_updates") or []
+                       for ac in u.get("affected_components") or []]
+            ours = [c for c in named if cls.counts(c)] + [ac for ac in changes if cls.counts(ac, "code")]
+            if (named or changes) and not ours:
+                continue
+            seen = [ac.get("new_status") for ac in changes if cls.counts(ac, "code")
+                    and ac.get("new_status") not in (None, "operational")]
             worst = (max(seen, key=lambda st: STATUS_RANK.get(st, 2)) if seen
                      else cls.IMPACT.get(i.get("impact")))
             if worst is None:                              # an impact of "none" is a notice
                 continue
             events.append({"start": start, "end": end, "worst": worst,
-                           "parts": sorted({c.get("name") or ""
-                                            for c in i.get("components") or []})[:PARTS_KEPT]})
+                           "parts": sorted({c.get("name") or "" for c in ours})[:PARTS_KEPT]})
         return events, min(starts)
 
     def history(self):
@@ -937,11 +968,13 @@ class AiHistory:
         if bf is not None:
             bf = {"at": float(bf["at"]), "from": str(bf["from"]), "events": int(bf["events"]),
                   "keeps": int(bf.get("keeps", 1))}
-        return {"days": days, "events": events, "last": last, "backfill": bf}
+        return {"days": days, "events": events, "last": last, "backfill": bf,
+                "scope": int(d.get("scope", 1))}
 
     @staticmethod
-    def _blank():
-        return {"days": {}, "events": [], "last": None, "backfill": None}
+    def _blank(key=None):
+        return {"days": {}, "events": [], "last": None, "backfill": None,
+                "scope": AI_SERVICES[key].SCOPE if key in AI_SERVICES else 1}
 
     def load(self):
         raw, problem = self.history._read_json(self.path)
@@ -954,9 +987,11 @@ class AiHistory:
                             for k, v in (raw.get("services") or {}).items() if k in AI_SERVICES}
                 self.since = None if since is None else float(since)
                 self.services = services
-                return
             except (KeyError, TypeError, ValueError, AttributeError):
                 problem = "damaged (not a record)"
+            else:
+                self._rescope()
+                return
         aside = self.history._set_aside(self.path)
         self.locked = aside is None
         self.history._note("%s is %s; %s" % (
@@ -975,6 +1010,64 @@ class AiHistory:
             del s["events"][:-self.EVENTS_KEPT]
         self.history._write_json(self.path, {"version": 1, "saved_at": now,
                                              "since": self.since, "services": self.services})
+
+    def _rescope(self):
+        """Once for each service whose SCOPE has been raised since its record
+        was written: the days it was watched are recounted as though only the
+        components it counts now ever had. The days before are its history's,
+        which is filled again (BACKFILL_KEEPS)."""
+        for key, s in self.services.items():
+            cls = AI_SERVICES[key]
+            if s["scope"] >= cls.SCOPE:
+                continue
+            dropped, moved = self._narrow(s, cls.PARTS) if cls.PARTS else (0, 0.0)
+            s["scope"] = cls.SCOPE
+            core.log("ai status", "%s recounted with only %s: %d incident%s dropped, %s moved "
+                     "to operational" % (cls.NAME, ", ".join(sorted(cls.PARTS or ())), dropped,
+                                         "" if dropped == 1 else "s",
+                                         core.format_uptime(moved) or "nothing"), "notice")
+            self._save(True)
+
+    def _narrow(self, s, counts):
+        """Take out of the watched days what only components no longer in
+        `counts` accounted for: (incidents dropped, seconds moved to ok).
+
+        An incident's parts are every component seen not operational while it
+        was open, so one whose parts all fall outside `counts` was never this
+        service's: it goes, and so does the time it was counted bad. That time
+        is not kept per incident, only per day, so on a day it shares with a
+        kept incident only what the kept one cannot have had is moved. That
+        can leave a little counted bad; it can never count unseen time as up."""
+        if self.since is None:
+            return 0, 0.0
+        last = (s["last"] or {}).get("at", 0.0)
+        live = [e for e in s["events"] if e.get("src") != "history"]
+        gone = [e for e in live if e["parts"] and not counts.intersection(e["parts"])]
+        kept = [e for e in live if not any(e is g for g in gone)]
+        span = lambda evs, a, b: sum(
+            max(0.0, min(b, last if e["end"] is None else e["end"]) - max(a, e["start"])) for e in evs)
+        worse = lambda evs: [e for e in evs if self._bucket(e["worst"]) == "out"]
+        first_live = date.fromtimestamp(self.since).isoformat()
+        moved = 0.0
+        for k, row in s["days"].items():
+            a = time.mktime(datetime.strptime(k, "%Y-%m-%d").timetuple())
+            b = a + self._day_seconds(k)
+            if k < first_live or not span(gone, a, b):
+                continue
+            deg = max(0.0, min(span(gone, a, b), row["deg"] - span(kept, a, b)))
+            # An incident whose worst was a degradation was never an outage.
+            out = max(0.0, min(span(worse(gone), a, b), row["out"] - span(worse(kept), a, b)))
+            row["deg"] -= deg
+            row["out"] -= out
+            row["ok"] += deg + out
+            moved += deg + out
+        for e in kept:
+            e["parts"] = [p for p in e["parts"] if p in counts]
+        s["events"] = [e for e in s["events"] if not any(e is g for g in gone)]
+        # The last sighting's components were in the open incident's parts.
+        if s["last"] and any(e["end"] is None for e in gone):
+            s["last"]["status"] = "operational"
+        return len(gone), moved
 
     # ── recording ─────────────────────────────────────────────────────────
     @staticmethod
@@ -999,7 +1092,7 @@ class AiHistory:
         t, status = fresh["fetched_at"], fresh["status"]
         parts = list(fresh.get("parts") or [])
         with self.lock:
-            s = self.services.setdefault(key, self._blank())
+            s = self.services.setdefault(key, self._blank(key))
             last = s["last"]
             # A first sighting, a long silence, or a clock that went backwards.
             silent = last is None or not 0 <= t - last["at"] <= self.GAP
@@ -1038,7 +1131,8 @@ class AiHistory:
     # Raise this when what a backfill keeps changes, as Backfill.SWEEP_KEEPS is
     # for the WeatherFlow sweep: a history filled the old way is filled again.
     # 2: all of an incident's components, not the first six.
-    BACKFILL_KEEPS = 2
+    # 3: Claude's only where claude.ai, the API or Claude Code were in them.
+    BACKFILL_KEEPS = 3
 
     def backfilled(self, key):
         with self.lock:
@@ -1058,7 +1152,7 @@ class AiHistory:
         with self.lock:
             if self.since is None:
                 return False
-            s = self.services.setdefault(key, self._blank())
+            s = self.services.setdefault(key, self._blank(key))
             first = date.fromtimestamp(covered_from)
             first_live = date.fromtimestamp(self.since)
             floor = time.mktime(first.timetuple())
@@ -1072,6 +1166,11 @@ class AiHistory:
                 kinds = [k for s0, s1, k in spans if s0 <= a and b <= s1]
                 if kinds:
                     self._credit(tmp, a, b, "out" if "out" in kinds else "deg")
+            # Days an earlier fill reached and this list no longer does were
+            # counted the old way, and nothing now says how this way would
+            # count them, so they go back to not covered.
+            for k in [k for k in s["days"] if k < min(first, first_live).isoformat()]:
+                del s["days"][k]
             day = first
             while day < first_live:
                 k = day.strftime("%Y-%m-%d")
@@ -1116,7 +1215,7 @@ class AiHistory:
                 s = self.services.get(key)
                 if s is None and key not in watching:
                     continue
-                s = s or self._blank()
+                s = s or self._blank(key)
                 rows = [dict(date=k, **s["days"].get(k, {"ok": 0.0, "deg": 0.0, "out": 0.0}))
                         for k in keys]
                 windows = {}

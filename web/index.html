@@ -2310,6 +2310,20 @@ function winterLine(s){
   return null;
 }
 
+/* A wet Tempest reads low. Rain on the housing cools the temperature sensor
+   by evaporation, so it reports something nearer the wet-bulb temperature
+   than the air: through a day of rain on 2026-10-15 it sat 2 to 4.4°F under
+   the airport every hour, and agreed within a degree once it dried. The
+   figure stays — it is what the sensor says — but the card says why it may
+   be low, the way the Rainfall card says the gauge under-counts snow. */
+const WET_RH = 94;
+let TEST_WET = new URLSearchParams(location.search).has("testwet");
+function wetLine(s){
+  const d = s.derived || {}, o = s.obs || {};
+  const wet = TEST_WET || (d.rain_rate_mm_h || 0) > 0 || (o.rh != null && o.rh >= WET_RH);
+  return wet ? ["\u{1F4A7} Sensor wet \u00b7 may read a few degrees low", "label"] : null;
+}
+
 function buildTemperature(s){
   const d = s.derived, o = s.obs;
   const {card:c, body:b} = card("temp","Temperature","thermometer","amber",s.health);
@@ -2337,8 +2351,11 @@ function buildTemperature(s){
     {k:"Humid", v:o.rh == null ? DASH : Math.round(o.rh), u:o.rh == null ? "" : "%", inline:true, small:true},
     {k:"Dew", v:fg(temp(d.dew_c)), u:d.dew_c == null ? "" : prefs.temp, inline:true, small:true},
   ]));
-  const winter = winterLine(s);
+  // One caption slot: a winter warning outranks the wet caveat, which
+  // outranks the comfort word.
+  const winter = winterLine(s), wet = wetLine(s);
   if (winter) b.appendChild(caption(winter[0], winter[1]));
+  else if (wet) b.appendChild(caption(wet[0], wet[1]));
   else if (d.comfort) b.appendChild(caption("☀ " + d.comfort, "yellow"));
   return c;
 }
@@ -5156,7 +5173,8 @@ function recordPanel(panel){
                               ["?testalert", "Preview the alert banner"],
                               ["?teststorm=overhead", "Preview a storm overhead"],
                               ["?teststorm=thunder", "Preview thunder on its way"],
-                              ["?testwinter", "Preview winter"]]) {
+                              ["?testwinter", "Preview winter"],
+                              ["?testwet", "Preview a wet sensor"]]) {
     const a = el("a", "linkbtn", esc(text));
     a.href = href;
     links.appendChild(a);
@@ -6386,6 +6404,7 @@ const TESTALL_STEPS = [
   {label: "Lightning — moving away", storm: "away"},
   {label: "Lightning — thunder on its way", storm: "thunder"},
   {label: "Lightning — quiet, and the kite", storm: "kite"},
+  {label: "Temperature — a wet sensor", wet: true},
   {label: "Alerts — the three worst", alerts: ["extreme", "severe", "moderate"]},
   {label: "Alerts — minor and unknown", alerts: ["minor", "unknown"]},
   {label: "Winter ahead — a hard freeze and snow in the forecast", winter: "ahead"},
@@ -6430,6 +6449,7 @@ function testallNext(dir = 1){
   const st = TESTALL_STEPS[testStep];
   TEST_RAIN = st.rain ? rainPreset(st.rain) : null;
   TEST_STORM = st.storm ? stormPreset(st.storm) : null;
+  TEST_WET = !!st.wet;
   TEST_ALERTS = st.alerts ? sampleAlerts(st.alerts) : null;
   document.getElementById("testtag").textContent =
     "TEST " + (testStep + 1) + "/" + n + " · " + st.label + "  \u203a";

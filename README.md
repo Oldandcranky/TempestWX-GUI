@@ -368,6 +368,14 @@ checked against the Host.
 ## Changelog
 
 ### v3.5.0
+- **The Temperature card says when its sensor is wet.** A wet Tempest reads
+  low: rain on the housing cools the sensor by evaporation, so it reports
+  something nearer the wet-bulb temperature than the air. Through a day of
+  rain on 2026-10-15 it sat 2 to 4.4°F under the airport every hour and agreed
+  within a degree once it dried — which, beside a correct forecast high, made
+  the forecast look wrong. While it is raining or the humidity is 94% or more
+  the caption reads "Sensor wet · may read a few degrees low"; a winter
+  warning still outranks it. `?testwet` previews it.
 - **Four holes in that change, found by a review after it shipped.** A
   history refill counted its first day from midnight, though Anthropic's list
   begins at its first incident, so a real degradation that had dropped off the

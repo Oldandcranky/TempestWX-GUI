@@ -2081,6 +2081,43 @@ console.log = (...args) => {
     for (const why of bad) console.log('         ' + why);
   });
 
+  // ── the wet-sensor caveat on the Temperature card ────────────────────
+  section("the wet-sensor caveat on the Temperature card", async () => {
+    const bad = [];
+    const cases = [
+      ['dry (fixture, RH 40)', '/', {}, false],
+      ['raining', '/', {rate: 2.4}, true],
+      ['RH 96, no rain', '/', {rh: 96}, true],
+      ['RH 88, no rain', '/', {rh: 88}, false],
+      ['?testwet', '/?testwet', {}, true],
+      ['raining, but winter outranks it', '/?testwinter=now', {rate: 2.4}, false],
+    ];
+    await abreast(cases, async ([what, url, set, want]) => {
+      const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+      await page.route('**/api/state', route => {
+        const s = freshen();
+        // The fixture carries a frostbite warning, which outranks the wet
+        // caveat by design; the cases that want the caveat clear the winter.
+        if (!/testwinter/.test(url)) {
+          delete s.derived.frostbite_min; delete s.derived.freezing_since;
+          s.derived.feels_model = 'Heat index'; delete s.forecast.winter;
+        }
+        if (set.rate != null) s.derived.rain_rate_mm_h = set.rate;
+        if (set.rh != null) s.obs.rh = set.rh;
+        return route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(s) });
+      });
+      await page.goto(BASE + url, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(SETTLE_MS);
+      const cap = await page.evaluate(() => (document.querySelector('#card-temp .caption') || {}).textContent || '');
+      const has = /Sensor wet/.test(cap);
+      if (has !== want) bad.push(what + ': caption is "' + cap + '"');
+      await page.close();
+    });
+    failures += bad.length;
+    console.log(bad.length ? '  FAIL wet sensor' : '  ok   wet sensor');
+    for (const why of bad) console.log('         ' + why);
+  });
+
   // ── the wind tree in a gale, which must stay inside its card ──────────
   section("the wind tree in a gale, which must stay inside its card", async () => {
     const bad = [];
